@@ -257,8 +257,17 @@ def main(argv: list[str] | None = None) -> int:
 
     python = ROOT / ".venv/bin/python"
     npm = shutil.which("npm")
-    if not python.is_file() or not npm or not (ROOT / "frontend/node_modules/vite").is_dir():
+    if not python.is_file() or not npm:
         print("开发依赖尚未准备好，请检查 init 容器的 bootstrap 日志。", file=sys.stderr)
+        return 1
+    # npm ci 中断时包目录可能已解压，但 npm run 依赖的入口尚未生成。
+    vite = ROOT / "frontend/node_modules/.bin/vite"
+    if not vite.is_file() or not os.access(vite, os.X_OK):
+        print(
+            "[dev] 前端依赖未安装完整，无法执行 frontend/node_modules/.bin/vite。"
+            "请在当前开发容器执行 (cd /workspace/frontend && npm ci)，再重试。",
+            file=sys.stderr,
+        )
         return 1
     try:
         check_database(environment)

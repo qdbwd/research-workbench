@@ -173,6 +173,27 @@ def test_unexpected_exit_stops_other_services_and_reports_failure(tmp_path, fail
             runner.communicate(timeout=10)
 
 
+def test_missing_vite_command_is_rejected_before_database_or_services(tmp_path, monkeypatch, capsys):
+    from scripts import dev
+
+    python = tmp_path / ".venv/bin/python"
+    python.parent.mkdir(parents=True)
+    python.symlink_to(sys.executable)
+    # npm ci may have unpacked the package without creating its .bin entry point.
+    (tmp_path / "frontend/node_modules/vite").mkdir(parents=True)
+    monkeypatch.setattr(dev, "ROOT", tmp_path)
+    monkeypatch.setattr(dev, "build_environment", lambda *_: {})
+    monkeypatch.setattr(dev.shutil, "which", lambda _: "/usr/bin/npm")
+    monkeypatch.setenv("KNOWLEDGEOPS_DEV_CONTAINER", "1")
+    monkeypatch.setenv("KNOWLEDGEOPS_DEV_CONFIG_SOURCE", "dotenv-v2")
+    monkeypatch.setattr(dev, "check_database", lambda *_: pytest.fail("missing Vite reached database checks"))
+    monkeypatch.setattr(dev, "run_services", lambda *_: pytest.fail("missing Vite started services"))
+    assert dev.main([]) == 1
+    output = capsys.readouterr().err
+    assert "node_modules/.bin/vite" in output
+    assert "npm ci" in output
+
+
 def test_old_schema_is_rejected_before_services_start(business_sessions, monkeypatch, capsys):
     """真实旧版本号留在隔离PG，入口须拒绝启动且不自动升级或改业务数据。"""
     from alembic.config import Config
