@@ -234,7 +234,7 @@ class WebResearchService:
                    root_id: str | None = None) -> tuple[dict, bool]:
         """取得正文快照，但此时模型还没看到正文，因此尚不登记已读证据。"""
         url = str(public_url(url))
-        cached = None if refresh else self.sources.cached_web(url)
+        cached = None if refresh else self.sources.cached_web(url, conversation_id=conversation_id, root_id=root_id)
         if cached:
             self.sources.retain_source(cached["id"], conversation_id=conversation_id, root_id=root_id)
             return self.sources.get_version(cached["version_id"]), True

@@ -1,9 +1,11 @@
 import { Button } from '../../shared/ui/Button';
 import { useState } from 'react';
-import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, FileUp, FileText, ExternalLink, Trash2 } from 'lucide-react';
+import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { FileUp, FileText, ExternalLink, Search, Trash2 } from 'lucide-react';
 import { api, messageOf, send, useResource } from '../../shared/api/api';
 import { Badge, Empty, ErrorBox, Loading, PageTitle } from '../../shared/ui/components';
+import { Dialog } from '../../shared/ui/Dialog';
+import { BackLink } from '../../shared/ui/Workbench';
 import type { Evidence, Run, Source, SourceDetail } from '../../shared/types/types';
 import { useWorkspace } from '../../shared/state/workspace';
 import { DocumentReader } from '../../shared/ui/DocumentReader';
@@ -14,6 +16,7 @@ import { AssetDeletionDialog, AssetDeletionHistory } from './AssetDeletion';
 export function SourcesPage() {
   const { version, refresh } = useWorkspace();
   const [search] = useSearchParams();
+  const { state } = useLocation();
   const conversationId = search.get('conversation_id');
   const scopeQuery = conversationId ? `?conversation_id=${encodeURIComponent(conversationId)}` : '';
   const result = useResource<Source[]>(`/api/sources${scopeQuery}${conversationId ? '&include_library=false' : ''}`, version);
@@ -23,6 +26,11 @@ export function SourcesPage() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [removing, setRemoving] = useState<Source | null>(null);
+  const [importKind, setImportKind] = useState<'file' | 'text' | 'url' | null>(state?.openImport ? 'text' : null);
+  const [query, setQuery] = useState('');
+  const visibleSources = result.data?.filter((source) =>
+    `${source.title} ${source.origin ?? ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
+  );
   const navigate = useNavigate();
   async function upload(file: File | undefined) {
     if (!file) return;
@@ -45,15 +53,21 @@ export function SourcesPage() {
   }
   return (
     <>
-      <PageTitle eyebrow="FOLLOW THE EVIDENCE" title={conversationId ? '会话材料' : '材料与来源'} />
-      <p className="intro text-muted">
-        {conversationId
-          ? '这里导入的材料用于本次聊天。需要长期保留时，点击“保存到材料库”。'
-          : '独立保存的材料可跨会话使用。阅读位置和引用固定到实际使用的版本。'}
-      </p>
-      {conversationId && <p><Link to={`/chat/${conversationId}`}>返回聊天</Link> · <Link to="/sources">查看材料库</Link></p>}
-      <ErrorBox message={error || result.error} />
-      <div className="two-columns grid grid-cols-2 gap-5.5 max-lg:gap-[15px] max-md:grid-cols-1 import-area mt-6.5">
+      {conversationId && <BackLink to={`/chat/${conversationId}`}>返回聊天</BackLink>}
+      <PageTitle title={conversationId ? '会话材料' : '材料与来源'}>
+        {conversationId && <Link className="button button-secondary" to="/sources">查看材料库</Link>}
+        <Button type="button" onClick={() => { setError(''); setImportKind('file'); }}><FileUp size={16} /> 导入材料</Button>
+      </PageTitle>
+      <ErrorBox message={result.error} />
+      {importKind && <Dialog title="导入材料" busy={busy} onClose={() => setImportKind(null)}>
+      <label className="mb-4">来源
+        <select value={importKind} disabled={busy} onChange={(event) => { setError(''); setImportKind(event.target.value as 'file' | 'text' | 'url'); }}>
+          <option value="file">本地文件</option><option value="text">粘贴文本</option><option value="url">公开网页</option>
+        </select>
+      </label>
+      <ErrorBox message={error} />
+      {conversationId && <p className="text-sm text-control">材料导入本次会话。需要跨会话使用时，可在详情保存到材料库。</p>}
+      {importKind === 'file' &&
         <label className="upload-zone relative mb-5.5 min-h-[285px] cursor-pointer items-center justify-center gap-[15px] rounded-[10px] border border-dashed border-[#bacbaa] bg-[#f0f4e9] text-[#6b865b] max-md:min-h-[200px] [&>span]:text-[11px] [&>span]:text-[#93a482] [&>input]:max-w-[90%] [&>input]:border-0 [&>input]:bg-transparent [&>input]:p-[5px] [&>input]:text-[11px]">
           <FileUp size={27} />
           <strong>{busy ? '正在导入…' : '上传学习材料'}</strong>
@@ -66,8 +80,8 @@ export function SourcesPage() {
             disabled={busy}
             onChange={(e) => void upload(e.target.files?.[0])}
           />
-        </label>
-        <form
+        </label>}
+        {importKind === 'text' && <form
           className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5 text-import grid gap-2.5 [&>h2]:m-0 [&>h2]:text-base [&>button]:justify-self-end"
           onSubmit={async (e) => {
             e.preventDefault();
@@ -76,6 +90,7 @@ export function SourcesPage() {
             try {
               const source = await send<SourceDetail>('/api/sources/text', { title, content, ...(conversationId ? { conversation_id: conversationId } : {}) });
               refresh();
+              setImportKind(null);
               navigate(`/sources/${source.id}${scopeQuery}`);
             } catch (error) {
               setError(messageOf(error));
@@ -105,9 +120,8 @@ export function SourcesPage() {
             onChange={(e) => setContent(e.target.value)}
           />
           <Button disabled={busy || !title.trim() || !content.trim()}>保存材料</Button>
-        </form>
-      </div>
-      <form
+        </form>}
+      {importKind === 'url' && <form
         className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5 text-import grid gap-2.5 [&>h2]:m-0 [&>h2]:text-base [&>button]:justify-self-end"
         onSubmit={async (e) => {
           e.preventDefault();
@@ -120,6 +134,7 @@ export function SourcesPage() {
               ...(conversationId ? { conversation_id: conversationId } : {}),
             });
             refresh();
+            setImportKind(null);
             navigate(`/runs/${run.id}`);
           } catch (error) {
             setError(messageOf(error));
@@ -143,15 +158,21 @@ export function SourcesPage() {
           保存提取后的正文，可随时回看当时的版本。导入后台进行，不自动整理为知识文章。
         </p>
         <Button disabled={busy || !url.trim()}>开始导入网页</Button>
-      </form>
+      </form>}
+      </Dialog>}
+      <div className="relative max-w-80">
+        <input type="search" className="pr-9" aria-label="搜索材料" placeholder="搜索材料" value={query}
+          onChange={(event) => setQuery(event.target.value)} />
+        <Search size={17} className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-control" />
+      </div>
       <h2 className="section-title my-4.5 text-[17px] [&>span]:ml-[5px] [&>span]:text-xs [&>span]:text-[#90a184]">
-        {conversationId ? '本会话使用的材料' : '已保存来源'} <span>{result.data?.length ?? 0}</span>
+        {conversationId ? '本会话使用的材料' : '已保存来源'} <span>{visibleSources?.length ?? 0}</span>
       </h2>
       {result.error ? null : result.loading ? (
         <Loading />
-      ) : result.data?.length ? (
+      ) : visibleSources?.length ? (
         <div className="list-cards grid gap-3">
-          {result.data.map((source) => (
+          {visibleSources.map((source) => (
             <div
               className="list-card flex items-center gap-[17px] rounded-[9px] border border-line bg-white px-[23px] py-4.5 text-[#5c7057] hover:border-[#aec2a5] hover:no-underline max-md:flex-wrap max-md:gap-3 max-md:p-4 [&>div]:min-w-0 [&>div]:flex-1 [&_h3]:mt-0 [&_h3]:mb-[5px] [&_h3]:text-[#344c37] [&_h3]:[overflow-wrap:anywhere] max-md:[&_h3]:text-[13px] [&_p]:m-0 [&_p]:text-[11px] [&_p]:text-[#85917e] [&_p]:[overflow-wrap:anywhere] [&>span:last-child]:text-[11px] [&>span:last-child]:whitespace-nowrap max-md:[&>span:last-child]:hidden source-list-row [&>div]:min-w-0 [&>div]:flex-1 [&>div]:[overflow-wrap:anywhere]"
               key={source.id}
@@ -202,7 +223,7 @@ export function SourcesPage() {
           ))}
         </div>
       ) : (
-        <Empty title="还没有来源材料">导入文件或文本后，可在对话中选择它们。</Empty>
+        <Empty title={query.trim() ? '没有匹配的材料' : '还没有来源材料'}>{query.trim() ? '试试其他关键词。' : '导入文件或文本后，可在对话中选择它们。'}</Empty>
       )}
       {!conversationId && <DeliveredFiles />}
       <AssetDeletionHistory />
@@ -274,6 +295,8 @@ export function SourcePage() {
   const [savedId, setSavedId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState('');
   const [params] = useSearchParams();
+  const { state } = useLocation();
+  const citationFrom = typeof state?.citationFrom === 'string' && state.citationFrom.startsWith('/knowledge/') ? state.citationFrom : null;
   const version = params.get('version');
   const conversationId = params.get('conversation_id');
   const result = useResource<SourceDetail>(
@@ -285,12 +308,10 @@ export function SourcePage() {
   const source = result.data;
   return (
     <>
-      <Link className="back-link mb-[15px] inline-flex items-center gap-1.5 text-xs"
-        to={conversationId ? `/sources?conversation_id=${encodeURIComponent(conversationId)}` : '/sources'}>
-        <ArrowLeft size={15} />
-        {conversationId ? '本会话材料' : '全部来源'}
-      </Link>
-      <PageTitle eyebrow={`DOCUMENT / VERSION ${source.version}`} title={source.title}>
+      <BackLink to={citationFrom ?? (conversationId ? `/sources?conversation_id=${encodeURIComponent(conversationId)}` : '/sources')}>
+        {citationFrom ? '返回知识正文' : conversationId ? '返回会话材料' : '返回材料与来源'}
+      </BackLink>
+      <PageTitle eyebrow={`版本 V${source.version}`} title={source.title}>
         <Badge status={source.status} />
       </PageTitle>
       <ErrorBox message={saveError} />
@@ -359,12 +380,13 @@ export function SourcePage() {
 
 export function EvidencePage() {
   const { evidenceId } = useParams();
+  const { state } = useLocation();
   const result = useResource<Evidence>(`/api/evidence/${evidenceId}`);
   if (result.loading) return <Loading />;
   if (!result.data) return <ErrorBox message={result.error} />;
   const evidence = result.data;
   const target = evidenceTarget(evidence);
-  if (target && !/^https?:\/\//i.test(target)) return <Navigate to={target} replace />;
+  if (target && !/^https?:\/\//i.test(target)) return <Navigate to={target} state={state} replace />;
   // 旧书签仍可访问。网页优先给原始链接，保存的完整快照作为可选回看入口。
   return (
     <>

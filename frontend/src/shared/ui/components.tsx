@@ -1,55 +1,63 @@
 import { Button } from './Button';
-import { useState } from 'react';
+import { createContext, useContext, useState } from 'react';
 import type { ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
+import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Link } from 'react-router-dom';
-import { AlertCircle, ArrowRight, LoaderCircle } from 'lucide-react';
+import { AlertCircle, ArrowRight, FileText, LoaderCircle } from 'lucide-react';
 import { messageOf, statusText } from '../api/api';
 import type { Change, ChangeSet, Knowledge } from '../types/types';
 import { EvidenceLink } from './EvidenceLink';
+import { Dialog } from './Dialog';
 
-/** 保留正文内联引用，转到来源查看页；材料中的原始 HTML 不执行。 */
+type OpenEvidence = (id: string, label: string, trigger: HTMLAnchorElement) => void;
+const MarkdownLinks = createContext<{ embeddedEvidence: boolean; onOpenEvidence?: OpenEvidence }>({
+  embeddedEvidence: false,
+});
+
+const MarkdownAnchor: NonNullable<Components['a']> = ({ href, children }) => {
+  const { embeddedEvidence, onOpenEvidence } = useContext(MarkdownLinks);
+  const delivery = href?.match(/^\/api\/deliveries\/([a-f0-9-]+)\/download(#L\d+)?$/);
+  if (delivery) return <Link to={`/deliveries/${delivery[1]}${delivery[2] ?? ''}`}>{children}</Link>;
+  // 交付文件先进入全文阅读器；下载按钮在阅读器中仍走原 HTTP 接口。
+  if (href?.startsWith('/api/workspace/download?')) {
+    return <Link to={href.replace('/api/workspace/download?', '/files?')}>{children}</Link>;
+  }
+  const citation = href?.match(/^\/api\/evidence\/([\w-]+)$/);
+  if (citation) {
+    const id = citation[1];
+    if (embeddedEvidence) return <a href={`#evidence-${id}`}>{children}</a>;
+    if (onOpenEvidence) {
+      return <a className="chat-citation" href={`/evidence/${id}`} onClick={(event) => {
+        if (event.button !== 0 || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+        event.preventDefault();
+        onOpenEvidence(id, event.currentTarget.textContent?.trim() || '引用资料', event.currentTarget);
+      }}><FileText size={14} aria-hidden="true" />{children}</a>;
+    }
+    return <EvidenceLink id={id}>{children}</EvidenceLink>;
+  }
+  return href?.startsWith('/') ? <Link to={href}>{children}</Link>
+    : <a href={href} target="_blank" rel="noreferrer noopener">{children}</a>;
+};
+
+/** 保留正文内联引用和独立阅读入口；材料中的原始 HTML 不执行。 */
 export function Markdown({
   text,
   embeddedEvidence = false,
+  onOpenEvidence,
 }: {
   text: string;
   embeddedEvidence?: boolean;
+  onOpenEvidence?: OpenEvidence;
 }) {
   return (
-    <div className="markdown">
+    <MarkdownLinks.Provider value={{ embeddedEvidence, onOpenEvidence }}><div className="markdown">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         skipHtml
         components={{
-          a: ({ href, children }) => {
-            const delivery = href?.match(/^\/api\/deliveries\/([a-f0-9-]+)\/download(#L\d+)?$/);
-            if (delivery)
-              return <Link to={`/deliveries/${delivery[1]}${delivery[2] ?? ''}`}>{children}</Link>;
-            // 交付文件先进入全文阅读器；下载按钮在阅读器中仍走原HTTP接口。
-            if (href?.startsWith('/api/workspace/download?')) {
-              return (
-                <Link to={href.replace('/api/workspace/download?', '/files?')}>{children}</Link>
-              );
-            }
-            if (embeddedEvidence && href?.startsWith('/api/evidence/')) {
-              return <a href={`#evidence-${href.slice('/api/evidence/'.length)}`}>{children}</a>;
-            }
-            if (href?.startsWith('/api/evidence/')) {
-              return (
-                <EvidenceLink id={href.slice('/api/evidence/'.length)}>{children}</EvidenceLink>
-              );
-            }
-            const local = href?.replace(/^\/api\/evidence\//, '/evidence/');
-            return local?.startsWith('/') ? (
-              <Link to={local}>{children}</Link>
-            ) : (
-              <a href={href} target="_blank" rel="noreferrer noopener">
-                {children}
-              </a>
-            );
-          },
+          a: MarkdownAnchor,
           img: ({ src, alt }) => (
             <a href={src} target="_blank" rel="noreferrer noopener">
               [图片：{alt || '查看原图'}]
@@ -59,7 +67,7 @@ export function Markdown({
       >
         {text}
       </ReactMarkdown>
-    </div>
+    </div></MarkdownLinks.Provider>
   );
 }
 
@@ -118,19 +126,17 @@ export function PageTitle({
   title,
   children,
 }: {
-  eyebrow: string;
+  eyebrow?: string;
   title: string;
   children?: ReactNode;
 }) {
   return (
-    <header className="page-title mb-7 flex items-center justify-between gap-5 max-lg:items-start max-md:mb-5 max-md:flex-col max-md:gap-3">
-      <div>
-        <p className="eyebrow mb-2 text-[10px] font-[650] tracking-[1.9px] text-[#86968b] max-md:text-[9px]">
-          {eyebrow}
-        </p>
-        <h1>{title}</h1>
+    <header className="page-title mb-6 flex flex-wrap items-center justify-between gap-3 max-md:mb-5">
+      <div className="min-w-0">
+        {eyebrow && <p className="mb-1 text-xs text-control">{eyebrow}</p>}
+        <h1 className="m-0 [overflow-wrap:anywhere]">{title}</h1>
       </div>
-      {children}
+      {children && <div className="flex flex-wrap items-center gap-2">{children}</div>}
     </header>
   );
 }
@@ -251,6 +257,7 @@ export function ChangeReview({
   const [confirmed, setConfirmed] = useState(false);
   const [editing, setEditing] = useState(false);
   const [operations, setOperations] = useState(draft.operations);
+  const [diffIndex, setDiffIndex] = useState<number>();
   const pending = ['draft', 'approved'].includes(draft.status);
   return (
     <div className="review">
@@ -323,20 +330,25 @@ export function ChangeReview({
               </label>
             </>
           ) : (
-            <Markdown
-              text={
-                draft.after?.[item.document_id]?.body ??
-                (item.body || draft.before[item.document_id]?.body || '此操作保留历史版本。')
-              }
-            />
+            <div className={draft.before[item.document_id]?.body ? 'grid gap-4 lg:grid-cols-2' : ''}>
+              {draft.before[item.document_id]?.body && <section className="min-w-0 rounded-xl border border-line bg-canvas p-4">
+                <h3 className="m-0 text-sm">已发布正文</h3>
+                <Markdown text={draft.before[item.document_id].body} />
+              </section>}
+              <section className="min-w-0 rounded-xl border border-line p-4">
+                <h3 className="m-0 text-sm">本次草稿</h3>
+                <Markdown text={draft.after?.[item.document_id]?.body ??
+                  (item.body || draft.before[item.document_id]?.body || '此操作保留历史版本。')} />
+              </section>
+            </div>
           )}
-          <details className="mt-5">
-            <summary>查看与原文的差异</summary>
+          <Button type="button" className="button-secondary mt-4 text-xs" onClick={() => setDiffIndex(index)}>查看与原文的差异</Button>
+          {diffIndex === index && <Dialog title="正文差异" onClose={() => setDiffIndex(undefined)}>
             <pre className="diff border-l-2 border-[#afc69d] text-xs">
               {draft.differences.find((d) => d.document_id === item.document_id)?.diff ||
                 '没有正文差异'}
             </pre>
-          </details>
+          </Dialog>}
         </section>
       ))}
       {pending && (

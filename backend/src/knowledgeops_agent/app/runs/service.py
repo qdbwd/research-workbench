@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable
+from contextlib import nullcontext
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -219,10 +220,12 @@ class RunService:
             "last_event": run.event_sequence,
         }
 
-    def create_conversation(self, title: str = "新对话", *, request_key: str | None = None) -> dict:
+    def create_conversation(self, title: str = "新对话", *, request_key: str | None = None,
+                            trial_case: str | None = None, sources=None) -> dict:
         title = title.strip()[:300] or "新对话"
         if request_key is not None and not 1 <= len(request_key) <= 200:
             raise ValueError("invalid conversation creation key")
+        creation_hash = fingerprint([title, trial_case] if trial_case else title) if request_key else None
         with self.sessions.begin() as session:
             from knowledgeops_agent.app.runs.control import lock_control
 
@@ -231,13 +234,17 @@ class RunService:
                 prior = session.scalar(select(Conversation).where(Conversation.creation_key == request_key))
                 if prior:
                     require_conversation(session, prior.id)
-                    if prior.creation_fingerprint != fingerprint(title):
+                    if prior.creation_fingerprint != creation_hash:
                         raise ValueError("idempotency key belongs to a different creation request")
                     return {"id": prior.id, "title": prior.title}
             row = Conversation(title=title, creation_key=request_key,
-                               creation_fingerprint=fingerprint(title) if request_key else None, created_at=self.now())
+                               creation_fingerprint=creation_hash, trial_case=trial_case, created_at=self.now())
             session.add(row)
             session.flush()
+            if trial_case:
+                from knowledgeops_agent.research.trial import seed_trial
+
+                seed_trial(session, row, sources)
             return {"id": row.id, "title": row.title}
 
     def creation_receipt(self, request_key: str) -> dict:
@@ -426,6 +433,9 @@ class RunService:
                 prior_inputs = {"auxiliary": False, **prior.input_data}
                 comparison_inputs = dict(inputs)
                 prior_inputs.pop("runtime_settings", None)
+                prior_inputs.pop("trial_case", None)
+                prior_inputs.pop("research", None)
+                prior_inputs.pop("research_next", None)
                 # 相同用户请求重试返回最初冻结的选择；元数据刷新不能改写原运行。
                 for value in (prior_inputs, comparison_inputs):
                     value["reasoning"] = value.get("reasoning", {}).get("requested", "default")
@@ -448,6 +458,12 @@ class RunService:
 
             inputs = {**runtime_inputs(session, conversation), **inputs}
             selected_task_id = learning_task_id or conversation.selected_learning_task_id
+            if learning_task_id is None:
+                from knowledgeops_agent.research.execution import admit
+
+                if research := admit(session, conversation_id):
+                    inputs["research"] = research
+                    selected_task_id = None
             if selected_task_id:
                 from knowledgeops_agent.persistence.models import LearningTask
 
@@ -474,6 +490,15 @@ class RunService:
             )
             session.add(run)
             session.flush()
+            if "research" in inputs:
+                from knowledgeops_agent.app.lifecycle.asset_references import (
+                    replace_asset_references,
+                )
+                from knowledgeops_agent.app.lifecycle.catalog import reference_value
+                from knowledgeops_agent.research.autonomy import record_root
+
+                replace_asset_references(session, "run_input", run.id, reference_value(session, run))
+                record_root(session, run)
             from knowledgeops_agent.sources.ownership import claim_source
 
             for source_id in inputs["source_ids"]:
@@ -495,7 +520,7 @@ class RunService:
             from knowledgeops_agent.app.lifecycle.references import replace_references
 
             replace_references(session, "message", message.id, task)
-            if publication_mode == "direct":
+            if publication_mode == "direct" and "research" not in inputs and not conversation.trial_case:
                 session.add(TaskGrant(root_id=run_id, mode="direct", actor="user"))
             # 用户提交时冻结已展示草稿的版本；排队期间的编辑不能被旧确认覆盖。
             candidates = []
@@ -549,7 +574,7 @@ class RunService:
                         "message": {"id": message.id, "content": message.content},
                         "candidates": candidates[:20],
                         "candidates_truncated": len(candidates) > 20,
-                        "known_preferences": self._preference_context(session, task),
+                        "known_preferences": [] if conversation.trial_case else self._preference_context(session, task),
                         "memory_categories": self._memory_category_context(session),
                         "learning_context": self._learning_context(
                             session, conversation_id, selected_task_id
@@ -858,16 +883,26 @@ class RunService:
                     .with_for_update()
                 )
                 if run.origin == "automatic":
-                    from knowledgeops_agent.persistence.models import LearningTask
+                    if run.input_data.get("research"):
+                        from knowledgeops_agent.research.execution import guard as guard_research
 
-                    task = session.get(LearningTask, run.learning_task_id)
-                    if (
-                        not task
-                        or task.status != "active"
-                        or conversation.selected_learning_task_id != task.id
-                    ):
-                        run.status, run.stop_reason = "interrupted", "学习任务未启用，等待用户恢复"
-                        return None
+                        try:
+                            guard_research(session, run, self._active_ms(run))
+                        except RunStopped as exc:
+                            run.status, run.stop_reason = "interrupted", str(exc)
+                            self._event(session, run, "interrupted", {"reason": run.stop_reason})
+                            return None
+                    else:
+                        from knowledgeops_agent.persistence.models import LearningTask
+
+                        task = session.get(LearningTask, run.learning_task_id)
+                        if (
+                            not task
+                            or task.status != "active"
+                            or conversation.selected_learning_task_id != task.id
+                        ):
+                            run.status, run.stop_reason = "interrupted", "学习任务未启用，等待用户恢复"
+                            return None
                 if run.execution_sequence is None:
                     conversation.execution_sequence += 1
                     run.execution_sequence = conversation.execution_sequence
@@ -1001,6 +1036,11 @@ class RunService:
                 .with_for_update()
             ):
                 task.status, task.stop_reason = "waiting", "服务重启，等待用户明确恢复"
+            from knowledgeops_agent.research.autonomy import recover as recover_research
+            from knowledgeops_agent.research.deliveries import recover as recover_deliveries
+
+            recover_research(session)
+            recover_deliveries(session, self)
             return len(runs)
 
     def _check(self, run: Run, *, for_child: bool = False) -> None:
@@ -1029,6 +1069,9 @@ class RunService:
                 raise RunStopped("worker owner no longer matches")
             root = session.get(Run, run.root_id)
             self._check(root, for_child=run.id != root.id)
+            from knowledgeops_agent.research.execution import guard as guard_research
+
+            guard_research(session, root, self._active_ms(root))
             from knowledgeops_agent.learning.budget import active_unit
 
             active_unit(session, root, self._active_ms(root))
@@ -1064,6 +1107,9 @@ class RunService:
         if run.worker_id != worker_id:
             raise RunStopped("worker owner no longer matches")
         self._check(root, for_child=run.id != root.id)
+        from knowledgeops_agent.research.execution import guard as guard_research
+
+        guard_research(session, root, self._active_ms(root))
         if run.id != root.id:
             self._check(run)
         from knowledgeops_agent.learning.budget import active_unit
@@ -1084,6 +1130,9 @@ class RunService:
         if run.worker_id != worker_id:
             raise RunStopped("worker owner no longer matches")
         self._check(run)
+        from knowledgeops_agent.research.execution import guard as guard_research
+
+        guard_research(session, run, self._active_ms(run))
         from knowledgeops_agent.learning.budget import active_unit
 
         active_unit(session, run, self._active_ms(run))
@@ -1109,12 +1158,15 @@ class RunService:
         """调用方事务内扣额，可与命令 running 回执原子提交，消除崩溃重复扣额窗口。"""
         from knowledgeops_agent.learning.budget import active_unit
         from knowledgeops_agent.persistence.models import ToolBudgetReservation
+        from knowledgeops_agent.research.autonomy import reserve_tool as reserve_research_tool
+        from knowledgeops_agent.research.execution import guard as guard_research
 
         run = session.get(Run, run_id)
         if run is None:
             raise KeyError("run not found")
         root = self._locked(session, run.root_id)
         self._check(root, for_child=run.id != root.id)
+        guard_research(session, root, self._active_ms(root))
         if run.id != root.id:
             self._check(run)
         if call_key:
@@ -1127,6 +1179,7 @@ class RunService:
             raise RunStopped("tool budget exhausted")
         if is_search and root.searches >= root.budgets["searches"]:
             raise RunStopped("search budget exhausted")
+        reserve_research_tool(session, self, root, is_search)
         unit = active_unit(session, root, self._active_ms(root), lock=True)
         if unit is not None:
             if unit.status == "waiting":
@@ -1232,20 +1285,20 @@ class RunService:
             )
             return self._view(child)
 
-    def pause(self, run_id: str) -> dict:
+    def pause(self, run_id: str, *, session=None) -> dict:
         from knowledgeops_agent.app.runs.pause import request_pause
 
-        return request_pause(self, run_id)
+        return request_pause(self, run_id, session=session)
 
     def settle_pause(self, run_id: str, worker_id: str, *, outcome: dict) -> dict:
         from knowledgeops_agent.app.runs.pause import settle_pause
 
         return settle_pause(self, run_id, worker_id, outcome=outcome)
 
-    def cancel(self, run_id: str) -> dict:
+    def cancel(self, run_id: str, *, session=None) -> dict:
         from knowledgeops_agent.app.runs.children import is_unsettled, unsettled_children
 
-        with self.sessions.begin() as session:
+        with (self.sessions.begin() if session is None else nullcontext(session)) as session:
             run = self._locked(session, run_id)
             waiting = run.status == "interrupted" and is_unsettled(run.status, run.outcome.get("kind"))
             if run.status in TERMINAL and not waiting:
@@ -1333,6 +1386,23 @@ class RunService:
                 raise PermissionError("worker owner does not match")
             if run.status in TERMINAL:
                 return self._view(run)
+            root = session.get(Run, run.root_id) if run.parent_id else run
+            from knowledgeops_agent.research.autonomy import bound_permit, time_exhausted
+            from knowledgeops_agent.research.deliveries import advance, pending_for_run
+            from knowledgeops_agent.research.execution import guard as guard_research
+
+            delivery = pending_for_run(session, root)
+            if delivery:
+                status, reason = "interrupted", "研发成果已提交，等待执行收尾。"
+                outcome = {**(outcome or {}), "kind": "research_finalizing", "answer": ""}
+            else:
+                try:
+                    guard_research(session, root, check_permit=False)
+                except RunStopped as stale_research:
+                    reason = str(stale_research)
+                    status = "cancelled" if reason.startswith("cancelled:") else "interrupted"
+                    outcome = {**(outcome or {}), "kind": "partial", "answer": ""}
+                    continuation = None
             if run.cancel_requested:
                 status, reason = "cancelled", "用户取消；已提交结果保留"
                 outcome = {**(outcome or {}), "kind": "partial"}
@@ -1341,7 +1411,10 @@ class RunService:
                 outcome = {**(outcome or {}), "kind": "partial"}
             elif (
                 status == "completed"
-                and self._active_ms(run) >= run.budgets["active_seconds"] * 1000
+                and (
+                    self._active_ms(run) >= run.budgets["active_seconds"] * 1000
+                    or time_exhausted(bound_permit(session, root), root, self._active_ms(root))
+                )
             ):
                 status, reason = "budget_exhausted", "active time budget exhausted"
                 outcome = {**(outcome or {}), "kind": "partial"}
@@ -1368,6 +1441,12 @@ class RunService:
                     **outcome,
                     "draft_revisions": {draft.id: draft.revision for draft in shown},
                 }
+            if status == "completed" and outcome and outcome.get("answer"):
+                from knowledgeops_agent.retrieval.request_evidence import final_reference_ids
+
+                reference_ids = final_reference_ids(session, run.id, outcome["answer"])
+                if reference_ids:
+                    outcome = {**outcome, "reference_citations": reference_ids}
             run.status, run.outcome, run.stop_reason = status, outcome or {}, reason
             run.finished_at = self.now()
             from knowledgeops_agent.harness.context.continuation import save_snapshot
@@ -1382,7 +1461,7 @@ class RunService:
             self._event(
                 session,
                 run,
-                "finished",
+                "research_delivery_draining" if delivery and run.parent_id is None else "finished",
                 {
                     "status": status,
                     "outcome": run.outcome,
@@ -1427,15 +1506,28 @@ class RunService:
 
                 replace_references(session, "message", message_id, answer)
                 touch_messages(session, run.conversation_id, activity_at=answer_at)
-            from knowledgeops_agent.learning.coordinator import finished
+            if delivery:
+                advance(session, self, delivery)
+            elif "research" in run.input_data:
+                from knowledgeops_agent.research.autonomy import finished as research_finished
 
-            finished(session, run)
+                research_finished(session, self, run)
+            else:
+                from knowledgeops_agent.learning.coordinator import finished
+
+                finished(session, run)
             return self._view(run)
 
-    def resume(self, run_id: str, *, budgets: dict | None = None) -> dict:
+    def resume(self, run_id: str, *, budgets: dict | None = None, session=None) -> dict:
         """仅由用户入口恢复。新预算是总上限，不重置已消费次数或活跃时长。"""
-        with self.sessions.begin() as session:
+        with (self.sessions.begin() if session is None else nullcontext(session)) as session:
             run = self._locked(session, run_id)
+            from knowledgeops_agent.research.execution import guard as guard_research
+
+            try:
+                guard_research(session, run, self._active_ms(run))
+            except RunStopped as exc:
+                raise ValueError(str(exc)) from exc
             if run.kind == "memory_classification" and any(
                 value != run.budgets.get(key) for key, value in (budgets or {}).items()
             ):
@@ -1584,11 +1676,16 @@ class RunService:
                 for row in rows
             ]
 
-    def save_artifact(self, run_id: str, kind: str, content: str) -> str:
+    def save_artifact(
+        self, run_id: str, kind: str, content: str, *, worker_id: str | None = None, session=None,
+    ) -> str:
         """完整内容按哈希去重；只存运行产物，不伪装为 Agent 已读来源证据。"""
         digest = hashlib.sha256(content.encode()).hexdigest()
-        with self.sessions.begin() as session:
-            self._locked(session, run_id)
+        with (self.sessions.begin() if session is None else nullcontext(session)) as session:
+            if worker_id is None:
+                self._locked(session, run_id)
+            else:
+                self.execution_guard(session, run_id, worker_id)
             store = session.info.get("file_store")
             key = f"artifacts/{run_id}/{digest}.txt" if store else None
             if store is not None:

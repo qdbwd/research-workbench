@@ -12,7 +12,7 @@ from collections.abc import Sequence
 
 from langchain_core.messages import BaseMessage, SystemMessage
 
-REQUIRED_KEYS = frozenset({"current_task", "user_guidance", "learning"})
+REQUIRED_KEYS = frozenset({"current_task", "user_guidance", "learning", "research"})
 
 
 def background_data(message: BaseMessage) -> dict | None:

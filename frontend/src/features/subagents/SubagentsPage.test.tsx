@@ -74,6 +74,9 @@ function serve(initial: Role[] = [], conflict = false, mcp = false) {
         ],
       });
     if (url === '/api/subagents') return Response.json(rows);
+    if (url === '/api/tools/catalog') return Response.json({ tools: [], groups: [] });
+    if (url === '/api/tools/policy') return Response.json({ revision: 1, enabled: {}, main_tools: null,
+      main_tool_groups: null, resolved_main_tools: null });
     if (url === '/api/subagents/templates')
       return Response.json([
         {
@@ -186,15 +189,18 @@ it('preserves frozen group membership when only editing the prompt and links to 
 it('opens a concise directory with optional templates and no forced role or inline form', async () => {
   serve();
   open('/preferences');
-  await userEvent.click(screen.getByRole('link', { name: '子Agent' }));
-  expect(await screen.findByRole('heading', { name: '子Agent', level: 1 })).toBeVisible();
+  await userEvent.click(screen.getByRole('link', { name: '智能体设置' }));
+  await userEvent.click(screen.getByRole('link', { name: '子智能体' }));
+  expect(await screen.findByRole('heading', { name: '子智能体', level: 2 })).toBeVisible();
   expect(await screen.findByText('尚无子Agent配置')).toBeVisible();
-  expect(screen.getByRole('link', { name: '使用只读研究者模板' })).toBeVisible();
+  expect(screen.queryByRole('link', { name: '使用只读研究者模板' })).not.toBeInTheDocument();
   expect(screen.queryByRole('form')).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: '查看历史' })).not.toBeInTheDocument();
-  expect(screen.getByText(/只读、无递归/)).toBeVisible();
-  expect(screen.getByText(/继承主任务的模型/)).toBeVisible();
-  expect(screen.getByText(/新任务使用新配置/)).toBeVisible();
+  screen.getByRole('button', { name: '子智能体说明' }).focus();
+  const help = screen.getByRole('tooltip');
+  expect(help).toHaveTextContent('只读、无递归');
+  expect(help).toHaveTextContent('继承主任务的模型');
+  expect(help).toHaveTextContent('新任务使用新配置');
 });
 
 it('creates only explicitly selected tools and skills, with no implicit defaults', async () => {
@@ -311,7 +317,7 @@ it('toggles a precise revision and requires confirmation naming the role before 
   await waitFor(() =>
     expect(screen.queryByRole('region', { name: '证据核对员' })).not.toBeInTheDocument(),
   );
-  expect(screen.queryByRole('region', { name: '配置历史' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('dialog', { name: '配置历史' })).not.toBeInTheDocument();
   expect(window.location.search).toBe('');
 });
 
@@ -385,7 +391,7 @@ it('shows a history loading failure and can retry without changing any configura
     return normalFetch(url, init);
   });
   open('/subagents?history=removed-role');
-  const history = within(await screen.findByRole('region', { name: '配置历史' }));
+  const history = within(await screen.findByRole('dialog', { name: '配置历史' }));
   expect(history.getByRole('status')).toHaveTextContent('正在加载');
   resolveHistory(Response.json({ detail: '历史读取失败' }, { status: 503 }));
   expect(await history.findByRole('alert')).toHaveTextContent('历史读取失败');
@@ -395,10 +401,9 @@ it('shows a history loading failure and can retry without changing any configura
   expect(sent).toHaveLength(0);
 });
 
-it('opens a template without writing and saves it as an editable ordinary role', async () => {
+it('preserves the old template URL and saves it as an editable ordinary role', async () => {
   const { sent } = serve();
-  open();
-  await userEvent.click(await screen.findByRole('link', { name: '使用只读研究者模板' }));
+  open('/subagents/new?template=researcher');
   const form = within(await screen.findByRole('form', { name: '创建子Agent' }));
   expect(form.getByLabelText('稳定名称')).toHaveValue('researcher');
   expect(form.getByLabelText('创建后启用')).not.toBeChecked();
@@ -415,7 +420,7 @@ it('guards sidebar navigation and cancel without saving or losing a draft silent
   const { sent } = serve();
   open();
   const form = await fillCreate();
-  await userEvent.click(screen.getByRole('link', { name: '工具与能力' }));
+  await userEvent.click(screen.getByRole('link', { name: '智能体设置' }));
   const guard = within(screen.getByRole('dialog', { name: '离开编辑页面？' }));
   await userEvent.click(guard.getByRole('button', { name: '继续编辑' }));
   expect(form.getByLabelText('稳定名称')).toHaveValue('fact-checker');

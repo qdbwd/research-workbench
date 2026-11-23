@@ -87,6 +87,7 @@ def main():
                 model_calls_enabled=False,
                 workspace_root=Path(storage) / "workspace",
                 source_storage_root=Path(storage),
+                research_experiment_exchange=os.environ.get("KNOWLEDGEOPS_TEST_EXPERIMENT_EXCHANGE"),
             )
             services = Services(
                 settings,
@@ -214,6 +215,78 @@ def main():
             offline_provider, offline_saver = LearningProvider(), InMemorySaver()
             async_provider = None
             input_providers = {}
+
+            @app.post("/api/__offline/research-trial/run/{run_id}")
+            def execute_trial_question(run_id: str):
+                from fixtures.research_trial_provider import ResearchTrialProvider
+
+                from knowledgeops_agent.research.trial import run_trial_owner
+
+                with sessions() as session:
+                    if not run_trial_owner(session, run_id):
+                        raise ValueError("offline trial requires a trial conversation")
+                run = jobs.get_run(run_id)
+                services.gateway.client, services.gateway.enabled = ResearchTrialProvider(), True
+                try:
+                    return execute_run(run_id, run["generation"], services=services,
+                                       checkpointer=offline_saver, worker_id="browser-research-trial")
+                finally:
+                    services.gateway.enabled = False
+
+            @app.post("/api/__offline/research-experiment/tick")
+            def tick_research_experiments():
+                from knowledgeops_agent.research.experiments import tick
+
+                tick(jobs)
+                return {"ok": True}
+
+            @app.post("/api/__offline/research-experiment/run/{run_id}")
+            def execute_research_experiment_scenario(run_id: str, source_id: str, attempt: str | None = None):
+                from fixtures.research_experiment_provider import ResearchExperimentProvider
+
+                from knowledgeops_agent.app.runs.worker import open_checkpointer
+
+                run = jobs.get_run(run_id)
+                if not run["input"].get("research"):
+                    raise ValueError("offline experiment requires a research run")
+                provider = ResearchExperimentProvider(sources.get_source(source_id), attempt=attempt)
+                services.gateway.client, services.gateway.enabled = provider, True
+                try:
+                    result = execute_run(run_id, run["generation"], services=services,
+                                         worker_id="browser-research-experiment")
+                    with open_checkpointer(services) as saver:
+                        assert saver.get_tuple({"configurable": {"thread_id": run["checkpoint_id"]}}) is not None
+                    return result
+                finally:
+                    services.gateway.enabled = False
+
+            @app.post("/api/__offline/research-delivery/{run_id}")
+            def execute_research_delivery_offline(run_id: str):
+                import json
+
+                from fixtures.execution_provider import ExecutionProvider
+                from langchain_core.messages import AIMessageChunk
+
+                class DeliveryProvider(ExecutionProvider):
+                    def stream(self, messages, **kwargs):
+                        yield AIMessageChunk("", tool_call_chunks=[{
+                            "name": "submit_research_delivery", "id": "browser-research-result", "index": 0,
+                            "args": json.dumps({
+                                "title": "定位检索与生成故障", "diagnosis": "正确材料可能在截断时被移除。",
+                                "recommendations": "复核候选与最终上下文，再决定是否重排。",
+                                "limitations": "离线夹具暂无人工标注。", "source_version_ids": [],
+                            }, ensure_ascii=False),
+                        }])
+
+                run = jobs.get_run(run_id)
+                if not run["input"].get("research"):
+                    raise ValueError("offline delivery requires a research run")
+                services.gateway.client, services.gateway.enabled = DeliveryProvider(), True
+                try:
+                    return execute_run(run_id, run["generation"], services=services, checkpointer=offline_saver,
+                                       worker_id="browser-research-delivery")
+                finally:
+                    services.gateway.enabled = False
 
             @app.post('/api/__offline/conversation-browsing-seed')
             def seed_conversation_browsing():
@@ -462,6 +535,29 @@ def main():
                 jobs.finish(run["id"], "material-seed", outcome={"kind": "prepared"})
                 assets_ready_offline()
                 return {"conversation_id": chat["id"], "url": url, "length": len(body)}
+
+            @app.post("/api/__offline/chat-citation-seed")
+            def seed_chat_citations():
+                chat = jobs.create_conversation("运维试点引用验收")
+                seeded = jobs.enqueue(chat["id"], "变更审批及检查要求是什么？", request_key=str(uuid4()))
+                jobs.claim("citation-seed", run_id=seeded["id"], generation=seeded["generation"])
+                materials = [
+                    ("紧急变更规程", "值班人员应当回看风险记录。\n当班负责人必须事前批准。\n审批结果须登记。",
+                     "当班负责人必须事前批准。"),
+                    ("值班操作手册：变更完成后的监控与核对说明", "等待操作执行完成。\n核对错误率和业务探针。\n记录结果。",
+                     "核对错误率和业务探针。"),
+                ]
+                citations = []
+                for title, body, quote in materials:
+                    material = sources.import_text(title, body)
+                    start = body.index(quote)
+                    evidence = sources.read_search_hit(
+                        material["segments"][0]["id"], version_id=material["version_id"],
+                        start=start, end=start + len(quote), root_id=seeded["id"],
+                    )
+                    citations.append(evidence["citation"])
+                jobs.finish(seeded["id"], "citation-seed", outcome={"answer": "请核对" + "和".join(citations) + "。"})
+                return {"conversation_id": chat["id"]}
 
             @app.post("/api/__offline/lifecycle-seed")
             def seed_lifecycle_offline(temporary: bool = False):

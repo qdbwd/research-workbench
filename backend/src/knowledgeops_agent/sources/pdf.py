@@ -16,6 +16,7 @@ from pypdf import PdfReader
 from sqlalchemy import delete, func, select
 
 from knowledgeops_agent.persistence.models import SourceSegment, SourceVersion
+from knowledgeops_agent.retrieval.index import add_source_chunks
 from knowledgeops_agent.sources.service import SourceService
 
 _PDFIUM_LOCK = Lock()  # PDFium 不支持跨线程并发调用，即使处理不同文档也需保护。
@@ -64,6 +65,7 @@ def _set_status(sources: SourceService, version_id: str, status: str, error: str
                 SourceSegment.source_version_id == version_id,
             ).order_by(SourceSegment.page.asc().nulls_first(), SourceSegment.position)))
             version.body_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
+            add_source_chunks(session, version.id)
 
 
 def _save_page(

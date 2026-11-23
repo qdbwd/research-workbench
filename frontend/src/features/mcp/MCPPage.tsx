@@ -3,6 +3,8 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { messageOf, send, useResource } from '../../shared/api/api';
 import { Empty, ErrorBox, Loading, PageTitle } from '../../shared/ui/components';
+import { DetailDialog, HelpHint } from '../../shared/ui/Workbench';
+import { AgentSettingsTabs } from '../tools/AgentSettingsTabs';
 import {
   MCPCleanup,
   MCPCredentialsDialog,
@@ -100,8 +102,7 @@ function ConnectionCard({ row, changed }: { row: Connection; changed: () => void
       <p className="muted text-muted">
         启用后仍须为工具选择许可。停用会撤回当前任务的旧绑定，再次启用从新任务生效。
       </p>
-      <details className="mt-5">
-        <summary>配置与管理</summary>
+      <DetailDialog className="mt-5" title="配置与管理">
         <div className="my-4 flex flex-wrap gap-2">
           <Button disabled={busy} onClick={() => setEditing(true)}>
             准备更新候选
@@ -124,7 +125,7 @@ function ConnectionCard({ row, changed }: { row: Connection; changed: () => void
         >
           删除连接配置
         </Button>
-      </details>
+      </DetailDialog>
       {removing && (
         <MCPRemoveDialog connection={row} onClose={() => setRemoving(false)} onRemoved={changed} />
       )}
@@ -157,8 +158,7 @@ function ConnectionCard({ row, changed }: { row: Connection; changed: () => void
               <div>
                 <strong>{tool.name}</strong>
                 <p>{tool.description}</p>
-                <details className="mt-5">
-                  <summary>参数结构与服务提示</summary>
+                <DetailDialog className="my-3" title="参数结构与服务提示">
                   <pre>
                     {JSON.stringify(
                       { schema: tool.schema, annotations: tool.annotations },
@@ -166,7 +166,7 @@ function ConnectionCard({ row, changed }: { row: Connection; changed: () => void
                       2,
                     )}
                   </pre>
-                </details>
+                </DetailDialog>
                 <label>
                   调用许可
                   <select
@@ -208,23 +208,24 @@ export function MCPPage() {
   const changed = () => setVersion((value) => value + 1);
   return (
     <>
-      <PageTitle eyebrow="CONNECTIONS" title="MCP 工具服务">
-        <Button onClick={() => setImporting(true)}>导入 MCP 配置</Button>
-        <Button className="secondary button-secondary" onClick={changed}>
-          刷新
-        </Button>
-      </PageTitle>
-      <p>按需连接自己的工具服务。默认没有外部服务；连接配置、工具许可和每次操作确认分别管理。</p>
-      <p className="muted text-muted">
-        连接按聊天和执行角色隔离复用。需要服务端连续会话时，可在配置中加入
-        "protocol_mode":"legacy"。
-        默认自动协商；空闲回收或应用重启后会建立新连接，服务端状态是否保留由对应服务决定。
-      </p>
+      <PageTitle title="智能体设置" />
+      <AgentSettingsTabs />
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-1">
+          <h2 className="m-0 text-lg font-semibold">MCP 连接</h2>
+          <HelpHint label="连接说明">连接按聊天和执行角色隔离复用。需要服务端连续会话时，可在配置中将 protocol_mode 设为 legacy。空闲回收和服务重启后将重新建立连接。</HelpHint>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <MCPCleanup version={version} />
+          <Button className="button-secondary" onClick={changed}>刷新</Button>
+        </div>
+      </div>
       <ErrorBox message={result.error} />
       {result.loading && <Loading />}
       {result.data?.length === 0 && (
         <Empty title="尚未添加 MCP 服务">
           添加或导入配置后，先测试连接、发现工具，再选择许可。
+          <span className="mt-4 block"><Button onClick={() => setImporting(true)}>导入 MCP 配置</Button></span>
         </Empty>
       )}
       {importing && (
@@ -240,7 +241,9 @@ export function MCPPage() {
       {result.data?.map((row) => (
         <ConnectionCard key={`${row.id}:${row.revision}`} row={row} changed={changed} />
       ))}
-      <MCPCleanup version={version} />
+      {(Boolean(result.data?.length) || Boolean(result.error)) && <div className="mt-4 flex justify-end">
+        <Button onClick={() => setImporting(true)}>导入 MCP 配置</Button>
+      </div>}
     </>
   );
 }
@@ -337,11 +340,10 @@ export function MCPApprovals({
                 查看固定来源快照 →
               </Link>
             )}
-            <details className="mt-5">
-              <summary>调用绑定信息</summary>
+            <DetailDialog className="mt-5" title="调用绑定信息">
               <p>{row.id}</p>
               <p>{row.input_hash}</p>
-            </details>
+            </DetailDialog>
           </div>
         </article>
       ))}

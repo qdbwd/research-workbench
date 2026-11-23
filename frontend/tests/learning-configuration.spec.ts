@@ -96,7 +96,7 @@ test('ordinary chat and interactive tasks keep one conversation and never schedu
   test.setTimeout(60000);
   await page.goto('/');
   const send = async (message: string) => {
-    await page.getByLabel('发送给 KnowledgeOps 的消息').fill(message);
+    await page.getByLabel('发送给研发助手的消息').fill(message);
     const accepted = page.waitForResponse(
       (r) =>
         /\/api\/conversations\/[^/]+\/messages$/.test(r.url()) && r.request().method() === 'POST',

@@ -74,6 +74,9 @@ class ConversationCleaner:
             "snapshots": session.scalar(select(func.count()).select_from(db.ContinuationSnapshot).where(db.ContinuationSnapshot.conversation_id == conversation_id)),
             "history_records": session.scalar(select(func.count()).select_from(db.TaskHistoryRecord).where(db.TaskHistoryRecord.scope.in_(self._scopes(session, conversation_id)))),
             "learning_tasks": session.scalar(select(func.count()).select_from(db.LearningTask).where(db.LearningTask.conversation_id == conversation_id)),
+            "research_tasks": session.scalar(select(func.count()).select_from(db.ResearchTask).where(
+                db.ResearchTask.home_conversation_id == conversation_id,
+            )),
         }
         assets = asset_plan(session, conversation_id)
         if not assets["ready"]:
@@ -84,7 +87,8 @@ class ConversationCleaner:
             [(r.id, r.status, r.generation, r.event_sequence, r.lifecycle_state) for r in roots], sorted(set(blockers))], sort_keys=True).encode()).hexdigest()
         return {"conversation_id": row.id, "title": row.title if row.deletion_state == "active" else "已删除会话",
                 "state": row.deletion_state, "version": version, "eligible": not blockers,
-                "blockers": sorted(set(blockers)), "counts": counts, "preserved": PRESERVED,
+                "blockers": sorted(set(blockers)), "counts": counts,
+                "preserved": [*PRESERVED, "研发简报与版本"] if counts["research_tasks"] else PRESERVED,
                 "assets": {key: value for key, value in assets.items() if key != "fingerprint"}}
 
     def preview(self, conversation_id):
@@ -113,9 +117,12 @@ class ConversationCleaner:
             from knowledgeops_agent.app.conversations import touch_directory
 
             touch_directory(session)
+            from knowledgeops_agent.research.service import detach_conversation
+
+            detach_conversation(session, conversation_id)
             conversation.selected_learning_task_id, conversation.latest_snapshot_id = None, None
             job = self.jobs.create(session, "conversation", conversation_id)
-            job.phase, job.summary = "conversation_detach", {"counts": preview["counts"], "assets": preview["assets"], "preserved": PRESERVED}
+            job.phase, job.summary = "conversation_detach", {"counts": preview["counts"], "assets": preview["assets"], "preserved": preview["preserved"]}
             return job_view(job)
 
     def retry(self, identity):

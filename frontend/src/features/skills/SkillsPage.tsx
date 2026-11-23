@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { BookOpen, Download, Search, Upload } from 'lucide-react';
 import { messageOf, send, useResource } from '../../shared/api/api';
 import { useWorkspace } from '../../shared/state/workspace';
 import { Button } from '../../shared/ui/Button';
 import { Dialog } from '../../shared/ui/Dialog';
 import { Empty, ErrorBox, Loading, PageTitle } from '../../shared/ui/components';
+import { HelpHint } from '../../shared/ui/Workbench';
+import { AgentSettingsTabs } from '../tools/AgentSettingsTabs';
 import { CapabilityDetails } from '../tools/CapabilityDetails';
 import { SkillImportDialog } from './SkillImportDialog';
 import type { SkillEntry } from './types';
@@ -96,24 +97,24 @@ export function SkillsPage() {
   );
   return (
     <>
-      <PageTitle eyebrow="任务方法" title="Skills" />
-      <p className="text-muted">管理可按需读取的任务方法、脚本和配套资料。</p>
-      <nav aria-label="能力管理入口" className="mb-5 flex flex-wrap gap-4 text-sm">
-        <Link to="/tools">工具与能力</Link>
-        <Link to="/mcp">MCP 服务</Link>
-      </nav>
+      <PageTitle title="智能体设置" />
+      <AgentSettingsTabs />
+      <div className="mb-3 flex items-center gap-1">
+        <h2 className="m-0 text-lg font-semibold">技能</h2>
+        <HelpHint label="技能说明">技能可以提供按需读取的任务方法，也可以附带脚本和参考资料。</HelpHint>
+      </div>
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <label className="flex min-w-0 items-center gap-2 rounded-lg border border-line bg-white px-3 text-muted">
-          <Search size={17} />
+        <div className="relative w-full max-w-72 text-control">
           <input
             aria-label="搜索技能"
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            className="min-w-0 border-0 bg-transparent"
+            className="min-w-0 bg-white pr-10"
             placeholder="搜索名称或用途"
           />
-        </label>
+          <Search size={17} className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2" />
+        </div>
         <Button
           disabled={busy}
           onClick={() => {
@@ -143,7 +144,7 @@ export function SkillsPage() {
           导入 SKILL.md 或一个完整文件包即可开始。
         </Empty>
       )}
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid auto-rows-fr gap-4 md:grid-cols-2">
         {shown.map((skill) => (
           <article
             key={skill.name}
@@ -152,10 +153,10 @@ export function SkillsPage() {
           >
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
-                <h2 className="m-0 text-base font-semibold [overflow-wrap:anywhere]">
+                <h2 className="m-0 truncate text-base font-semibold" title={skill.display_name}>
                   {skill.display_name}
                 </h2>
-                <p className="mb-0 mt-1 text-xs text-muted [overflow-wrap:anywhere]">
+                <p className="mb-0 mt-1 truncate text-xs text-control">
                   {skill.name} · 修订 {skill.revision}
                 </p>
               </div>
@@ -174,13 +175,13 @@ export function SkillsPage() {
                 {skill.enabled ? '已启用' : '停用'}
               </label>
             </div>
-            <p className="mb-4 flex-1 text-sm text-muted [overflow-wrap:anywhere]">
+            <p className="my-3 line-clamp-2 h-10 text-sm leading-5 text-control [overflow-wrap:anywhere]">
               {skill.summary || skill.description}
             </p>
             {skill.unavailable_reason && (
-              <p className="rounded-lg bg-[#fbf4e9] p-3 text-xs">{skill.unavailable_reason}</p>
+              <p className="mb-3 truncate rounded-lg bg-[#fbf4e9] px-3 py-2 text-xs" title={skill.unavailable_reason}>{skill.unavailable_reason}</p>
             )}
-            <div className="flex flex-wrap items-center gap-3 border-t border-line pt-3 text-sm">
+            <div className="mt-auto flex flex-wrap items-center gap-3 border-t border-line pt-3 text-sm">
               <button
                 type="button"
                 className="inline-flex items-center gap-1 text-brand"

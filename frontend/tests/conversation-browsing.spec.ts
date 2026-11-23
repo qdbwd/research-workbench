@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 test('all chats remain reachable and body search opens the exact historical message on desktop and mobile', async ({ page, request }, info) => {
   const seed = await (await request.post('/api/__offline/conversation-browsing-seed')).json();
   await page.goto('/');
-  await page.locator('.recent').getByRole('link', { name: '查看全部会话与搜索 →' }).click();
+  await page.locator('.recent').getByRole('link', { name: '查看全部会话' }).click();
   await expect(page.getByRole('heading', { name: '全部会话' })).toBeVisible();
   await page.getByRole('searchbox').fill(seed.token);
   await page.getByRole('button', { name: '搜索', exact: true }).click();

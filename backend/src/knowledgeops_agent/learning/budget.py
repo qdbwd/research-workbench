@@ -46,6 +46,9 @@ def active_unit(session, root: Run, active_ms: int, *, lock=False):
 
 def settle_time(session, root: Run):
     """只统计根运行的活跃墙钟时间，子运行与主运行重叠的时间不重复相加。"""
+    from knowledgeops_agent.research.autonomy import settle_time as settle_research_time
+
+    settle_research_time(session, root)
     if root.parent_id is None and root.learning_unit_id:
         unit = session.scalar(
             select(LearningUnit).where(LearningUnit.id == root.learning_unit_id).with_for_update()
@@ -61,6 +64,11 @@ def reserve_model(jobs, reservation: str, root_id: str, run_id: str):
     with jobs.sessions.begin() as session:
         root = jobs._locked(session, root_id)
         jobs._check(root, for_child=run_id != root_id)
+        from knowledgeops_agent.research.autonomy import reserve_model as reserve_research_model
+        from knowledgeops_agent.research.execution import guard as guard_research
+
+        guard_research(session, root)
+        reserve_research_model(session, jobs, root, run_id, reservation)
         unit = active_unit(session, root, jobs._active_ms(root), lock=True)
         if unit is None:
             return

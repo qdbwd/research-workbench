@@ -7,6 +7,8 @@ import json
 def normalized_inputs(value: dict) -> dict:
     result = {"auxiliary": False, **value}
     result.pop("runtime_settings", None)
+    result.pop("trial_case", None)
+    result.pop("research", None)
     result["reasoning"] = result.get("reasoning", {}).get("requested", "default")
     return result
 

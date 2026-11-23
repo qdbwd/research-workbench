@@ -45,6 +45,7 @@ class Source(Base):
     identity_key: Mapped[str] = mapped_column(Text, unique=True)
     title: Mapped[str] = mapped_column(String(500))
     kind: Mapped[str] = mapped_column(String(30))
+    trial_conversation_id: Mapped[str | None] = mapped_column(ForeignKey("conversations.id"), index=True)
     origin: Mapped[str | None] = mapped_column(Text)
     # 旧来源没有保存意图，不能从文件名或运行日志推断后自动回收。
     ownership_known: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
@@ -117,6 +118,25 @@ class SourceSegment(Base):
     error: Mapped[str | None] = mapped_column(Text)
 
 
+class SourceSearchChunk(Base):
+    """可重建的材料片段索引，偏移相对于不可变的来源片段。"""
+
+    __tablename__ = "source_search_chunks"
+    segment_id: Mapped[str] = mapped_column(
+        ForeignKey("source_segments.id", ondelete="CASCADE"), primary_key=True
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer, primary_key=True)
+    start: Mapped[int] = mapped_column(Integer)
+    end: Mapped[int] = mapped_column(Integer)
+    body_tokens: Mapped[str] = mapped_column(Text)
+    __table_args__ = (
+        Index(
+            "ix_source_chunks_bm25", "segment_id", "chunk_index",
+            text("(body_tokens::pdb.whitespace)"), postgresql_using="paradedb",
+        ),
+    )
+
+
 class DeliveredFile(Base):
     """用户已收到的独立文件资产；来源Run仅用于追溯，不授予级联删除权。"""
 
@@ -138,6 +158,7 @@ class KnowledgeDocument(Base):
     __tablename__ = "knowledge_documents"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     workspace_path: Mapped[str | None] = mapped_column(Text, unique=True)
+    trial_conversation_id: Mapped[str | None] = mapped_column(ForeignKey("conversations.id"), index=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # use_alter 明确循环外键的建表顺序；新建文档可在同一事务先插入空指针再设置。
     current_version_id: Mapped[str | None] = mapped_column(
@@ -327,6 +348,7 @@ class Conversation(Base):
     title: Mapped[str] = mapped_column(String(300), default="新对话")
     creation_key: Mapped[str | None] = mapped_column(String(200), unique=True)
     creation_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    trial_case: Mapped[str | None] = mapped_column(String(80))
     activity_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     messages_revision: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
     # 先封闭读写再跨存储清理；墓碑不保存已删除聊天正文。
@@ -345,6 +367,212 @@ class Conversation(Base):
     latest_snapshot_id: Mapped[str | None] = mapped_column(
         ForeignKey("continuation_snapshots.id", use_alter=True, name="fk_latest_continuation")
     )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ResearchMethodBundle(Base):
+    """按内容摘要标识已用于实际研发的专业方法正文。"""
+
+    __tablename__ = "research_method_bundles"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    content: Mapped[dict] = mapped_column(JSONB)
+
+
+class ResearchTask(Base):
+    """第一阶段仅保存任务身份与授权控制版本；会话可解除绑定。"""
+
+    __tablename__ = "research_tasks"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["main_branch_id", "id"], ["research_branches.id", "research_branches.task_id"],
+            name="fk_research_task_main_branch", use_alter=True, deferrable=True, initially="DEFERRED",
+        ),
+        CheckConstraint("control_version >= 1", name="ck_research_task_control_version"),
+        CheckConstraint(
+            "status IN ('open','paused','awaiting_acceptance','completed','closed')",
+            name="ck_research_task_status",
+        ),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    title: Mapped[str] = mapped_column(String(300))
+    home_conversation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("conversations.id", ondelete="SET NULL"), unique=True,
+    )
+    main_branch_id: Mapped[str] = mapped_column(String(36))
+    status: Mapped[str] = mapped_column(String(24))
+    control_version: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ResearchBranch(Base):
+    """head 指向当前研究，pending_delivery_id 阻止尚未完成的交付收尾被越过。"""
+
+    __tablename__ = "research_branches"
+    __table_args__ = (
+        UniqueConstraint("id", "task_id", name="uq_research_branch_task"),
+        ForeignKeyConstraint(
+            ["head_revision_id", "id"], ["research_revisions.id", "research_revisions.branch_id"],
+            name="fk_research_branch_head", use_alter=True, deferrable=True, initially="DEFERRED",
+        ),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("research_tasks.id"), index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    head_revision_id: Mapped[str] = mapped_column(String(36))
+    pending_delivery_id: Mapped[str | None] = mapped_column(
+        ForeignKey("research_deliveries.id", use_alter=True, name="fk_research_branch_pending_delivery"),
+    )
+    fork_commit_id: Mapped[str | None] = mapped_column(
+        ForeignKey("research_commits.id", use_alter=True, name="fk_research_branch_fork_commit"),
+    )
+
+
+class ResearchRevision(Base):
+    """保留完整快照和父版本；编辑只允许追加新行。"""
+
+    __tablename__ = "research_revisions"
+    __table_args__ = (
+        UniqueConstraint("id", "branch_id", name="uq_research_revision_branch"),
+        UniqueConstraint("branch_id", "number", name="uq_research_revision_number"),
+        ForeignKeyConstraint(
+            ["parent_revision_id", "branch_id"], ["research_revisions.id", "research_revisions.branch_id"],
+            name="fk_research_revision_parent",
+        ),
+        CheckConstraint(
+            "(number = 1 AND parent_revision_id IS NULL) OR (number > 1 AND parent_revision_id IS NOT NULL)",
+            name="ck_research_revision_parent",
+        ),
+        CheckConstraint("schema_version >= 1", name="ck_research_revision_schema_version"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    branch_id: Mapped[str] = mapped_column(ForeignKey("research_branches.id"))
+    number: Mapped[int] = mapped_column(Integer)
+    parent_revision_id: Mapped[str | None] = mapped_column(String(36))
+    schema_version: Mapped[int] = mapped_column(Integer)
+    state: Mapped[dict] = mapped_column(JSONB)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    actor: Mapped[str] = mapped_column(String(20))
+    origin: Mapped[str] = mapped_column(String(40))
+    reason: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ResearchCommit(Base):
+    """用户确认的正式提交。原研究修订及实验和成果容量独立于活跃状态。"""
+
+    __tablename__ = "research_commits"
+    __table_args__ = (
+        UniqueConstraint("branch_id", "number", name="uq_research_commit_number"),
+        ForeignKeyConstraint(
+            ["revision_id", "branch_id"], ["research_revisions.id", "research_revisions.branch_id"],
+            name="fk_research_commit_revision",
+        ),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    branch_id: Mapped[str] = mapped_column(ForeignKey("research_branches.id"))
+    revision_id: Mapped[str] = mapped_column(String(36))
+    parent_commit_id: Mapped[str | None] = mapped_column(ForeignKey("research_commits.id"))
+    number: Mapped[int] = mapped_column(Integer)
+    message: Mapped[str] = mapped_column(Text)
+    snapshot: Mapped[dict] = mapped_column(JSONB)
+    snapshot_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ResearchMap(Base):
+    """带内容摘要的固定地图清单，可由多个研究修订共同引用。"""
+
+    __tablename__ = "research_maps"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    content: Mapped[dict] = mapped_column(JSONB)
+
+
+class ResearchDelivery(Base):
+    """冻结成果正文和提交依据；验收决定单独记录，原交付内容保持原样。"""
+
+    __tablename__ = "research_deliveries"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["source_revision_id", "branch_id"], ["research_revisions.id", "research_revisions.branch_id"],
+            name="fk_research_delivery_source",
+        ),
+        CheckConstraint(
+            "status IN ('finalizing','blocked','submitted','accepted','changes_requested','superseded')",
+            name="ck_research_delivery_status",
+        ),
+        CheckConstraint("drain_state IN ('pending','blocked','settled')", name="ck_research_delivery_drain"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    branch_id: Mapped[str] = mapped_column(ForeignKey("research_branches.id"), index=True)
+    source_revision_id: Mapped[str] = mapped_column(String(36))
+    submit_run_id: Mapped[str] = mapped_column(String(36))
+    status: Mapped[str] = mapped_column(String(24), default="finalizing")
+    drain_state: Mapped[str] = mapped_column(String(16), default="pending")
+    content: Mapped[dict] = mapped_column(JSONB)
+    blockers: Mapped[list] = mapped_column(JSONB, default=list)
+    review_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ResearchExperiment(Base):
+    """持久实验规格、单次真人授权及独立执行器回执。重跑生成另一尝试。"""
+
+    __tablename__ = "research_experiments"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["source_revision_id", "branch_id"], ["research_revisions.id", "research_revisions.branch_id"],
+            name="fk_research_experiment_source",
+        ),
+        CheckConstraint(
+            "status IN ('awaiting_approval','approved','dispatched','running','cancel_requested',"
+            "'completed','cancelled','failed','timed_out','unknown','stale')",
+            name="ck_research_experiment_status",
+        ),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    branch_id: Mapped[str] = mapped_column(ForeignKey("research_branches.id"), index=True)
+    source_revision_id: Mapped[str] = mapped_column(String(36))
+    source_control_version: Mapped[int] = mapped_column(Integer)
+    propose_run_id: Mapped[str] = mapped_column(String(36))
+    reproduced_from: Mapped[str | None] = mapped_column(ForeignKey("research_experiments.id"))
+    specification: Mapped[dict] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(String(24), default="awaiting_approval")
+    reason: Mapped[str | None] = mapped_column(Text)
+    evidence_id: Mapped[str | None] = mapped_column(String(36))
+    receipt: Mapped[dict | None] = mapped_column(JSONB)
+    dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ResearchPermit(Base):
+    """一段由真人批准的研发生命周期；计数跨运行、子任务与恢复保留。"""
+
+    __tablename__ = "research_permits"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["branch_id", "task_id"], ["research_branches.id", "research_branches.task_id"],
+            name="fk_research_permit_branch",
+        ),
+        ForeignKeyConstraint(
+            ["scope_revision_id", "branch_id"], ["research_revisions.id", "research_revisions.branch_id"],
+            name="fk_research_permit_scope",
+        ),
+        CheckConstraint(
+            "status IN ('active','paused','recovery_required','exhausted','revoked')",
+            name="ck_research_permit_status",
+        ),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    task_id: Mapped[str] = mapped_column(String(36), index=True)
+    branch_id: Mapped[str] = mapped_column(String(36))
+    scope_revision_id: Mapped[str] = mapped_column(String(36))
+    status: Mapped[str] = mapped_column(String(24), default="active")
+    budgets: Mapped[dict] = mapped_column(JSONB)
+    usage: Mapped[dict] = mapped_column(JSONB, default=dict)
+    latest_run_id: Mapped[str | None] = mapped_column(String(36))
+    reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -471,6 +699,7 @@ class Run(Base):
     conversation_sequence: Mapped[int | None] = mapped_column(Integer)
     execution_sequence: Mapped[int | None] = mapped_column(Integer)
     learning_accounted_ms: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    research_accounted_ms: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     continuation_bound: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     continuation_snapshot_id: Mapped[str | None] = mapped_column(
         ForeignKey("continuation_snapshots.id", use_alter=True, name="fk_run_continuation")

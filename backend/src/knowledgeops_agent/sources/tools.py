@@ -40,7 +40,7 @@ def list_evidence(runtime: ToolRuntime[RunContext], query: str = "",
 @tool
 def inspect_material(source_id: str, runtime: ToolRuntime[RunContext]) -> dict:
     """获得材料版本、页码、解析状态和可读取片段 ID；没有读取正文的副作用。"""
-    return runtime.context.sources.get_source(source_id)
+    return runtime.context.sources.get_source(source_id, root_id=runtime.context.root_id)
 
 
 @tool

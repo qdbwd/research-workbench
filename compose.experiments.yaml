@@ -1,0 +1,10 @@
+# 可信 Linux 执行器经此目录交换请求。仅 API 投递和收录，两个应用服务都不挂载 Docker 控制接口。
+services:
+  api:
+    environment:
+      RESEARCH_EXPERIMENT_EXCHANGE: /data/research-experiment-exchange
+    volumes:
+      - ${RESEARCH_EXPERIMENT_HOST_DIR:?Set RESEARCH_EXPERIMENT_HOST_DIR for experiments}:/data/research-experiment-exchange
+  worker:
+    environment:
+      RESEARCH_EXPERIMENT_EXCHANGE: /data/research-experiment-exchange

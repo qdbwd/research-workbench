@@ -235,7 +235,11 @@ def execute_run(
         else:
             # 在第一条收费解释请求之前验证/冻结核心规则，避免缺失配置仍消费额度。
             prepare_resources(context)
-            choice = ensure_publication_intent(context) if run_id == context.root_id else {}
+            research = run["input"].get("research")
+            if research:
+                services.jobs.guard(run_id, worker_id=owner)
+            trial_case = run["input"].get("trial_case")
+            choice = ensure_publication_intent(context) if run_id == context.root_id and not research and not trial_case else {}
             if choice.get("published_ids") and not choice.get("continue_task"):
                 # 单纯确认既有草稿已由可信服务完成，无需再耗一个模型请求解释回执。
                 material_outcome = {

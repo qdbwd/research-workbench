@@ -1,7 +1,7 @@
-import { ArrowLeft } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { Button } from '../../shared/ui/Button';
 import { Badge, ErrorBox, Loading, PageTitle } from '../../shared/ui/components';
+import { BackLink } from '../../shared/ui/Workbench';
 import { RunDiagnostics } from './RunDiagnostics';
 import { useRunDetails } from './useRunDetails';
 import { RemovedRun } from './DeleteRun';
@@ -15,14 +15,8 @@ export function RunDiagnosticsPage() {
 
   return (
     <div className="min-w-0">
-      <Link
-        className="back-link mb-[15px] inline-flex items-center gap-1.5 text-xs"
-        to={`/runs/${runId}`}
-      >
-        <ArrowLeft size={15} />
-        返回任务详情
-      </Link>
-      <PageTitle eyebrow="DIAGNOSTICS" title="任务诊断">
+      <BackLink to={`/runs/${runId}`}>返回任务详情</BackLink>
+      <PageTitle title="任务诊断">
         <div className="flex flex-wrap items-center gap-3">
           {run?.conversation_id && (
             <Link className="button secondary button-secondary" to={`/chat/${run.conversation_id}`}>

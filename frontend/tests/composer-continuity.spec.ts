@@ -2,7 +2,7 @@ import { chromium, expect, test } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import type { Page } from '@playwright/test';
 
-const input = (page: Page) => page.getByRole('textbox', { name: '发送给 KnowledgeOps 的消息' });
+const input = (page: Page) => page.getByRole('textbox', { name: '发送给研发助手的消息' });
 const saved = (page: Page) => page.getByText('草稿已保存到本浏览器', { exact: true });
 
 test('a real browser profile restores a new draft after closing and restarting the browser', async ({ browserName }, info) => {
@@ -15,7 +15,9 @@ test('a real browser profile restores a new draft after closing and restarting t
     await page.goto('/');
     await input(page).fill('关闭浏览器后仍要保留这段思路');
     await page.getByRole('button', { name: '更多设置与材料', exact: true }).click();
+    await page.getByRole('button', { name: '本次任务设置' }).click();
     await page.getByRole('checkbox', { name: '允许辅助模型' }).check();
+    await page.getByRole('button', { name: '完成', exact: true }).click();
     await expect(saved(page)).toBeVisible();
     const identity = new URL(page.url()).searchParams.get('draft');
     expect(identity).toBeTruthy();
@@ -26,8 +28,9 @@ test('a real browser profile restores a new draft after closing and restarting t
     await expect(input(page)).toHaveValue('关闭浏览器后仍要保留这段思路');
     expect(new URL(page.url()).searchParams.get('draft')).toBe(identity);
     await page.getByRole('button', { name: '更多设置与材料', exact: true }).click();
+    await page.getByRole('button', { name: '本次任务设置' }).click();
     await expect(page.getByRole('checkbox', { name: '允许辅助模型' })).toBeChecked();
-    await page.getByRole('button', { name: '更多设置与材料', exact: true }).click();
+    await page.getByRole('button', { name: '完成', exact: true }).click();
     await page.screenshot({ path: info.outputPath('restored-draft.png') });
     await page.getByRole('button', { name: '放弃草稿', exact: true }).click();
     await page.getByRole('button', { name: '确认放弃草稿', exact: true }).click();
@@ -140,7 +143,7 @@ test('a storage failure keeps in-memory input and blocks sending until saving re
 });
 
 test('deleting a conversation clears the other tab and cannot resurrect its draft on reload', async ({ page, context, request }) => {
-  const chat = await (await request.post('/api/conversations', { data: { title: '草稿删除验收' } })).json();
+  const chat = await (await request.post('/api/__offline/lifecycle-seed')).json();
   await page.goto(`/chat/${chat.id}`);
   await input(page).fill('即将删除的未发送输入');
   await expect(saved(page)).toBeVisible();
@@ -148,7 +151,8 @@ test('deleting a conversation clears the other tab and cannot resurrect its draf
   await other.goto(`/chat/${chat.id}`);
   await expect(input(other)).toHaveValue('即将删除的未发送输入');
   await request.post('/api/__offline/assets-ready');
-  await page.getByRole('button', { name: '删除会话', exact: true }).click();
+  await page.locator(`.recent a[href="/chat/${chat.id}"]`).click({ button: 'right' });
+  await page.getByRole('menuitem', { name: '删除会话', exact: true }).click();
   await page.getByRole('button', { name: '确认删除会话', exact: true }).click();
   await expect(input(other)).toHaveValue('');
   await expect(input(other)).toBeDisabled();

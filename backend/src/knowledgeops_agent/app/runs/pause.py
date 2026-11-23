@@ -1,11 +1,13 @@
 """可接续暂停的持久控制：请求只设标志，执行者在图安全边界确认停下。"""
 
+from contextlib import nullcontext
+
 from knowledgeops_agent.app.runs.children import pause_queued_children, sync_group_clock
 from knowledgeops_agent.persistence.models import Run, RunControl
 
 
-def request_pause(jobs, run_id: str) -> dict:
-    with jobs.sessions.begin() as session:
+def request_pause(jobs, run_id: str, *, session=None) -> dict:
+    with (jobs.sessions.begin() if session is None else nullcontext(session)) as session:
         run = jobs._locked(session, run_id)
         if run.parent_id or run.kind not in {"agent", "memory_classification"}:
             raise ValueError("暂停入口用于根 Agent 或记忆分类任务；子任务随根任务暂停")

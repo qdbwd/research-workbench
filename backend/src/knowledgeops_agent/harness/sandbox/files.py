@@ -104,6 +104,7 @@ class FileCall:
     state: dict
     journal: Any
     read_verified: bool = False
+    read_excerpt: tuple[str, int] | None = None
 
 
 current_file_call: ContextVar[FileCall | None] = ContextVar("knowledgeops_file_call", default=None)
@@ -357,4 +358,15 @@ class FileReliabilityMiddleware(AgentMiddleware):
                 if before != journal.mark(path):
                     raise ValueError("读取过程中内容已变化，请重新读取")
                 message.additional_kwargs = {**message.additional_kwargs, READ_MARK_KEY: before}
+                if scope.read_excerpt and isinstance(message.content, str) and len(message.content) <= 10000:
+                    from knowledgeops_agent.research.evidence import capture_excerpt
+
+                    text, start = scope.read_excerpt
+                    identity = capture_excerpt(
+                        scope.context, kind="file", title=before["path"], text=text,
+                        start=start, end=start + len(text.splitlines()), offset_unit="lines",
+                        file_sha256=before["hash"],
+                    )
+                    if identity:
+                        message.content = f"固定文件证据 ID：{identity}\n\n" + message.content
             return result

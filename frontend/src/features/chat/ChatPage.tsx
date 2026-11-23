@@ -1,7 +1,7 @@
 import { Button } from '../../shared/ui/Button';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowUp, FileText, Sparkles, Square, Activity, ArrowDown } from 'lucide-react';
+import { FileText, Square, Activity, ArrowDown, FlaskConical, MessageSquare, X } from 'lucide-react';
 import {
   api,
   messageOf,
@@ -11,7 +11,7 @@ import {
   useResource,
 } from '../../shared/api/api';
 import type { CollectionPage } from '../../shared/api/api';
-import { Badge, Empty, ErrorBox, Loading, Markdown, PageTitle } from '../../shared/ui/components';
+import { Badge, Empty, ErrorBox, Loading, Markdown } from '../../shared/ui/components';
 import type {
   ChangeSet,
   Guidance,
@@ -26,13 +26,18 @@ import { ComposerControls } from './ComposerControls';
 import { useComposerDraft } from './useComposerDraft';
 import { ComposerRecovery } from './ComposerRecovery';
 import type { DraftData } from './drafts/store';
-import { ConversationLearning } from '../learning/LearningPage';
 import { RunPauseControl } from '../runs/RunPauseControl';
 import { RunQuestions } from '../runs/RunQuestions';
 import { RunChildren } from '../runs/RunChildren';
-import { DeleteConversationDialog } from './DeleteConversationDialog';
 import { RunOutcome } from '../runs/RunOutcome';
 import { useMessageHistory } from './useMessageHistory';
+import { ChatEvidencePane, useNarrowChatPane } from './ChatEvidencePane';
+import type { EvidenceTab } from './ChatEvidencePane';
+import { ResearchControls } from '../research/ResearchControls';
+import { ResearchChatPane } from '../research/ResearchChatPane';
+import { ResearchTrialStarter, type TrialCatalog, type TrialPrompt } from './ResearchTrialStarter';
+import { researchStatuses } from '../research/api';
+import type { ResearchTask } from '../research/api';
 
 type ConversationSettings = { permission_mode: string; reasoning_effort: string; revision: number };
 
@@ -155,15 +160,97 @@ function LiveRun({ initial, onChanged }: { initial: Run; onChanged: () => void }
 
 export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled?: boolean } = {}) {
   const { conversationId } = useParams();
+  const [evidenceView, setEvidenceView] = useState<{
+    conversation: string | undefined; tabs: EvidenceTab[]; active: string | null; narrowVisible: boolean;
+  }>({ conversation: conversationId, tabs: [], active: null, narrowVisible: false });
+  const evidenceTriggers = useRef(new Map<string, HTMLAnchorElement>());
+  const narrow = useNarrowChatPane();
+  const currentEvidence = evidenceView.conversation === conversationId ? evidenceView : null;
+  const shownEvidence = currentEvidence && (!narrow || currentEvidence.narrowVisible) ? currentEvidence.active : null;
+  const openEvidence = (id: string, label: string, trigger: HTMLAnchorElement) => {
+    evidenceTriggers.current.set(id, trigger);
+    setEvidenceView((previous) => {
+      const tabs = previous.conversation === conversationId ? previous.tabs : [];
+      return { conversation: conversationId, tabs: tabs.some((tab) => tab.id === id) ? tabs : [...tabs, { id, label }],
+        active: id, narrowVisible: true };
+    });
+  };
+  const restoreCitationFocus = (id: string) => {
+    const trigger = evidenceTriggers.current.get(id);
+    requestAnimationFrame(() => trigger?.focus({ preventScroll: true }));
+  };
+  const closeEvidence = (id: string) => {
+    if (!currentEvidence) return;
+    const index = currentEvidence.tabs.findIndex((tab) => tab.id === id);
+    const tabs = currentEvidence.tabs.filter((tab) => tab.id !== id);
+    const active = currentEvidence.active === id ? tabs[Math.min(index, tabs.length - 1)]?.id ?? null : currentEvidence.active;
+    setEvidenceView({ ...currentEvidence, tabs, active });
+    if (!active) restoreCitationFocus(id);
+    evidenceTriggers.current.delete(id);
+  };
+  useEffect(() => () => evidenceTriggers.current.clear(), [conversationId]);
   const navigate = useNavigate();
   const { version, refresh } = useWorkspace();
   const [searchParams, setSearchParams] = useSearchParams();
   const anchor = searchParams.get('message');
+  const research = useResource<ResearchTask | null>(
+    conversationId ? `/api/conversations/${encodeURIComponent(conversationId)}/research-task` : null,
+    version,
+  );
+  const [researchTab, setResearchTab] = useState<{ taskId: string; selected: boolean } | null>(null);
+  const tabId = useId();
+  const strip = useRef<HTMLButtonElement>(null);
+  const conversationTab = useRef<HTMLButtonElement>(null);
+  const openedResearchTab = useRef<HTMLButtonElement>(null);
+  const [controlledResearch, setControlledResearch] = useState<ResearchTask | null>(null);
+  const loadedResearch = conversationId && research.data?.home_conversation_id === conversationId ? research.data : null;
+  const researchTask = loadedResearch && controlledResearch?.id === loadedResearch.id
+    && controlledResearch.control_version > loadedResearch.control_version ? controlledResearch : loadedResearch;
+  const hasResearchTab = Boolean(researchTask && researchTab?.taskId === researchTask.id);
+  const showResearch = hasResearchTab && researchTab?.selected;
+  function selectResearchTab(selected: boolean) {
+    if (!researchTask) return;
+    setResearchTab({ taskId: researchTask.id, selected });
+    requestAnimationFrame(() => (selected ? openedResearchTab.current : conversationTab.current)?.focus({ preventScroll: true }));
+  }
+  function closeResearchTab() {
+    setResearchTab(null);
+    requestAnimationFrame(() => strip.current?.focus({ preventScroll: true }));
+  }
+  const researchBound = Boolean(researchTask && !['closed', 'completed'].includes(researchTask.status));
   const composer = useComposerDraft(conversationId, searchParams.get('draft') ?? undefined);
   const { state: composerState, session: composerSession } = composer;
-  const { content, selected, mode, knowledgeOnly, delegation, auxiliary, reasoning, permission } = composerState.data;
+  const { content, selected, mode, knowledgeOnly, delegation, auxiliary, reasoning, permission, researchMode, trialCase } = composerState.data;
+  const trial = useResource<TrialCatalog | null>(conversationId
+    ? `/api/conversations/${encodeURIComponent(conversationId)}/trial` : '/api/research-trial');
+  const trialCatalog = trial.data?.prompts?.length ? trial.data : null;
+  const researchGoalInvalid = Boolean(researchMode && Array.from(content.trim()).length > 2000);
   const edit = <K extends keyof DraftData>(key: K, value: DraftData[K]) => composerSession.edit({ [key]: value });
   const setContent = (value: string) => edit('content', value);
+  const messageInput = useRef<HTMLTextAreaElement>(null);
+  function chooseTrial(prompt: TrialPrompt) {
+    if (!trialCatalog || conversationId || composerState.record?.pending) return;
+    const untouched = trialCatalog.prompts.some((candidate) => candidate.text === content);
+    const draft = content.trim() && !untouched ? `${prompt.text}\n\n${content}` : prompt.text;
+    composerSession.edit({ content: draft, trialCase: trialCatalog.key,
+      researchMode: prompt.mode === 'research' ? true : undefined });
+    messageInput.current?.focus();
+  }
+  function organizeKnowledge() {
+    const instruction = '请将相关讨论或材料整理成知识库文章。';
+    if (!content.startsWith(instruction)) {
+      setContent(content ? instruction + '\n\n' + content : instruction);
+    }
+    messageInput.current?.focus();
+  }
+  function selectResearchMode(value: true | undefined) {
+    edit('researchMode', value);
+    messageInput.current?.focus();
+  }
+  function researchChanged(next: ResearchTask) {
+    setControlledResearch(next);
+    refresh();
+  }
   const setSelected = (value: string[]) => edit('selected', value);
   const completed = useRef<string | null>(null);
   useEffect(() => {
@@ -172,7 +259,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
     if (result && completed.current !== result.id) {
       completed.current = result.id;
       refresh();
-      if (result.intent === 'materials') navigate(`/sources?conversation_id=${encodeURIComponent(result.conversationId)}`);
+      if (result.intent === 'materials') navigate(`/sources?conversation_id=${encodeURIComponent(result.conversationId)}`, { state: { openImport: true } });
       else if (conversationId !== result.conversationId) navigate(`/chat/${result.conversationId}`, { replace: true });
       return;
     }
@@ -302,16 +389,19 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
   const [operationBusy, setBusy] = useState(false);
   const busy = operationBusy || composerState.busy;
   const [error, setError] = useState('');
-  const [deleting, setDeleting] = useState(false);
   const onChanged = useCallback(() => refresh(), [refresh]);
   async function manageMaterials() {
     if (busy || settingBusy) return;
+    if (!conversationId && trialCase) {
+      setError('发送试用问题后可追加材料，也可以先退出试用。');
+      return;
+    }
     setBusy(true);
     setError('');
     try {
       if (conversationId) {
         await composerSession.flush();
-        navigate(`/sources?conversation_id=${encodeURIComponent(conversationId)}`);
+        navigate(`/sources?conversation_id=${encodeURIComponent(conversationId)}`, { state: { openImport: true } });
       } else await composerSession.submit('materials');
     } catch (failure) {
       setError(messageOf(failure));
@@ -322,6 +412,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
   async function submit() {
     if (
       !content.trim() ||
+      researchGoalInvalid || (researchMode && researchBound) ||
       busy ||
       settingBusy ||
       !composerState.ready || !composerState.persisted || composerState.record?.pending ||
@@ -334,7 +425,8 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
     try {
       composerSession.edit({ reasoning: chosenReasoning, permission: chosenPermission });
       following.current = true;
-      await composerSession.submit();
+      await composerSession.submit(researchMode ? 'research' : 'send');
+      if (researchMode) refresh();
     } catch (error) {
       setError(messageOf(error));
     } finally {
@@ -356,10 +448,37 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
           (run.status === 'interrupted' && run.outcome.kind === 'waiting_approval')),
     );
   const hasQueued = runs.data.some((run) => run.status === 'queued');
+  const latestExecution = runs.data.find((run) => run.kind !== 'research_start');
   const pending =
     drafts.data?.filter((draft) => ['draft', 'approved'].includes(draft.status)) ?? [];
   return (
-    <div className="chat-page flex min-h-0 w-full flex-1 flex-col">
+    <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
+    {hasResearchTab && <div className="flex shrink-0 gap-1 border-b border-line bg-white px-3 py-1.5" role="tablist" aria-label="工作区标签页"
+      inert={narrow && Boolean(shownEvidence)}
+      onKeyDown={(event) => {
+        if ((event.target as HTMLElement).getAttribute('role') !== 'tab' || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        selectResearchTab(event.key === 'Home' ? false : event.key === 'End' ? true : !showResearch);
+      }}>
+      <button type="button" ref={conversationTab} role="tab" id={`${tabId}-chat`} aria-controls={`${tabId}-chat-panel`}
+        aria-selected={!showResearch} tabIndex={showResearch ? -1 : 0} data-active={!showResearch || undefined}
+        className="evidence-tab flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs" onClick={() => selectResearchTab(false)}>
+        <MessageSquare size={14} aria-hidden="true" /> 会话
+      </button>
+      <div data-active={showResearch || undefined} className="evidence-tab flex items-center rounded-lg">
+        <button type="button" ref={openedResearchTab} role="tab" id={`${tabId}-research`} aria-controls={`${tabId}-research-panel`}
+          aria-selected={Boolean(showResearch)} tabIndex={showResearch ? 0 : -1}
+          className="flex items-center gap-1.5 rounded-lg py-1.5 pl-2.5 pr-1 text-xs" onClick={() => selectResearchTab(true)}>
+          <FlaskConical size={14} aria-hidden="true" /> 研发任务
+        </button>
+        <button type="button" className="mr-1 rounded-md p-1 text-control hover:bg-sidebar" aria-label="关闭研发任务标签"
+          onClick={closeResearchTab}><X size={13} aria-hidden="true" /></button>
+      </div>
+    </div>}
+    <div className="relative flex min-h-0 w-full flex-1 overflow-hidden">
+    <div className={`chat-page min-h-0 min-w-0 flex-1 flex-col ${showResearch ? 'hidden' : 'flex'}`}
+      role={hasResearchTab ? 'tabpanel' : undefined} id={`${tabId}-chat-panel`} aria-labelledby={hasResearchTab ? `${tabId}-chat` : undefined}
+      inert={showResearch || (narrow && Boolean(shownEvidence))}>
       <div
         className="chat-scroll scrollbar-subtle min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable_both-edges]"
         ref={scrollArea}
@@ -372,58 +491,12 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
         }}
       >
         <div
-          className="chat-content mx-auto w-full max-w-[1168px] px-11 pt-[35px] pb-6 max-lg:px-7 max-lg:pt-7 max-md:px-4 max-md:pt-3"
+          className={`chat-content mx-auto w-full max-w-[1168px] px-11 pt-[35px] pb-6 max-lg:px-7 max-lg:pt-7 max-md:px-4 max-md:pt-3 ${conversationId ? '' : 'flex min-h-full flex-col justify-center'}`}
           ref={historyArea}
         >
-          <PageTitle
-            eyebrow="THINK · RESEARCH · REMEMBER"
-            title={conversationId ? '继续这段思考' : '把探索变成可积累的知识'}
-          >
-            {conversationId ? (
-              <div className="row flex items-center gap-3 wrap flex-wrap">
-                <Button
-                  className="button secondary button-secondary small text-xs"
-                  onClick={() => setDeleting(true)}
-                >
-                  删除会话
-                </Button>
-              </div>
-            ) : (
-              <span className="workspace-label rounded-[5px] border border-line px-2.5 py-[5px] text-[11px] whitespace-nowrap text-[#7b887f] max-lg:hidden">
-                KnowledgeOps 工作台
-              </span>
-            )}
-          </PageTitle>
-          {deleting && conversationId && (
-            <DeleteConversationDialog
-              conversationId={conversationId}
-              onClose={() => setDeleting(false)}
-              onDeleted={() => {
-                setDeleting(false);
-                navigate('/', { replace: true });
-              }}
-            />
-          )}
-          {conversationId && <ConversationLearning conversationId={conversationId} />}
-          <div className="conversation mx-auto w-full max-w-[840px] flex-1">
+          <div className={`conversation mx-auto w-full max-w-[840px] ${conversationId ? '' : 'flex min-h-0 flex-col'}`}>
             {!conversationId && (
-              <div className="welcome px-5 pt-[55px] pb-[70px] text-center max-md:px-0 max-md:pt-[30px] max-md:pb-[45px] [&>h2]:mb-[13px] [&>h2]:text-2xl [&>h2]:tracking-[-0.5px] max-md:[&>h2]:text-xl [&>p]:mb-7 [&>p]:text-[13px] [&>p]:text-[#7c8c7d] max-md:[&>p]:text-xs">
-                <div className="welcome-mark mx-auto mb-[23px] grid size-[58px] place-items-center rounded-2xl bg-[#e6eddf] text-[#5b7b52]">
-                  <Sparkles size={28} />
-                </div>
-                <h2>从一个问题，或一份材料开始。</h2>
-                <p>一起研究、整理和维护知识。每一次结论，都可以回到它的来源。</p>
-                <div className="suggestions flex flex-wrap justify-center gap-3 [&>a]:flex [&>a]:items-center [&>a]:gap-3 [&>a]:rounded-lg [&>a]:border [&>a]:border-[#dce4d6] [&>a]:bg-[#fafbf7] [&>a]:px-[15px] [&>a]:py-3 [&>a]:text-xs [&>a]:font-normal [&>a]:text-[#6d7e6b] [&>button]:flex [&>button]:gap-3 [&>button]:border-[#dce4d6] [&>button]:bg-[#fafbf7] [&>button]:px-[15px] [&>button]:py-3 [&>button]:text-xs [&>button]:font-normal [&>button]:text-[#6d7e6b]">
-                  <Button disabled={!composerState.ready || composerState.record?.deleted}
-                    onClick={() => setContent('帮我梳理知识库中已有的主题，指出值得补充的内容。')}
-                  >
-                    梳理已有知识 <ArrowUp size={14} />
-                  </Button>
-                  <Button disabled={busy} onClick={() => void manageMaterials()}>
-                    导入学习材料 <FileText size={15} />
-                  </Button>
-                </div>
-              </div>
+              <h1 className="m-0 text-center text-[clamp(1.55rem,3.2vw,2.1rem)] leading-tight font-semibold">今天想研究什么？</h1>
             )}
             <ErrorBox
               message={
@@ -451,7 +524,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
                 aria-label={anchor === message.id ? '搜索命中的消息' : undefined}
               >
                 <div className="message-label mb-3 flex justify-between text-xs font-semibold text-[#45644a] [&>span]:text-[10px] [&>span]:font-normal [&>span]:text-[#a3aca0]">
-                  {message.role !== 'user' && 'KnowledgeOps'}
+                  {message.role !== 'user' && '研发助手'}
                   <span className="ml-auto">
                     {new Date(message.created_at).toLocaleTimeString([], {
                       hour: '2-digit',
@@ -459,7 +532,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
                     })}
                   </span>
                 </div>
-                <Markdown text={message.content} />
+                <Markdown text={message.content} onOpenEvidence={openEvidence} />
               </article>
             ))}
             {messages.newer && <div className="my-4 text-center"><Button className="button-quiet text-xs" disabled={messages.loading}
@@ -481,7 +554,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
                   <p className="muted text-muted small text-xs">
                     进展已保留。<Link to={`/runs/${run.id}`}>查看详情或取消</Link>
                   </p>
-                  {run.outcome.answer && <Markdown text={run.outcome.answer} />}
+                  {run.outcome.answer && <Markdown text={run.outcome.answer} onOpenEvidence={openEvidence} />}
                 </section>
               ))}
             {runs.data
@@ -571,11 +644,11 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
                   <Link to={`/runs/${run.outcome.target_root_id}`}>查看投递记录</Link>
                 </p>
               ))}
-            {!active && runs.data?.[0] && (
+            {!active && latestExecution && (
               <div className="run-summary mt-2.5 mb-5 flex flex-wrap items-center gap-[9px] text-xs [&>p]:m-0 [&>p]:w-full [&>p]:text-[#8c594b]">
-                <Badge status={runs.data[0].status} />
-                <RunOutcome run={runs.data[0]} refreshKey={version} />
-                <Link to={`/runs/${runs.data[0].id}`}>任务详情 →</Link>
+                <Badge status={latestExecution.status} />
+                <RunOutcome run={latestExecution} refreshKey={version} />
+                <Link to={`/runs/${latestExecution.id}`}>任务详情 →</Link>
                 {runs.data[0].stop_reason && <p>{runs.data[0].stop_reason}</p>}
               </div>
             )}
@@ -616,6 +689,24 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
       </div>
       <div className="composer-dock relative mx-auto w-full max-w-[928px] shrink-0 px-11 pt-3 max-lg:max-w-[896px] max-lg:px-7 max-md:px-2.5">
         <ComposerRecovery state={composerState} session={composerSession} />
+        {!conversationId && trialCatalog && <ResearchTrialStarter catalog={trialCatalog} selected={trialCase === trialCatalog.key}
+          disabled={busy || !composerState.ready || Boolean(composerState.record?.pending)} onChoose={chooseTrial}
+          onLeave={() => edit('trialCase', undefined)} />}
+        {conversationId && trialCatalog && <p className="my-2 text-xs text-control" role="status">试用资料 · {trialCatalog.title}</p>}
+        {researchTask && (
+          <section aria-label="当前研发任务" className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-sidebar px-3 py-2">
+            <div className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+              <FlaskConical size={16} className="shrink-0 text-brand" />
+              <p className="m-0 truncate font-medium" title={researchTask.title}>{researchTask.title}</p>
+            </div>
+            <span className="rounded-md bg-white px-2 py-1 text-xs text-brand" role="status">
+              {researchStatuses[researchTask.status] ?? researchTask.status}
+            </span>
+            <span className="text-xs text-control">写入主线</span>
+            <Button type="button" ref={strip} className="button-secondary text-xs" onClick={() => selectResearchTab(true)}>查看研发简报</Button>
+            <ResearchControls key={researchTask.id} task={researchTask} onChanged={researchChanged} />
+          </section>
+        )}
         {(awayFromBottom || messages.newer) && (
           <Button
             type="button"
@@ -634,12 +725,13 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
           }}
         >
           <label className="sr-only" htmlFor="message">
-            发送给 KnowledgeOps 的消息
+            发送给研发助手的消息
           </label>
           <textarea
+            ref={messageInput}
             id="message"
             className="min-h-16 max-h-[min(260px,30dvh)] resize-y border-0 p-0 text-[15px] placeholder:text-[#9aa69a] focus:outline-none"
-            placeholder="提出问题，或说明希望如何整理知识…"
+            placeholder={researchMode ? '写下研发目标、范围或要验证的问题…' : '提出问题，或描述你想研究的目标…'}
             rows={3}
             disabled={!composerState.ready || composerState.record?.deleted}
             value={content}
@@ -656,9 +748,19 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
               }
             }}
           />
+          {researchGoalInvalid && <p role="alert" className="my-1 text-xs text-danger">研发目标最多 2000 字，当前输入已保留。</p>}
+          {researchMode && researchBound && <p className="my-1 text-xs text-control">此会话已有研发任务。你可以查看简报，或关闭研发模式继续普通对话。</p>}
           <ComposerControls
             conversationId={conversationId}
+            onViewResearch={researchTask ? () => selectResearchTab(true) : undefined}
+            researchLoading={research.loading}
+            onActivateResearch={!researchBound && !researchMode && composerState.ready && !composerState.record?.pending
+              ? () => selectResearchMode(true) : undefined}
+            onCloseResearch={() => selectResearchMode(undefined)}
+            researchMode={Boolean(researchMode)}
             onManageMaterials={() => void manageMaterials()}
+            onOrganizeKnowledge={organizeKnowledge}
+            composerReady={composerState.ready && !composerState.record?.deleted}
             permission={chosenPermission}
             model={model}
             modelEnabled={modelEnabled}
@@ -680,6 +782,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
             busy={busy}
             disabled={
               busy || settingBusy || Boolean(conversationId && defaults.loading) || !content.trim() ||
+              researchGoalInvalid || Boolean(researchMode && researchBound) ||
               !composerState.ready || !composerState.persisted || Boolean(composerState.record?.pending) ||
               Boolean(composerState.record?.deleted) || Boolean(composerState.record?.conflicts.length)
             }
@@ -697,6 +800,19 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
           />
         </form>
       </div>
+    </div>
+    {hasResearchTab && researchTask && <div role="tabpanel" id={`${tabId}-research-panel`} aria-labelledby={`${tabId}-research`}
+      className={`scrollbar-subtle min-h-0 min-w-0 flex-1 overflow-auto overscroll-contain ${showResearch ? '' : 'hidden'}`}
+      inert={!showResearch || (narrow && Boolean(shownEvidence))}>
+      <ResearchChatPane key={researchTask.id} task={researchTask} onChanged={researchChanged} />
+    </div>}
+    {shownEvidence && currentEvidence && <ChatEvidencePane tabs={currentEvidence.tabs} active={shownEvidence} narrow={narrow}
+      onActivate={(active) => setEvidenceView({ ...currentEvidence, active })} onClose={closeEvidence}
+      onReturn={() => {
+        setEvidenceView({ ...currentEvidence, narrowVisible: false });
+        restoreCitationFocus(shownEvidence);
+      }} />}
+    </div>
     </div>
   );
 }

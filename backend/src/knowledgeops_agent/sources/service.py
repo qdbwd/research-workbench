@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import nullcontext
 from datetime import timedelta
 from pathlib import Path
 
@@ -19,17 +20,49 @@ from knowledgeops_agent.persistence.models import (
     Evidence,
     KnowledgeVersion,
     Source,
+    SourceSearchChunk,
     SourceSegment,
     SourceVersion,
     new_id,
     utcnow,
 )
+from knowledgeops_agent.retrieval.index import add_source_chunks
+from knowledgeops_agent.retrieval.search import LexicalQuery, excerpt, search_expressions
 from knowledgeops_agent.sources.ownership import (
     claim_source,
     ownership_view,
     resolve_owner,
     scope_predicate,
+    trial_scope,
 )
+
+
+def _search_scope(session, *, root_id=None, conversation_id=None, source_ids=None):
+    latest = (
+        select(func.max(SourceVersion.number)).where(SourceVersion.source_id == Source.id)
+        .correlate(Source).scalar_subquery()
+    )
+    predicates = [
+        Source.deleted_at.is_(None), SourceVersion.number == latest,
+        SourceVersion.status == "ready", SourceSegment.status == "ready",
+        scope_predicate(session, root_id=root_id, conversation_id=conversation_id),
+    ]
+    if source_ids is not None:
+        predicates.append(Source.id.in_(source_ids))
+    return predicates
+
+
+def is_current_search_segment(session, segment_id: str, *, root_id: str, source_ids=None) -> bool:
+    """在模型请求绑定事务中复查材料来源，无新增证据或归属写入。"""
+    return session.scalar(
+        select(SourceSegment.id)
+        .join(SourceVersion, SourceVersion.id == SourceSegment.source_version_id)
+        .join(Source, Source.id == SourceVersion.source_id)
+        .where(
+            SourceSegment.id == segment_id,
+            *_search_scope(session, root_id=root_id, source_ids=source_ids),
+        )
+    ) is not None
 
 
 class SourceService:
@@ -58,6 +91,7 @@ class SourceService:
         body_format: str | None = None,
         conversation_id: str | None = None,
         root_id: str | None = None,
+        session=None,
     ) -> dict:
         """导入文本并按 2400 字符建立可定位片段；相同来源/内容不重复版本。
 
@@ -84,12 +118,15 @@ class SourceService:
             digest = hashlib.sha256(raw_bytes if raw_bytes is not None else content.encode("utf-8")).hexdigest()
             original_hash = digest
         identity = f"{kind}:{origin or (body_hash if kind == 'web' else digest)}"
-        with self.sessions.begin() as session:
+        with (self.sessions.begin() if session is None else nullcontext(session)) as session:
             lock_control(session)
-            resolve_owner(session, conversation_id=conversation_id, root_id=root_id)
+            owner = trial_scope(session, *resolve_owner(session, conversation_id=conversation_id, root_id=root_id))
+            if owner:
+                identity = f"trial:{owner}:{identity}"
             session.execute(
                 insert(Source)
-                .values(id=new_id(), identity_key=identity, title=title, kind=kind, origin=origin, ownership_known=True)
+                .values(id=new_id(), identity_key=identity, title=title, kind=kind, origin=origin,
+                        ownership_known=True, trial_conversation_id=owner)
                 .on_conflict_do_nothing(index_elements=["identity_key"])
             )
             source = session.scalar(
@@ -142,6 +179,7 @@ class SourceService:
                         )
                     )
                 session.flush()
+                add_source_chunks(session, version.id)
             return self._version_view(session, source, version)
 
     def register_pdf(self, title: str, data: bytes, *, conversation_id: str | None = None,
@@ -153,10 +191,13 @@ class SourceService:
         identity = f"pdf:{digest}"
         with self.sessions.begin() as session:
             lock_control(session)
-            resolve_owner(session, conversation_id=conversation_id, root_id=root_id)
+            owner = trial_scope(session, *resolve_owner(session, conversation_id=conversation_id, root_id=root_id))
+            if owner:
+                identity = f"trial:{owner}:{identity}"
             session.execute(
                 insert(Source)
-                .values(id=new_id(), identity_key=identity, title=title[:500], kind="pdf", ownership_known=True)
+                .values(id=new_id(), identity_key=identity, title=title[:500], kind="pdf", ownership_known=True,
+                        trial_conversation_id=owner)
                 .on_conflict_do_nothing(index_elements=["identity_key"])
             )
             source = session.scalar(
@@ -234,10 +275,13 @@ class SourceService:
             ],
         }
 
-    def get_source(self, source_id: str, *, version_id: str | None = None, allow_removed: bool = False) -> dict:
+    def get_source(self, source_id: str, *, version_id: str | None = None, allow_removed: bool = False,
+                   root_id: str | None = None) -> dict:
         with self.sessions() as session:
             source = session.get(Source, source_id)
             if source is None or (source.deleted_at is not None and version_id is None and not allow_removed):
+                raise KeyError("source not found")
+            if root_id and source.trial_conversation_id != trial_scope(session, *resolve_owner(session, root_id=root_id)):
                 raise KeyError("source not found")
             query = select(SourceVersion).where(SourceVersion.source_id == source_id)
             if version_id:
@@ -264,6 +308,39 @@ class SourceService:
                 }
                 for source in session.scalars(query)
             ]
+
+    def search(self, query: str, *, root_id: str | None = None, conversation_id: str | None = None,
+               source_ids=None, limit: int = 10) -> list[dict]:
+        """只查询当前可读的材料版本；候选不会写入已读证据或扩大归属。"""
+        parsed = LexicalQuery.parse(query)
+        if not parsed.terms or limit <= 0:
+            return []
+        chunk = SourceSearchChunk
+        match, score = search_expressions(chunk, parsed)
+        with self.sessions() as session:
+            statement = (
+                select(chunk, SourceSegment, SourceVersion, Source, score.label("score"))
+                .join(SourceSegment, SourceSegment.id == chunk.segment_id)
+                .join(SourceVersion, SourceVersion.id == SourceSegment.source_version_id)
+                .join(Source, Source.id == SourceVersion.source_id)
+                .where(
+                    match, *_search_scope(
+                        session, root_id=root_id, conversation_id=conversation_id, source_ids=source_ids,
+                    ),
+                )
+                .order_by(score.desc(), Source.id, SourceSegment.position, chunk.chunk_index)
+                .limit(min(limit, 50))
+            )
+            results = []
+            for row, segment, version, source, relevance in session.execute(statement):
+                hit = excerpt(segment.text, row.start, row.end, parsed)
+                results.append({
+                    "source_id": source.id, "version_id": version.id, "version": version.number,
+                    "segment_id": segment.id, "title": source.title, "page": segment.page,
+                    "start": segment.start_offset + hit.start, "end": segment.start_offset + hit.end,
+                    "snippet": hit.text, "score": float(relevance),
+                })
+            return results
 
     def retain_source(self, source_id: str, *, conversation_id: str | None = None,
                       root_id: str | None = None) -> dict:
@@ -320,11 +397,14 @@ class SourceService:
             raise ValueError("source body integrity check failed")
         return segments, text
 
-    def cached_web(self, origin: str) -> dict | None:
+    def cached_web(self, origin: str, *, conversation_id: str | None = None,
+                   root_id: str | None = None) -> dict | None:
         """复用最近一小时的网页版本；显式 refresh 可绕过，旧版本不删除。"""
         with self.sessions() as session:
+            owner = trial_scope(session, *resolve_owner(session, conversation_id=conversation_id, root_id=root_id))
             source = session.scalar(
-                select(Source).where(Source.kind == "web", Source.origin == origin, Source.deleted_at.is_(None))
+                select(Source).where(Source.kind == "web", Source.origin == origin,
+                                     Source.deleted_at.is_(None), Source.trial_conversation_id == owner)
             )
             if source is None:
                 return None
@@ -350,18 +430,44 @@ class SourceService:
                 raise ValueError("source segment is unavailable or failed to parse")
             version = session.get(SourceVersion, segment.source_version_id)
             claim_source(session, version.source_id, root_id=root_id, allow_removed=True)
-            self._verified_body(session, version)
-            evidence = Evidence(
-                root_id=root_id,
-                source_segment_id=segment.id,
-                start_offset=segment.start_offset,
-                end_offset=segment.end_offset,
-                quote=segment.text,
+            evidence_id = self._record_segment_read(
+                session, version, segment, root_id, segment.start_offset, segment.end_offset,
             )
-            session.add(evidence)
-            session.flush()
-            evidence_id = evidence.id
         return self.get_evidence(evidence_id)
+
+    def read_search_hit(
+        self, segment_id: str, *, version_id: str, start: int, end: int, root_id: str, source_ids=None,
+    ) -> dict:
+        """新检索只能读取当前有效的候选，历史引文仍走固定版本入口。"""
+        with self.sessions.begin() as session:
+            lock_control(session)
+            hit = session.execute(
+                select(SourceSegment, SourceVersion)
+                .join(SourceVersion, SourceVersion.id == SourceSegment.source_version_id)
+                .join(Source, Source.id == SourceVersion.source_id)
+                .where(
+                    SourceSegment.id == segment_id, SourceVersion.id == version_id,
+                    *_search_scope(session, root_id=root_id, source_ids=source_ids),
+                )
+            ).one_or_none()
+            if hit is None:
+                raise ValueError("候选已不可用，请重新检索")
+            segment, version = hit
+            if not segment.start_offset <= start < end <= segment.end_offset or end - start > 600:
+                raise ValueError("候选片段范围无效")
+            claim_source(session, version.source_id, root_id=root_id)
+            evidence_id = self._record_segment_read(session, version, segment, root_id, start, end)
+        return self.get_evidence(evidence_id)
+
+    def _record_segment_read(self, session, version, segment, root_id, start, end):
+        self._verified_body(session, version)
+        evidence = Evidence(
+            root_id=root_id, source_segment_id=segment.id, start_offset=start, end_offset=end,
+            quote=segment.text[start - segment.start_offset:end - segment.start_offset],
+        )
+        session.add(evidence)
+        session.flush()
+        return evidence.id
 
     def get_segment(self, segment_id: str) -> dict:
         """用户查看解析结果，不把浏览器 GET 伪装为 Agent 已读取证据。"""

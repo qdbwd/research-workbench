@@ -16,7 +16,8 @@ test('subagent configuration persists revisions, conflict recovery and deleted h
   const before = await (await page.request.get('/api/subagents')).json();
   expect(before.some((row: { id: string }) => row.id === 'builtin-researcher')).toBe(false);
   await page.goto('/');
-  await page.getByRole('link', { name: '子Agent', exact: true }).click();
+  await page.getByRole('link', { name: '智能体设置', exact: true }).click();
+  await page.getByRole('link', { name: '子智能体', exact: true }).click();
   await expect(page.getByRole('form')).toHaveCount(0);
   await expect(page.getByRole('button', { name: '查看历史', exact: true })).toHaveCount(0);
   await page.getByRole('link', { name: '新建子Agent', exact: true }).click();
@@ -81,10 +82,10 @@ test('subagent configuration persists revisions, conflict recovery and deleted h
   await editor.getByRole('button', { name: '取消', exact: true }).click();
   await card.getByRole('button', { name: '停用', exact: true }).click();
   await expect(card).toContainText('已停用 · 修订 4');
-  await expect(page.getByRole('region', { name: '配置历史', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: '配置历史', exact: true })).toHaveCount(0);
   await page.goto(`/subagents?history=${created.id}`);
-  const history = page.getByRole('region', { name: '配置历史', exact: true });
-  await expect(history.locator('details')).toHaveCount(4);
+  const history = page.getByRole('dialog', { name: '配置历史', exact: true });
+  await expect(history.locator('article')).toHaveCount(4);
   await expect(history.getByText('核对已分配材料，不扩展结论。', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '关闭历史' }).click();
   await card.getByRole('button', { name: '删除', exact: true }).click();
@@ -100,8 +101,8 @@ test('subagent configuration persists revisions, conflict recovery and deleted h
   await expect(history).toHaveCount(0);
   await page.goto(`/subagents?history=${created.id}`);
   await page.reload();
-  await expect(history.locator('details')).toHaveCount(5);
-  await expect(history.locator('summary').last()).toContainText('已删除');
+  await expect(history.locator('article')).toHaveCount(5);
+  await expect(history.getByRole('heading', { level: 3 }).last()).toContainText('已删除');
   const revisions = await (await page.request.get(`/api/subagents/${created.id}/history`)).json();
   expect(revisions.map((row: { revision: number }) => row.revision)).toEqual([1, 2, 3, 4, 5]);
   expect(revisions.at(-1)).toMatchObject({ deleted: true, enabled: false });
@@ -121,11 +122,13 @@ test('chat defaults auxiliary off and persists the user-controlled delegation ch
 }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '更多设置与材料' }).click();
+  await page.getByRole('button', { name: '本次任务设置' }).click();
   const auxiliary = page.getByRole('checkbox', { name: '允许辅助模型', exact: true });
   const delegation = page.getByRole('checkbox', { name: '允许子Agent分工', exact: true });
   await expect(auxiliary).not.toBeChecked();
   await delegation.uncheck();
-  await page.getByLabel('发送给 KnowledgeOps 的消息').fill('浏览器排队夹具：不执行模型。');
+  await page.getByRole('button', { name: '完成', exact: true }).click();
+  await page.getByLabel('发送给研发助手的消息').fill('浏览器排队夹具：不执行模型。');
   const queuedResponse = page.waitForResponse(
     (response) =>
       /\/api\/conversations\/[^/]+\/messages$/.test(response.url()) &&
@@ -137,6 +140,7 @@ test('chat defaults auxiliary off and persists the user-controlled delegation ch
   expect(first.input).toMatchObject({ auxiliary: false, delegation: false });
   await page.reload();
   await page.getByRole('button', { name: '更多设置与材料' }).click();
+  await page.getByRole('button', { name: '本次任务设置' }).click();
   await expect(page.getByRole('checkbox', { name: '允许辅助模型', exact: true })).not.toBeChecked();
   await expect(page.locator('.message.user')).toHaveCount(1);
   const settings = await (await page.request.get('/api/settings')).json();
@@ -169,19 +173,23 @@ test('optional template has full editing controls and leaving protects drafts on
   page,
 }) => {
   const before = await (await page.request.get('/api/subagents')).json();
-  await page.goto('/subagents');
-  await page.getByRole('link', { name: '使用只读研究者模板', exact: true }).click();
+  await page.goto('/subagents/new?template=researcher');
   const form = page.getByRole('form', { name: '创建子Agent', exact: true });
+  // 模板现在是旧直达地址。先建立一次真实的应用内历史记录，再覆盖浏览器 POP。
+  await expect(form.getByLabel('稳定名称')).toHaveValue('researcher');
+  await page.getByRole('link', { name: '智能体设置', exact: true }).click();
+  await expect(page).toHaveURL(/\/tools$/);
+  await page.goBack();
   await expect(form.getByLabel('稳定名称')).toHaveValue('researcher');
   expect(await (await page.request.get('/api/subagents')).json()).toEqual(before);
   await form.getByLabel('显示名称').fill('我的研究者');
   await form.getByLabel('角色提示').fill('保留我自己的角色提示。');
-  await page.getByRole('link', { name: '工具与能力', exact: true }).click();
+  await page.getByRole('link', { name: '智能体设置', exact: true }).click();
   const guard = page.getByRole('dialog', { name: '离开编辑页面？', exact: true });
   await expect(guard).toBeVisible();
   await guard.getByRole('button', { name: '继续编辑', exact: true }).click();
   await expect(form.getByLabel('角色提示')).toHaveValue('保留我自己的角色提示。');
-  await page.evaluate(() => window.history.back());
+  await page.evaluate(() => window.history.forward());
   await expect(guard).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(guard).toHaveCount(0);
@@ -234,7 +242,7 @@ test('optional template has full editing controls and leaving protects drafts on
     .click();
   await expect(card).toHaveCount(0);
   await page.setViewportSize({ width: 1440, height: 960 });
-  await expect(page.getByRole('link', { name: '使用只读研究者模板', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: '使用只读研究者模板', exact: true })).toHaveCount(0);
   await page.screenshot({ path: `${evidenceDir}/list-desktop.png`, fullPage: true });
   expect((await (await page.request.get('/api/settings')).json()).model_calls_enabled).toBe(false);
 });

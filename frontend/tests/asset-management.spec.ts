@@ -18,9 +18,12 @@ test('source deletion previews dependencies and persists progress across refresh
   await dialog.getByRole('button', { name: '确认删除材料' }).click();
   const job = await (await response).json();
   await page.reload();
-  await expect(page.getByRole('region', { name: '最近的删除' }).getByText(seeded.source.title, { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '最近的删除', exact: true }).click();
+  const history = page.getByRole('dialog', { name: '最近的删除' });
+  await expect(history.getByText(seeded.source.title, { exact: true })).toBeVisible();
   expect((await (await page.request.post(`/api/__offline/asset-cleanup/${job.id}`)).json()).status).toBe('completed');
-  await expect(page.getByRole('region', { name: '最近的删除' }).getByText('已完成 · 回收 1 个版本 · 保留 0 个仍被使用的版本').first()).toBeVisible();
+  await expect(history.getByText('已完成 · 回收 1 个版本 · 保留 0 个仍被使用的版本').first()).toBeVisible();
+  await history.getByRole('button', { name: '关闭最近的删除' }).click();
   expect((await page.request.get(`/api/source-versions/${seeded.source.version_id}/content`)).status()).toBe(404);
 
   await page.getByRole('button', { name: `删除材料 ${seeded.protected.title}` }).click();

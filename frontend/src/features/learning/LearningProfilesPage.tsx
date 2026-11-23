@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, messageOf, send, useResource } from '../../shared/api/api';
 import { ErrorBox, Loading, Markdown, PageTitle } from '../../shared/ui/components';
+import { DetailDialog } from '../../shared/ui/Workbench';
 import type { LearningTask } from './LearningPage';
 
 type Profile = {
@@ -132,8 +133,7 @@ function ConfigurationReuse({ task, changed }: { task: LearningTask; changed: ()
   const [error, setError] = useState('');
   const selected = history.data?.find((row) => String(row.revision) === revision);
   return (
-    <details className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
-      <summary>比较、恢复或复用任务要求</summary>
+    <DetailDialog className="mb-5" title="比较、恢复或复用任务要求">
       <p>
         选择固定版本后预览；应用会替换本任务具体要求。不会复制任务进度、预算、授权或人工角色正文。人工正文可以通过上方导入、导出复用。
       </p>
@@ -208,7 +208,7 @@ function ConfigurationReuse({ task, changed }: { task: LearningTask; changed: ()
           </Button>
         </>
       )}
-    </details>
+    </DetailDialog>
   );
 }
 

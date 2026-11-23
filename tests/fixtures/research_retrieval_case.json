@@ -1,0 +1,29 @@
+{
+  "context_limit": 1,
+  "documents": {
+    "temporary-cache": "A process cache reduces repeated work. It is cleared on application restart.",
+    "checkpoint-store": "PostgreSQL checkpoint store persists graph state. A worker process restart retains state in the checkpoint store.",
+    "run-cursor": "Elapsed seconds and completion status are stored in the run index for browsing.",
+    "private-material": "Project material with project scope is readable only by authorized project members. It is not available to guests."
+  },
+  "cases": [
+    {
+      "id": "missing-from-context",
+      "question": "Which checkpoint store retains state after a worker process restart?",
+      "gold_id": "checkpoint-store",
+      "candidate_ids": ["temporary-cache", "checkpoint-store", "run-cursor"],
+      "observed_context": ["temporary-cache"],
+      "observed_answer": "The process cache.",
+      "expected_answer": "PostgreSQL."
+    },
+    {
+      "id": "visible-misused",
+      "question": "Can guests read project scope material limited to members?",
+      "gold_id": "private-material",
+      "candidate_ids": ["private-material", "run-cursor", "temporary-cache"],
+      "observed_context": ["private-material"],
+      "observed_answer": "Yes.",
+      "expected_answer": "No."
+    }
+  ]
+}

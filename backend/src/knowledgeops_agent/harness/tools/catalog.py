@@ -22,12 +22,19 @@ DISPLAY_NAMES = {
     'start_async_task': '启动子任务', 'check_async_task': '查看子任务',
     'list_async_tasks': '列出子任务', 'update_async_task': '补充子任务要求',
     'cancel_async_task': '取消子任务', 'wait_async_tasks': '等待子任务',
-    'search_knowledge': '检索知识', 'list_knowledge': '列出知识文档',
+    'search_knowledge': '检索知识', 'search_references': '联合检索资料', 'list_knowledge': '列出知识文档',
     'knowledge_history': '查看知识历史', 'read_knowledge': '读取知识正文',
     'list_materials': '列出材料', 'list_evidence': '查找已读引用',
     'inspect_material': '查看材料目录', 'read_source': '读取材料正文',
     'read_tool_result': '补读工具结果', 'tool_search': '查找外部工具',
     'update_plan': '更新任务计划', 'ask_clarification': '询问用户',
+    'set_research_focus': '调整研究焦点',
+    'continue_research': '安排研发下一步',
+    'submit_research_delivery': '提交研发成果',
+    'read_research_map': '查看研究地图',
+    'update_research_map': '更新研究地图',
+    'propose_research_experiment': '提出独立实验',
+    'read_research_experiment': '查看独立实验',
     'history_search': '检索聊天历史', 'history_read': '读取聊天原话',
     'task_note': '维护任务要点', 'memory_search': '检索长期记忆',
     'memory_read': '读取长期记忆', 'read_learning_draft': '读取学习草稿',
@@ -60,7 +67,7 @@ class ToolDefinition:
     effect: Literal["read", "write", "run", "model", "delegate"] = "read"
     subagent_selectable: bool = True
     main_only: bool = False
-    condition: Literal["always", "auxiliary", "web", "delegation", "skills", "workspace"] = "always"
+    condition: Literal["always", "auxiliary", "web", "delegation", "skills", "workspace", "research"] = "always"
     legacy_only: bool = False
 
     def view(self) -> dict:
@@ -83,6 +90,8 @@ STATIC_TOOLS = (
           ("wait_async_tasks", "等待子结果并释放执行槽"),
       )),
     ToolDefinition("search_knowledge", "检索项目知识库", "knowledge_read"),
+    ToolDefinition("search_references", "联合检索已发布知识与可用材料并读取证据", "knowledge_read",
+                   subagent_selectable=False, main_only=True),
     ToolDefinition("list_knowledge", "列出知识文档", "knowledge_read"),
     ToolDefinition("knowledge_history", "查看文档历史版本", "knowledge_read"),
     ToolDefinition("read_knowledge", "读取指定知识版本", "knowledge_read"),
@@ -94,6 +103,20 @@ STATIC_TOOLS = (
     ToolDefinition("tool_search", "查询已授权MCP目录并按需加载参数定义", "run_support",
                    source="middleware", subagent_selectable=False),
     ToolDefinition("update_plan", "记录本次研究计划", "run_support", effect="run"),
+    ToolDefinition("set_research_focus", "为已绑定研发的主运行调整研究阶段和方法", "run_support",
+                   effect="run", subagent_selectable=False, main_only=True, condition="research"),
+    ToolDefinition("continue_research", "在用户已批准的自主研发中记录下一轮具体行动", "run_support",
+                   effect="run", subagent_selectable=False, main_only=True, condition="research"),
+    ToolDefinition("submit_research_delivery", "固定成果并停止推进，等待用户验收", "run_support",
+                   effect="run", subagent_selectable=False, main_only=True, condition="research"),
+    ToolDefinition("read_research_map", "读取固定研究地图与节点判断依据", "run_support",
+                   effect="read", subagent_selectable=False, condition="research"),
+    ToolDefinition("update_research_map", "更新一个研究节点及判断依据", "run_support",
+                   effect="run", subagent_selectable=False, main_only=True, condition="research"),
+    ToolDefinition("propose_research_experiment", "冻结文档问答重排实验并请求人工审批", "run_support",
+                   effect="run", subagent_selectable=False, main_only=True, condition="research"),
+    ToolDefinition("read_research_experiment", "读取独立实验回执、指标和证据", "run_support",
+                   effect="read", subagent_selectable=False, condition="research"),
     ToolDefinition("ask_clarification", "提出需要真人决定的问题并持久等待回答", "run_support",
                    effect="run", subagent_selectable=False, main_only=True),
     ToolDefinition("history_search", "定位允许继承的会话原始历史", "task_continuity"),
@@ -335,6 +358,14 @@ def local_tool_reasons(
         reasons.append("legacy_only")
     if item["condition"] == "auxiliary" and root_input.get("auxiliary", False) is not True:
         reasons.append("auxiliary_disabled")
+    if item["condition"] == "research" and not root_input.get("research"):
+        reasons.append("research_mode_required")
+    if item["name"] == "continue_research" and not root_input.get("research", {}).get("permit_id"):
+        reasons.append("research_autonomy_required")
+    if root_input.get("research", {}).get("review_only") and (
+        item["effect"] != "read" or item["condition"] == "web"
+    ):
+        reasons.append("research_review_only")
     if item["condition"] == "web" and root_input.get("knowledge_only", False):
         reasons.append("knowledge_only")
     if item["name"] == "execute" and root_input.get("knowledge_only", False):

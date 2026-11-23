@@ -4,6 +4,7 @@ import { useResource } from '../../shared/api/api';
 import type { ModelRecord, Run, RunEvent } from '../../shared/types/types';
 import { Button } from '../../shared/ui/Button';
 import { ErrorBox, Loading } from '../../shared/ui/components';
+import { DetailDialog } from '../../shared/ui/Workbench';
 import { RuntimeResources, type RuntimeManifest, type Continuation } from './RuntimeResources';
 
 type Records = {
@@ -51,8 +52,7 @@ export function RunDiagnostics({ run, refreshKey }: { run: Run; refreshKey: stri
         </Button>
       )}
       {records.loading && !records.data && <Loading />}
-      <details className="my-4">
-        <summary>运行标识与检查点</summary>
+      <DetailDialog className="my-4" title="运行标识与检查点">
         <dl className="grid gap-2 text-xs [&_dd]:m-0 [&_dd]:break-all">
           <dt>运行 ID</dt>
           <dd>{run.id}</dd>
@@ -63,7 +63,7 @@ export function RunDiagnostics({ run, refreshKey }: { run: Run; refreshKey: stri
           <dt>调度代次</dt>
           <dd>{run.generation}</dd>
         </dl>
-      </details>
+      </DetailDialog>
       {records.data ? (
         <RuntimeResources
           resources={records.data.resources}
@@ -85,14 +85,11 @@ export function RunDiagnostics({ run, refreshKey }: { run: Run; refreshKey: stri
             : '记录暂不可用'}
       </h3>
       {records.data?.models.map((record, index) => (
-        <details
+        <DetailDialog
           className="my-3 border-t border-line pt-3 [&_pre]:max-h-96 [&_pre]:overflow-auto"
           key={record.id}
+          title={`#${index + 1} · ${record.purpose} · ${record.status} · ${record.usage?.total_tokens ?? '未知'} tokens`}
         >
-          <summary className="cursor-pointer text-sm">
-            #{index + 1} · {record.purpose} · {record.status} ·{' '}
-            {record.usage?.total_tokens ?? '未知'} tokens
-          </summary>
           <p className="text-xs text-muted">
             耗时：
             {record.duration_ms == null ? '未知' : `${(record.duration_ms / 1000).toFixed(1)}s`} ·
@@ -104,7 +101,7 @@ export function RunDiagnostics({ run, refreshKey }: { run: Run; refreshKey: stri
           <pre>{JSON.stringify(record.request, null, 2)}</pre>
           <h4>实际输出</h4>
           <pre>{JSON.stringify(record.response, null, 2)}</pre>
-        </details>
+        </DetailDialog>
       ))}
       <h3>内部运行资料</h3>
       <p className="text-sm text-muted">长工具结果、压缩前历史与工作摘要用于执行核对和恢复。</p>
@@ -147,15 +144,13 @@ export function RunDiagnostics({ run, refreshKey }: { run: Run; refreshKey: stri
         </Button>
       </div>
       {records.data?.events.map((event) => (
-        <details
+        <DetailDialog
           className="my-3 border-t border-line pt-3 [&_pre]:max-h-96 [&_pre]:overflow-auto"
           key={event.sequence}
+          title={`#${event.sequence} · ${event.kind} · ${new Date(event.created_at).toLocaleTimeString()}`}
         >
-          <summary className="cursor-pointer text-sm break-all">
-            #{event.sequence} · {event.kind} · {new Date(event.created_at).toLocaleTimeString()}
-          </summary>
           <pre>{JSON.stringify(event.data, null, 2)}</pre>
-        </details>
+        </DetailDialog>
       ))}
     </section>
   );

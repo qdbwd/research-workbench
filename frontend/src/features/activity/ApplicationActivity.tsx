@@ -106,7 +106,7 @@ export function ConversationActivity({ id }: { id: string }) {
   const item = data?.conversations[id];
   if (!item) return null;
   const label = item.attention ? '待处理' : item.active ? '进行中' : item.unread ? '有新结果' : '';
-  return label ? <span className="shrink-0 text-[10px] text-[#c2d5c9]" title={label}>{label}{item.unread && label !== '有新结果' ? ' · 新' : ''}</span> : null;
+  return label ? <span className="shrink-0 text-[10px] text-control" title={label}>{label}{item.unread && label !== '有新结果' ? ' · 新' : ''}</span> : null;
 }
 
 function ManagementList({ kind }: { kind: 'mcp' | 'deletion' }) {

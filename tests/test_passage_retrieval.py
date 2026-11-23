@@ -30,6 +30,145 @@ def test_splitter_preserves_content_and_late_chinese_offsets():
     assert any("绝不自动扣款" in chunk.text for chunk in chunks)
 
 
+def test_material_search_finds_unseen_passage_with_fixed_version_and_offsets(services):
+    _, sources, _, _ = services
+    body = "普通故障登记。" * 450 + "\n\n紧急变更必须由当班负责人批准。"
+    material = sources.import_text("操作说明.md", body, kind="file")
+
+    [hit] = sources.search("紧急变更 批准")
+
+    assert hit["source_id"] == material["id"]
+    assert hit["version_id"] == material["version_id"]
+    assert hit["start"] > 2400
+    assert body[hit["start"]:hit["end"]] == hit["snippet"]
+    assert "当班负责人批准" in hit["snippet"]
+    assert sources.get_segment(hit["segment_id"])["source_version_id"] == material["version_id"]
+
+
+def test_material_search_uses_current_readable_versions_and_explicit_scope(services):
+    db, sources, _, sessions = services
+    with sessions.begin() as session:
+        session.add(db.Conversation(id="private-materials", title="试验会话"))
+    options = {"origin": "demo:incident-handbook", "kind": "file"}
+    old = sources.import_text("故障手册.md", "紧急变更允许事后报备。", **options)
+    current = sources.import_text("故障手册.md", "紧急变更需要事前审批。", **options)
+    private = sources.import_text(
+        "值班记录.md", "紧急变更的例外条件。", kind="file",
+        conversation_id="private-materials",
+    )
+
+    assert {hit["version_id"] for hit in sources.search("紧急变更")} == {current["version_id"]}
+    assert not sources.search("紧急变更", source_ids=[private["id"]])
+    assert not sources.search("紧急变更", source_ids=[])
+    [hit] = sources.search(
+        "紧急变更", conversation_id="private-materials", source_ids=[private["id"]],
+    )
+    assert hit["version_id"] == private["version_id"]
+
+    with sessions.begin() as session:
+        session.get(db.Source, current["id"]).deleted_at = db.utcnow()
+    assert not sources.search("紧急变更")
+    assert sources.get_source(old["id"], version_id=old["version_id"])["version_id"] == old["version_id"]
+
+
+def test_material_candidate_read_creates_exact_evidence_and_rechecks_withdrawal(services):
+    db, sources, _, sessions = services
+    material = sources.import_text("故障手册", "紧急变更必须依规报批。" + "背景说明。" * 280)
+    [hit] = sources.search("紧急变更")
+    keys = {key: hit[key] for key in ("segment_id", "version_id", "start", "end")}
+    assert sources.evidence_catalog("root") == []
+    evidence = sources.read_search_hit(root_id="root", **keys)
+    assert evidence["text"] == hit["snippet"]
+    assert evidence["source_version_id"] == hit["version_id"]
+    assert evidence["end"] == hit["end"]
+    assert len(sources.evidence_catalog("root")) == 1
+
+    with sessions.begin() as session:
+        session.get(db.Source, material["id"]).deleted_at = db.utcnow()
+    with pytest.raises(ValueError, match="候选已不可用"):
+        sources.read_search_hit(root_id="root", **keys)
+    assert len(sources.evidence_catalog("root")) == 1
+    assert sources.get_evidence(evidence["id"])["text"] == hit["snippet"]
+
+
+def test_joint_search_preserves_both_lanes_and_honors_narrower_scope(services):
+    from knowledgeops_agent.retrieval.references import search_references
+
+    _, sources, knowledge, _ = services
+    _, example = evidence_for(sources)
+    knowledge.grant_direct("root")
+    draft = knowledge.create_draft("root", [{
+        "action": "create", "title": "生产规程",
+        "body": "紧急变更需要值班负责人审批。" + example["citation"],
+    }])
+    [document] = knowledge.publish(draft["id"], idempotency_key="publish-pilot")["document_ids"]
+    material = sources.import_text("操作手册", "紧急变更前先核对回滚点。")
+
+    combined = search_references(knowledge, sources, "紧急变更", root_id="root")
+    assert [(item["kind"], item["asset_id"]) for item in combined] == [
+        ("knowledge", document), ("material", material["id"]),
+    ]
+    restricted = search_references(knowledge, sources, "紧急变更", root_id="root", scope="knowledge")
+    assert {item["asset_id"] for item in restricted} == {document}
+    assert not search_references(
+        knowledge, sources, "紧急变更", root_id="root", scope="material", source_ids=[],
+    )
+    assert {item["id"] for item in sources.evidence_catalog("root")} == {example["id"]}
+
+
+def test_material_index_rebuild_restores_missing_chunks_without_changing_evidence(services):
+    from sqlalchemy import delete
+
+    from knowledgeops_agent.retrieval.index import rebuild_source_index
+
+    db, sources, _, sessions = services
+    material, evidence = evidence_for(sources, body="紧急变更由值班负责人审批。")
+    before = sources.search("紧急变更")
+    assert before[0]["version_id"] == material["version_id"]
+    with sessions.begin() as session:
+        session.execute(delete(db.SourceSearchChunk))
+    assert not sources.search("紧急变更")
+
+    assert rebuild_source_index(sessions) == {"versions": 1, "chunks": 1}
+    assert rebuild_source_index(sessions) == {"versions": 1, "chunks": 1}
+    [after] = sources.search("紧急变更")
+    # BM25 内部统计可能在删除、重建后变化，固定的是候选定位与原文。
+    assert {k: v for k, v in after.items() if k != "score"} == {
+        k: v for k, v in before[0].items() if k != "score"
+    }
+    assert after["score"] > 0
+    assert sources.get_evidence(evidence["id"]) == evidence
+
+
+def test_current_knowledge_candidate_cannot_read_superseded_version(services):
+    _, sources, knowledge, _ = services
+    _, origin = evidence_for(sources)
+    knowledge.grant_direct("root")
+    draft = knowledge.create_draft("root", [{
+        "action": "create", "title": "生产规程",
+        "body": "旧规程允许事后补签。" + origin["citation"],
+    }])
+    [document] = knowledge.publish(draft["id"], idempotency_key="old-policy")["document_ids"]
+    [candidate] = knowledge.search("事后补签")
+    old_id = candidate["version_id"]
+    edit = knowledge.create_draft("root", [{
+        "action": "update", "document_id": document, "base_version_id": old_id,
+        "title": "生产规程", "body": "新规程要求事前批准。" + origin["citation"],
+    }])
+    knowledge.publish(edit["id"], idempotency_key="revised-policy")
+
+    with pytest.raises(ValueError, match="候选已不可用"):
+        knowledge.read_document(document, root_id="root", version_id=old_id, current_only=True)
+    history = knowledge.read_document(document, root_id="root", version_id=old_id)
+    assert "旧规程允许事后补签" in history["text"]
+    [current] = knowledge.search("事前批准")
+    fresh = knowledge.read_document(
+        document, root_id="root", version_id=current["version_id"],
+        start=current["start"], length=current["end"] - current["start"], current_only=True,
+    )
+    assert fresh["text"] == current["snippet"]
+
+
 @pytest.mark.parametrize("archived", [False, True])
 def test_history_late_passage_rank_readback_and_no_duplicate_messages(runtime_services, archived):
     from knowledgeops_agent.harness.context.continuity import history_read, history_search

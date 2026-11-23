@@ -5,11 +5,12 @@ test('materials stay out of recent chats until a message, and right-click rename
   request,
 }, info) => {
   await page.goto('/');
-  const message = page.getByRole('textbox', { name: '发送给 KnowledgeOps 的消息' });
+  const message = page.getByRole('textbox', { name: '发送给研发助手的消息' });
   const title = `新的实际聊天-${Date.now()}`;
   await message.fill(title);
   await page.getByRole('button', { name: '更多设置与材料', exact: true }).click();
-  await page.getByRole('button', { name: '导入会话材料 →' }).click();
+  await page.getByRole('button', { name: '文件和文件夹' }).click();
+  await page.getByRole('button', { name: '导入材料', exact: true }).click();
   await expect(page).toHaveURL(/\/sources\?conversation_id=/);
   const id = new URL(page.url()).searchParams.get('conversation_id')!;
   expect(
@@ -43,7 +44,7 @@ test('materials stay out of recent chats until a message, and right-click rename
   await page.reload();
   await expect(recent.getByRole('link', { name: '手动命名的会话', exact: true })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.locator('.mobile-conversations summary').click();
+  await page.getByRole('button', { name: '最近对话', exact: true }).click();
   await page
     .locator('.mobile-conversations')
     .getByRole('button', { name: '会话“手动命名的会话”的选项' })
@@ -72,7 +73,7 @@ test('knowledge owns review navigation and old review links still work', async (
   await page.goto(`/changes/${draft.id}`);
   await expect(page).toHaveURL(`/knowledge/reviews/${draft.id}`);
   await expect(
-    page.getByRole('navigation', { name: '主要功能' }).getByRole('link', { name: '运行记录' }),
+    page.getByRole('navigation', { name: '管理' }).getByRole('link', { name: '运行记录' }),
   ).toBeVisible();
   await expect(
     page.getByRole('navigation', { name: '主要功能' }).getByRole('link', { name: '变更与运行' }),

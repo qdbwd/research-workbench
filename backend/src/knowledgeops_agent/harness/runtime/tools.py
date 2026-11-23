@@ -13,9 +13,18 @@ from knowledgeops_agent.harness.runtime.state import RunContext
 @tool
 def read_tool_result(artifact_id: str, runtime: ToolRuntime[RunContext], start: int = 0) -> dict:
     """补读长工具结果或压缩前历史，每次最多 6000 字符。它不是新的来源证据。"""
-    return runtime.context.jobs.read_artifact(
-        artifact_id, root_id=runtime.context.root_id, start=start
-    )
+    from knowledgeops_agent.research.evidence import capture_excerpt
+
+    context = runtime.context
+    result = context.jobs.read_artifact(artifact_id, root_id=context.root_id, start=start)
+    if result["kind"] != "research_excerpt":
+        identity = capture_excerpt(
+            context, kind="run_result", title="运行产物摘录", text=result["text"],
+            start=result["start"], end=result["end"], offset_unit="characters", artifact_id=artifact_id,
+        )
+        if identity:
+            result["research_evidence_id"] = identity
+    return result
 
 
 @tool

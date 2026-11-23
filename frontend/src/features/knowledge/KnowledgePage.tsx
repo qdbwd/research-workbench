@@ -1,7 +1,9 @@
 import { Button } from '../../shared/ui/Button';
 import { useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Download, Search, Pencil, ArrowLeft, BookOpen, Trash2 } from 'lucide-react';
+import { Download, History, Search, Pencil, Trash2 } from 'lucide-react';
+import { BackLink } from '../../shared/ui/Workbench';
+import { Dialog } from '../../shared/ui/Dialog';
 import { messageOf, send, useResource } from '../../shared/api/api';
 import {
   Empty,
@@ -28,7 +30,7 @@ export function KnowledgePage() {
   );
   return (
     <>
-      <PageTitle eyebrow="YOUR KNOWLEDGE, CONNECTED" title="知识库">
+      <PageTitle title="知识库">
         <a className="button secondary button-secondary" href="/api/knowledge/export">
           <Download size={16} />
           导出 Markdown
@@ -37,20 +39,21 @@ export function KnowledgePage() {
       <KnowledgeTabs />
       <div className="row flex items-center gap-3 between justify-between toolbar mb-6 flex-wrap">
         <form
-          className="search flex min-w-[230px] max-w-[620px] flex-1 items-center gap-[9px] rounded-lg border border-line bg-white py-[3px] pr-[9px] pl-[15px] text-[#8fa08f] [&>input]:border-0 [&>input]:bg-transparent [&>input]:pl-0 [&>input]:text-[13px] [&>button]:whitespace-nowrap"
+          className="search flex min-w-0 max-w-[620px] flex-1 items-center gap-2"
           onSubmit={(e) => {
             e.preventDefault();
             setSearch(query);
           }}
         >
-          <Search size={18} />
-          <input
+          <div className="relative min-w-0 flex-1"><input
+            type="search"
+            className="pr-9"
             aria-label="检索知识库"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="搜索标题、关键词与正文"
-          />
-          <Button className="quiet button-quiet">检索</Button>
+          /><Search size={17} className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-control" /></div>
+          <Button className="button-secondary shrink-0">检索</Button>
         </form>
         <label className="check m-0 flex-row items-center gap-2 font-normal">
           <input
@@ -71,36 +74,32 @@ export function KnowledgePage() {
       {result.error ? null : result.loading ? (
         <Loading />
       ) : result.data?.length ? (
-        <div className="article-grid grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-4.5">
+        <div className="divide-y divide-line rounded-xl border border-line bg-white px-4">
           {result.data.map((item) => (
             <article
-              className="article-card flex flex-col rounded-[10px] border border-line bg-white p-5.5 text-[#2c4333] hover:border-[#a6bba1] hover:no-underline [&>h2]:mt-4.5 [&>h2]:mb-2.5 [&>h2]:text-[17px] [&>p]:flex-1 [&>p]:text-xs [&>p]:leading-[1.8] [&>p]:text-[#81907e] [&>p]:[overflow-wrap:anywhere]"
+              className="article-card grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 py-3 max-md:grid-cols-1"
               key={item.id || item.document_id}
             >
-              <div className="row flex items-center gap-3 between justify-between">
-                <BookOpen size={18} />
-                <span className="muted text-muted small text-xs">
-                  {item.archived ? '已归档' : `v${item.version ?? '·'}`}
-                </span>
+              <div className="min-w-0">
+                <h2 className="m-0 text-base font-semibold [overflow-wrap:anywhere]">
+                  {item.title}
+                </h2>
+                <p className="my-1 text-xs text-control">
+                  {[item.category, item.archived ? '已归档' : item.version ? `V${item.version}` : '', ...(item.tags ?? []).slice(0, 3)].filter(Boolean).join(' · ')}
+                </p>
+                <p className="m-0 line-clamp-2 text-sm text-control [overflow-wrap:anywhere]">{item.summary || item.snippet || item.body?.slice(0, 120)}</p>
               </div>
-              <h2>
-                <Link to={`/knowledge/${item.id || item.document_id}`}>{item.title}</Link>
-              </h2>
-              <p>{item.summary || item.snippet || item.body?.slice(0, 120)}</p>
-              <div className="tags flex flex-wrap gap-[7px] [&>span]:rounded-sm [&>span]:bg-[#f1f4ec] [&>span]:px-2 [&>span]:py-[3px] [&>span]:text-[10px] [&>span]:text-[#798971]">
-                {item.category && <span>{item.category}</span>}
-                {item.tags?.slice(0, 3).map((tag) => (
-                  <span key={tag}>#{tag}</span>
-                ))}
-              </div>
+              <div className="flex flex-wrap items-center gap-2">
+              <Link className="button button-secondary text-xs" to={`/knowledge/${item.id || item.document_id}`} aria-label={`阅读文章：${item.title}`}>阅读文章</Link>
               <Button
-                className="button-quiet mt-3 self-end text-danger"
+                className="button-quiet text-danger"
                 aria-label={`删除文章：${item.title}`}
                 onClick={() => setDeleting(item)}
               >
                 <Trash2 size={15} />
                 删除
               </Button>
+              </div>
             </article>
           ))}
         </div>
@@ -141,6 +140,7 @@ export function ArticlePage() {
   const [actionError, setActionError] = useState('');
   const [actionBusy, setActionBusy] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   if (article.loading) return <Loading />;
   if (article.error || !article.data) return <ErrorBox message={article.error || '文章不存在'} />;
   const item = article.data;
@@ -166,30 +166,12 @@ export function ArticlePage() {
   }
   return (
     <>
-      <Link
-        className="back-link mb-[15px] inline-flex items-center gap-1.5 text-xs"
-        to="/knowledge"
-      >
-        <ArrowLeft size={15} />
-        返回知识库
-      </Link>
-      <PageTitle eyebrow={`KNOWLEDGE / VERSION ${item.version}`} title={item.title}>
-        <div className="row flex items-center gap-3">
-          <select
-            aria-label="文章历史版本"
-            value={item.version_id}
-            onChange={(e) => {
-              setEditing(false);
-              setParams({ version: e.target.value });
-            }}
-          >
-            {history.data?.map((v) => (
-              <option value={v.version_id} key={v.version_id}>
-                v{v.version}
-                {v.archived ? ' · 归档' : ''}
-              </option>
-            ))}
-          </select>
+      <BackLink to="/knowledge">返回知识库</BackLink>
+      <PageTitle eyebrow={`版本 V${item.version}`} title={item.title}>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" className="button-secondary" onClick={() => setShowHistory(true)}>
+            <History size={16} /> 版本历史
+          </Button>
           <Button
             disabled={Boolean(item.deleted_at)}
             className="secondary button-secondary"
@@ -229,6 +211,24 @@ export function ArticlePage() {
           )}
         </div>
       </PageTitle>
+      {showHistory && <Dialog title="文章版本历史" onClose={() => setShowHistory(false)}>
+        <ErrorBox message={history.error} />
+        {history.loading && <Loading />}
+        {history.data?.length === 0 && <p>没有可查看的版本。</p>}
+        {Boolean(history.data?.length) && <label>文章历史版本
+          <select value={item.version_id} onChange={(event) => {
+            setShowHistory(false);
+            setEditing(false);
+            setParams({ version: event.target.value });
+          }}>
+            {history.data?.map((entry) => (
+              <option value={entry.version_id} key={entry.version_id}>
+                v{entry.version}{entry.archived ? ' · 归档' : ''}
+              </option>
+            ))}
+          </select>
+        </label>}
+      </Dialog>}
       <ErrorBox message={actionError} />
       {item.deleted_at && (
         <p className="rounded-lg border border-line p-4 text-sm text-muted">

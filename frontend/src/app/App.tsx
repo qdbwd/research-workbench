@@ -8,10 +8,11 @@ import {
   Outlet,
   Route,
   RouterProvider,
+  useLocation,
   useOutletContext,
   useParams,
 } from 'react-router-dom';
-import { BookOpen, Files, GitPullRequest, MessageSquare, Plus, Settings, Sprout } from 'lucide-react';
+import { Activity, BookOpen, Compass, Files, FlaskConical, GraduationCap, List, Plus, Settings, SlidersHorizontal } from 'lucide-react';
 import { useResource } from '../shared/api/api';
 import { ChatPage } from '../features/chat/ChatPage';
 import { BackgroundDeletions } from '../features/chat/BackgroundDeletions';
@@ -35,14 +36,24 @@ import { ApplicationActivity, ActivityIndicator } from '../features/activity/App
 import { SkillsPage } from '../features/skills/SkillsPage';
 import { ToolGroupsPage } from '../features/tools/ToolGroupsPage';
 import { SystemPage } from '../features/system/SystemPage';
+import { ResearchList, ResearchPage } from '../features/research/ResearchPage';
+import { ResearchMapPage } from '../features/research/ResearchMapPage';
+import { ResearchExcerptPage } from '../features/research/ResearchExcerptPage';
+import { ResearchExperimentsPage } from '../features/research/ResearchExperimentsPage';
+import { WorkbenchPreview } from '../features/research/WorkbenchPreview';
 import { ErrorBox } from '../shared/ui/components';
+import { Button } from '../shared/ui/Button';
+import { Dialog } from '../shared/ui/Dialog';
 import { WorkspaceContext } from '../shared/state/workspace';
 import type { Conversation } from '../shared/types/types';
 
 const navigationStyle =
-  'flex items-center gap-[13px] rounded-[7px] px-3.5 py-2.5 text-sm text-[#aebeb4] hover:bg-[#244237] hover:no-underline [&.active]:bg-[#28483b] [&.active]:text-[#edf5e8] max-md:shrink-0 max-md:gap-1.5 max-md:px-2.5 max-md:py-2 max-md:text-xs';
+  'flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-ink hover:bg-[#e2ebe2] hover:no-underline [&.active]:bg-[#dceadf] [&.active]:text-brand max-md:gap-1.5 max-md:px-2 max-md:text-xs [&>svg]:shrink-0';
 
 function WorkspaceLayout() {
+  const { pathname } = useLocation();
+  const [showRecent, setShowRecent] = useState(false);
+  const configuringAgent = /^\/(tools|skills|mcp|subagents)(\/|$)/.test(pathname);
   const [version, setVersion] = useState(0);
   const refresh = useCallback(() => setVersion((value) => value + 1), []);
   const workspace = useMemo(() => ({ version, refresh }), [version, refresh]);
@@ -58,101 +69,84 @@ function WorkspaceLayout() {
       <ApplicationActivity conversationIds={recent.map((item) => item.id)} version={version}>
       <BackgroundDeletions>
         <div className="app-shell flex min-h-screen max-md:block has-[.chat-page]:h-dvh has-[.chat-page]:overflow-hidden max-md:has-[.chat-page]:flex max-md:has-[.chat-page]:flex-col">
-          <aside className="sidebar fixed inset-y-0 left-0 flex w-[244px] shrink-0 flex-col overflow-y-auto bg-sidebar px-4.5 pt-7 pb-5 text-[#d5e1d9] max-lg:w-[214px] max-md:static max-md:w-auto max-md:p-[15px]">
+          <aside className="sidebar fixed inset-y-0 left-0 flex w-[214px] shrink-0 flex-col gap-4 overflow-y-auto border-r border-line bg-sidebar px-3 pt-5 pb-4 text-ink max-md:static max-md:grid max-md:w-auto max-md:grid-cols-[1fr_auto] max-md:items-center max-md:gap-2 max-md:border-r-0 max-md:border-b max-md:p-2.5">
             <Link
-              className="brand mx-1.5 mb-8 flex items-center gap-2.5 text-[19px] font-[650] tracking-[-0.4px] text-[#f0f5ed] hover:no-underline max-md:mx-0 max-md:mb-3.5 max-md:text-lg"
+              className="brand mx-1 flex min-w-0 items-center gap-2.5 text-lg font-semibold text-ink hover:no-underline"
               to="/"
             >
-              <span className="grid h-[39px] w-[35px] place-items-center rounded-[11px] border border-[#557164] text-[#c3dcb2]">
-                <Sprout size={23} />
+              <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-brand text-white max-md:size-8">
+                <Compass size={20} aria-hidden="true" />
               </span>
               <div>
-                KnowledgeOps
-                <small className="block text-[10px] font-normal tracking-[2.8px] text-[#a9bdb0] max-md:hidden">
-                  个人知识工作台
+                研发助手
+                <small className="block text-[11px] font-normal text-control max-md:hidden">
+                  技术调研与知识管理
                 </small>
               </div>
             </Link>
             <Link
-              className="new-chat mb-[23px] flex items-center justify-center gap-2 rounded-lg border border-[#526d60] p-2.5 text-sm text-[#e3ece1] max-md:mb-3 max-md:inline-flex"
+              className="new-chat button button-secondary justify-start"
               to="/?draft=new"
             >
               <Plus size={17} />
-              开始新对话
+              新对话
             </Link>
             <nav
               aria-label="主要功能"
-              className="grid gap-1.5 max-md:flex max-md:gap-1 max-md:overflow-x-auto max-md:pb-1.5 max-md:[&_svg]:w-3.5"
+              className="grid gap-0.5 max-md:col-span-2 max-md:flex max-md:flex-wrap max-md:[&_svg]:w-3.5"
             >
-              <NavLink className={navigationStyle} to="/" end>
-                <MessageSquare size={18} />
-                对话
+              <NavLink className={navigationStyle} to="/research">
+                <FlaskConical size={18} aria-hidden="true" />
+                研发工作台
               </NavLink>
               <NavLink className={navigationStyle} to="/knowledge">
                 <BookOpen size={18} />
                 知识库
               </NavLink>
-              <NavLink className={navigationStyle} to="/learning">
-                <BookOpen size={18} />
-                学习与整理
-              </NavLink>
               <NavLink className={navigationStyle} to="/sources">
                 <Files size={18} />
                 材料与来源
               </NavLink>
+              <NavLink className={navigationStyle} to="/learning">
+                <GraduationCap size={18} />
+                学习与整理
+              </NavLink>
+            </nav>
+            <section className="recent min-w-0 shrink-0 border-t border-line pt-2 max-md:hidden" aria-label="最近对话">
+              <div className="flex items-center justify-between px-2.5 text-xs text-control">
+                最近对话
+                <Link to="/conversations" className="button button-quiet p-1" aria-label="查看全部会话" title="查看全部会话"><List size={17} aria-hidden="true" /></Link>
+              </div>
+              {recent.map((chat) => <ConversationLink key={chat.id} chat={chat} />)}
+              {!recent.length && <p className="mx-2.5 my-1 text-xs text-control">还没有对话</p>}
+            </section>
+            <nav className="mt-auto grid gap-0.5 border-t border-line pt-2 max-md:col-span-2 max-md:grid-cols-[repeat(2,minmax(0,1fr))] max-md:pt-1" aria-label="管理">
               <NavLink className={navigationStyle} to="/runs">
-                <GitPullRequest size={18} />
+                <Activity size={18} />
                 运行记录
                 <ActivityIndicator />
               </NavLink>
-              <NavLink className={navigationStyle} to="/memories">
-                <BookOpen size={18} />
-                长期记忆
-              </NavLink>
-              <NavLink className={navigationStyle} to="/tools">
-                <Files size={18} />
-                工具与能力
-              </NavLink>
-              <NavLink className={navigationStyle} to="/subagents">
-                <Files size={18} />
-                子Agent
-              </NavLink>
-              <NavLink className={navigationStyle} to="/skills">
-                <BookOpen size={18} />
-                Skills
-              </NavLink>
-              <NavLink className={navigationStyle} to="/mcp">
-                <Files size={18} />
-                工具服务
-              </NavLink>
+              <Link className={navigationStyle + (configuringAgent ? ' active' : '')} to="/tools"
+                aria-current={configuringAgent ? 'true' : undefined}>
+                <SlidersHorizontal size={18} /> 智能体设置
+              </Link>
               <NavLink className={navigationStyle} to="/system">
                 <Settings size={18} />
                 系统与维护
               </NavLink>
+              <Button className="button-quiet hidden justify-start gap-1.5 text-xs max-md:inline-flex"
+                type="button" onClick={() => setShowRecent(true)}><List size={16} /> 最近对话</Button>
             </nav>
-            <div className="recent mt-[35px] min-h-0 overflow-y-auto px-[7px] max-md:hidden">
-              <p className="mx-[7px] mt-0 mb-2.5 text-[11px] tracking-[1px] text-[#86a093]">
-                最近对话
-              </p>
-              {recent.map((chat) => (
-                <ConversationLink key={chat.id} chat={chat} />
-              ))}
-              {recent.length === 0 && (
-                <span className="muted text-muted small text-xs">从右侧开始第一段对话</span>
-              )}
-              <Link className="mt-3 block px-[7px] text-xs text-[#bbd2c3]" to="/conversations">查看全部会话与搜索 →</Link>
-            </div>
-            <details className="mobile-conversations mt-2.5 hidden text-xs max-md:block open:max-h-[220px] open:overflow-auto">
-              <summary>最近对话</summary>
-              {recent.map((chat) => (
-                <ConversationLink key={chat.id} chat={chat} />
-              ))}
-              {recent.length === 0 && <p>还没有对话。</p>}
-              <Link className="mt-2 block text-[#bbd2c3]" to="/conversations">查看全部会话与搜索 →</Link>
-            </details>
+            {showRecent && <Dialog title="最近对话" onClose={() => setShowRecent(false)}
+              footer={<Link to="/conversations" className="button button-secondary" onClick={() => setShowRecent(false)}>查看全部会话</Link>}>
+              <div className="mobile-conversations">
+                {recent.map((chat) => <ConversationLink key={chat.id} chat={chat} onOpen={() => setShowRecent(false)} contained />)}
+                {!recent.length && <p>还没有对话。</p>}
+              </div>
+            </Dialog>}
           </aside>
-          <main className="main ml-[244px] min-w-0 flex-1 px-11 pt-[35px] pb-[42px] max-lg:ml-[214px] max-lg:p-7 max-md:ml-0 max-md:px-4 max-md:py-6 has-[.chat-page]:flex has-[.chat-page]:min-h-0 has-[.chat-page]:flex-col has-[.chat-page]:px-0 has-[.chat-page]:pt-0 has-[.chat-page]:pb-4 max-md:has-[.chat-page]:pb-[max(10px,env(safe-area-inset-bottom))]">
-            <div className="main-content mx-auto w-full max-w-[1512px] has-[.chat-page]:flex has-[.chat-page]:min-h-0 has-[.chat-page]:max-w-none has-[.chat-page]:flex-1 has-[.chat-page]:flex-col">
+          <main className="main ml-[214px] min-w-0 flex-1 px-11 pt-[35px] pb-[42px] max-lg:p-7 max-md:ml-0 max-md:px-4 max-md:py-6 has-[.chat-page]:flex has-[.chat-page]:min-h-0 has-[.chat-page]:flex-col has-[.chat-page]:px-0 has-[.chat-page]:pt-0 has-[.chat-page]:pb-4 max-md:has-[.chat-page]:pb-[max(10px,env(safe-area-inset-bottom))]">
+            <div className="main-content mx-auto w-full max-w-[1160px] has-[.chat-page]:flex has-[.chat-page]:min-h-0 has-[.chat-page]:max-w-none has-[.chat-page]:flex-1 has-[.chat-page]:flex-col">
               <ErrorBox message={settings.error || conversations.error} />
               <Outlet context={settings.data} />
             </div>
@@ -181,9 +175,16 @@ export default function App() {
       createRoutesFromElements(
         <Route element={<WorkspaceLayout />}>
           <Route path="/" element={<ConfiguredChatPage />} />
+          {import.meta.env.DEV && <Route path="/dev/ui" element={<WorkbenchPreview />} />}
           <Route path="/conversations" element={<ConversationsPage />} />
           <Route path="/chat/:conversationId" element={<ConfiguredChatPage />} />
           <Route path="/chat/:conversationId/deletion" element={<Navigate to="/" replace />} />
+          <Route path="/research" element={<ResearchList />} />
+          <Route path="/research/:taskId" element={<ResearchPage />} />
+          <Route path="/research/:taskId/map" element={<ResearchMapPage />} />
+          <Route path="/research/:taskId/experiments" element={<ResearchExperimentsPage />} />
+          <Route path="/research/:taskId/evidence/:evidenceId" element={<ResearchExcerptPage />} />
+          <Route path="/research/:taskId/branches/:branchId/revisions/:revisionId" element={<ResearchPage />} />
           <Route path="/knowledge" element={<KnowledgePage />} />
           <Route path="/knowledge/:documentId" element={<ArticlePage />} />
           <Route path="/sources" element={<SourcesPage />} />

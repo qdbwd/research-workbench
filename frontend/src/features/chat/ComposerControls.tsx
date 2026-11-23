@@ -1,13 +1,16 @@
 import { Button } from '../../shared/ui/Button';
+import { Dialog } from '../../shared/ui/Dialog';
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowUp, Plus, ShieldCheck, X } from 'lucide-react';
+import { ArrowUp, BookOpen, FlaskConical, GraduationCap, Paperclip, Plus, Search, ShieldCheck, SlidersHorizontal, X } from 'lucide-react';
 import type { Source } from '../../shared/types/types';
 
 type Props = {
   conversationId?: string;
   onManageMaterials: () => void;
+  onOrganizeKnowledge: () => void;
+  composerReady: boolean;
   permission: string;
   reasoning: string;
   model?: string;
@@ -34,6 +37,11 @@ type Props = {
   disabled: boolean;
   busy: boolean;
   context: ReactNode;
+  onViewResearch?: () => void;
+  researchLoading?: boolean;
+  onActivateResearch?: () => void;
+  onCloseResearch?: () => void;
+  researchMode: boolean;
 };
 
 const reasoningLabels: Record<string, string> = {
@@ -47,8 +55,21 @@ const reasoningLabels: Record<string, string> = {
 /** 常用控制常驻底栏，其余选项渐进展开；收起菜单不会重置用户选择。 */
 export function ComposerControls(props: Props) {
   const [open, setOpen] = useState(false);
+  const [settings, setSettings] = useState(false);
+  const [materials, setMaterials] = useState<string[] | null>(null);
+  const [query, setQuery] = useState('');
   const container = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
+  const menuItem = 'button-quiet w-full justify-start gap-2 text-left text-sm';
+  const openMaterials = () => {
+    trigger.current?.focus();
+    setOpen(false);
+    setQuery('');
+    setMaterials(props.selected);
+  };
+  const visibleMaterials = props.materials.filter((source) =>
+    source.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
+  );
   useEffect(() => {
     if (!open) return;
     const outside = (event: PointerEvent) => {
@@ -70,24 +91,13 @@ export function ComposerControls(props: Props) {
   return (
     <>
       {props.selected.length > 0 && (
-        <div
-          className="composer-attachments flex max-h-[76px] flex-wrap gap-1.5 overflow-auto"
-          aria-label="已关联材料"
-        >
-          {props.selected.map((id) => (
-            <Button
-              key={id}
-              type="button"
-              className="attachment-chip max-w-[230px] overflow-hidden px-2 py-[3px] text-[11px] text-ellipsis secondary button-secondary"
-              onClick={() => props.setSelected(props.selected.filter((value) => value !== id))}
-              title="取消关联此材料"
-            >
-              {props.materials.find((item) => item.id === id)?.title ?? '已选材料'} <X size={12} />
-            </Button>
-          ))}
+        <div className="composer-attachments" aria-label="已关联材料">
+          <Button type="button" className="button-secondary text-xs" onClick={openMaterials}>
+            <Paperclip size={14} /> {props.selected.length} 份材料
+          </Button>
         </div>
       )}
-      <div className="composer-toolbar mt-2.5 flex items-center justify-between gap-2 max-md:gap-[3px]">
+      <div className="composer-toolbar mt-2.5 flex items-center justify-between gap-2 max-md:flex-wrap max-md:gap-[3px]">
         <div className="composer-toolbar-left flex shrink-0 items-center gap-2 max-md:gap-[3px]">
           <div ref={container} className="composer-menu relative">
             <Button
@@ -104,11 +114,45 @@ export function ComposerControls(props: Props) {
             {open && (
               <div
                 id="composer-extra-options"
-                className="composer-popover absolute bottom-[calc(100%_+_16px)] left-0 z-20 max-h-[min(500px,55dvh)] w-[min(310px,calc(100vw_-_64px))] overflow-y-auto rounded-xl border border-line bg-white p-4 text-[13px] shadow-[0_10px_35px_#183d3525] [&>*]:mb-3 [&_label]:my-2.5 [&_label]:gap-2 [&_.check]:justify-start"
+                className="composer-popover absolute bottom-[calc(100%+10px)] left-0 z-20 grid w-[min(235px,calc(100vw-48px))] gap-0.5 rounded-xl border border-line bg-white p-1.5 shadow-[0_10px_35px_#183d3525]"
                 role="region"
                 aria-label="更多设置与材料"
               >
-                <strong>本次任务</strong>
+                <Button type="button" className={menuItem} onClick={openMaterials}>
+                  <Paperclip size={16} /> 文件和文件夹
+                </Button>
+                <Button type="button" className={menuItem} disabled={!props.composerReady}
+                  onClick={() => { setOpen(false); props.onOrganizeKnowledge(); }}>
+                  <BookOpen size={16} /> 整理成知识
+                </Button>
+                <Link
+                  className={`button ${menuItem}`}
+                  to={props.conversationId ? `/learning?conversation_id=${encodeURIComponent(props.conversationId)}` : '/learning'}
+                  onClick={() => setOpen(false)}
+                >
+                  <GraduationCap size={16} /> 建立学习任务
+                </Link>
+                {props.onViewResearch && (
+                  <Button type="button" className={menuItem}
+                    onClick={() => { trigger.current?.focus(); setOpen(false); props.onViewResearch?.(); }}>
+                    <FlaskConical size={16} /> 查看研发简报
+                  </Button>
+                )}
+                {props.onActivateResearch && (
+                  <Button type="button" className={menuItem} disabled={props.researchLoading}
+                    onClick={() => { setOpen(false); props.onActivateResearch?.(); }}>
+                    <FlaskConical size={16} /> 研发模式
+                  </Button>
+                )}
+                <Button type="button" className={menuItem} onClick={() => { trigger.current?.focus(); setOpen(false); setSettings(true); }}>
+                  <SlidersHorizontal size={16} /> 本次任务设置
+                </Button>
+              </div>
+            )}
+            {settings && (
+              <Dialog title="本次任务设置" onClose={() => setSettings(false)}
+                footer={<Button type="button" onClick={() => setSettings(false)}>完成</Button>}>
+                <div className="grid gap-3">
                 <label>
                   知识变更
                   <select
@@ -152,38 +196,40 @@ export function ComposerControls(props: Props) {
                     命令规则
                   </Link>
                 )}
-                <div className="composer-materials border-t border-line pt-3 [&_label]:items-start">
-                  <strong>关联材料</strong>
-                  {props.materials.map((source) => (
-                    <label
-                      className="check m-0 flex-row items-center gap-2 font-normal"
-                      key={source.id}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={props.selected.includes(source.id)}
-                        onChange={(e) =>
-                          props.setSelected(
-                            e.target.checked
-                              ? [...props.selected, source.id]
-                              : props.selected.filter((id) => id !== source.id),
-                          )
-                        }
-                      />
-                      {source.title}
-                    </label>
-                  ))}
-                  <Button
-                    type="button"
-                    className="quiet button-quiet"
-                    disabled={props.busy}
-                    onClick={props.onManageMaterials}
-                  >
-                    {props.conversationId ? '导入或管理会话材料 →' : '导入会话材料 →'}
+                </div>
+              </Dialog>
+            )}
+            {materials && (
+              <Dialog title="文件和文件夹" onClose={() => setMaterials(null)}
+                footer={<>
+                  <Button type="button" className="button-secondary" onClick={() => setMaterials(null)}>取消</Button>
+                  <Button type="button" onClick={() => { props.setSelected(materials); setMaterials(null); }}>
+                    确定（{materials.length}）
+                  </Button>
+                </>}>
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div className="relative min-w-0 flex-1">
+                    <input autoFocus type="search" aria-label="搜索已有材料" className="pr-9"
+                      placeholder="搜索已有材料" value={query} onChange={(event) => setQuery(event.target.value)} />
+                    <Search className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-control" size={16} />
+                  </div>
+                  <Button type="button" className="button-secondary" disabled={props.busy || !props.composerReady}
+                    onClick={() => { props.setSelected(materials); setMaterials(null); props.onManageMaterials(); }}>
+                    导入材料
                   </Button>
                 </div>
-                <small className="muted text-muted">Ctrl / ⌘ + Enter 发送，Enter 换行</small>
-              </div>
+                <div className="max-h-60 overflow-y-auto divide-y divide-line">
+                  {visibleMaterials.map((source) => (
+                    <label className="check m-0 flex-row items-center gap-2 py-2 font-normal" key={source.id}>
+                      <input type="checkbox" checked={materials.includes(source.id)}
+                        onChange={(event) => setMaterials(event.target.checked
+                          ? [...materials, source.id] : materials.filter((id) => id !== source.id))} />
+                      <span className="[overflow-wrap:anywhere]">{source.title}</span>
+                    </label>
+                  ))}
+                  {!visibleMaterials.length && <p className="text-sm text-control">{query ? '没有匹配的材料。' : '还没有可选材料。'}</p>}
+                </div>
+              </Dialog>
             )}
           </div>
           <label
@@ -203,8 +249,10 @@ export function ComposerControls(props: Props) {
               <option value="auto_review">替我审批</option>
             </select>
           </label>
+          {props.researchMode && <Button type="button" className="button-quiet rounded-full bg-sidebar text-xs text-brand"
+            aria-label="关闭研发模式" onClick={props.onCloseResearch}>研发模式 <X size={14} /></Button>}
         </div>
-        <div className="composer-toolbar-right flex min-w-0 items-center justify-end gap-2 max-md:gap-[3px]">
+        <div className="composer-toolbar-right flex min-w-0 items-center justify-end gap-2 max-md:ml-auto max-md:gap-[3px]">
           {props.context}
           <span
             className="composer-model min-w-0 max-w-[180px] truncate text-xs leading-[34px] text-control max-md:max-w-[100px] max-md:text-[11px] max-md:leading-8"
@@ -248,7 +296,7 @@ export function ComposerControls(props: Props) {
             className="send icon-button size-[34px] shrink-0 rounded-full p-2 max-md:h-8 max-md:w-[30px]"
             disabled={props.disabled}
             type="submit"
-            aria-label="发送"
+            aria-label={props.researchMode ? '开始研发' : '发送'}
             title={props.busy ? '提交中…' : '发送（Ctrl / ⌘ + Enter）'}
           >
             <ArrowUp size={20} />

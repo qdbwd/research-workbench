@@ -1,3 +1,5 @@
+import { DetailDialog } from '../../shared/ui/Workbench';
+
 /** 冻结清单表示本次可用资源；实际读取与调用仍以事件和回执为准。 */
 export type RuntimeManifest = {
   content_hash: string;
@@ -46,8 +48,7 @@ export function RuntimeResources({
           <p className="muted text-muted">
             以下是首次执行时冻结的版本。普通编辑从新任务生效，撤回许可在下一相关调用前检查。
           </p>
-          <details className="mt-5">
-            <summary>Skills、偏好和服务配置</summary>
+          <DetailDialog className="mt-5" title="技能、偏好和服务配置">
             <h3>按需可读的 Skills</h3>
             <ul>
               {resources.content.skills
@@ -88,7 +89,7 @@ export function RuntimeResources({
               <p>无</p>
             )}
             <p className="muted text-muted">清单哈希：{resources.content_hash}</p>
-          </details>
+          </DetailDialog>
         </>
       )}
       {continuation ? (

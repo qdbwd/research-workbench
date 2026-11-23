@@ -1,10 +1,11 @@
 import { Button } from '../../shared/ui/Button';
 import { useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
-import { ArrowLeft, RotateCcw } from 'lucide-react';
+import { RotateCcw } from 'lucide-react';
 import { messageOf, send, terminal, useResource } from '../../shared/api/api';
 import { RunPauseControl } from './RunPauseControl';
 import { Badge, ErrorBox, Loading, Markdown, PageTitle } from '../../shared/ui/components';
+import { BackLink } from '../../shared/ui/Workbench';
 import type { Budgets, Run } from '../../shared/types/types';
 import { ExecutionApprovals } from '../permissions/ExecutionApprovals';
 import { RunQuestions } from './RunQuestions';
@@ -89,13 +90,24 @@ export function RunPage() {
   if (!result.data) return <ErrorBox message={result.error} />;
   const run = result.data;
   if (run.user_deleted_at) return <RemovedRun run={run} />;
+  if (run.kind === 'research_start')
+    return (
+      <>
+        <BackLink to="/runs">返回运行记录</BackLink>
+        <PageTitle title="研发任务登记">
+          {run.outcome.research_task_id && <Link className="button button-secondary" to={`/research/${run.outcome.research_task_id}`}>打开研发工作台</Link>}
+        </PageTitle>
+        <section className="rounded-xl border border-line bg-white p-5">
+          <p className="m-0 whitespace-pre-wrap [overflow-wrap:anywhere]">{run.task}</p>
+          {run.conversation_id && <Link className="mt-3 inline-block" to={`/chat/${run.conversation_id}`}>返回会话</Link>}
+        </section>
+      </>
+    );
   if (run.details_available === false)
     return (
       <>
-        <Link className="back-link mb-[15px] inline-flex items-center gap-1.5 text-xs" to="/runs">
-          ← 全部运行
-        </Link>
-        <PageTitle eyebrow="RUN" title="运行结果摘要">
+        <BackLink to="/runs">返回运行记录</BackLink>
+        <PageTitle title="运行结果摘要">
           <DeleteRunButton run={run} leave />
         </PageTitle>
         <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
@@ -117,12 +129,9 @@ export function RunPage() {
     );
   return (
     <>
-      <Link className="back-link mb-[15px] inline-flex items-center gap-1.5 text-xs" to="/runs">
-        <ArrowLeft size={15} />
-        全部运行
-      </Link>
-      <PageTitle eyebrow="TASK" title="任务详情">
-        <div className="row flex items-center gap-3">
+      <BackLink to="/runs">返回运行记录</BackLink>
+      <PageTitle title="任务详情">
+        <div className="flex flex-wrap items-center gap-2">
           <DeleteRunButton run={run} leave />
           <Button className="secondary button-secondary" onClick={refresh}>
             刷新
@@ -237,8 +246,8 @@ export function RunArtifactPage() {
   if (result.data?.source_url) return <Navigate to={result.data.source_url} replace />;
   return (
     <>
-      <Link to={`/runs/${runId}`}>← 返回运行详情</Link>
-      <PageTitle eyebrow="PRESERVED CONTEXT" title="运行材料原文" />
+      <BackLink to={`/runs/${runId}`}>返回运行详情</BackLink>
+      <PageTitle title="运行材料原文" />
       <ErrorBox message={result.error} />
       {result.loading ? (
         <Loading />

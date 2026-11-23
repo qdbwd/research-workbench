@@ -6,7 +6,7 @@ import json
 from dataclasses import replace
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.types import Command
 
 from knowledgeops_agent.app.runs.guidance import applied_messages
@@ -48,6 +48,15 @@ class RuntimeControlMiddleware(AgentMiddleware):
         if question_batch(request.state) and call["name"] not in QUESTION_TOOLS:
             return ToolMessage(content="未执行：同批含真人补问，收到回答后必须重新决策。",
                                name=call["name"], tool_call_id=call["id"], status="error")
+        last = next((msg for msg in reversed(request.state.get("messages", [])) if isinstance(msg, AIMessage)), None)
+        if last is not None:
+            proposals = [*last.tool_calls, *last.invalid_tool_calls]
+            if len(proposals) > 1 and any(
+                item.get("name") in {"set_research_focus", "submit_research_delivery", "update_research_map"}
+                for item in proposals
+            ):
+                return ToolMessage(content="未执行：调整焦点、更新地图和提交成果均须单独调用。",
+                                   name=call["name"], tool_call_id=call["id"], status="error")
         journal, ticket = CommandJournal(context), None
         try:
             if context.resources is not None:
@@ -348,6 +357,8 @@ class RuntimeControlMiddleware(AgentMiddleware):
             if context.resources is not None
             else {},
         }
+        if root["input"].get("trial_case"):
+            controls["trial_scope"] = "本会话使用运维试点模拟资料的独立副本。资料问答优先联合检索，并引用实际读到的固定版本。研究结论写入所属研发任务。"
         system = request.system_message.text if request.system_message else ""
         # 上游DurableContextMiddleware把历史资料与系统权威分开。本项目沿用
         # 该边界，复用已有业务真相，不让模型笔记/历史材料取得系统指令地位。
@@ -394,6 +405,15 @@ class RuntimeControlMiddleware(AgentMiddleware):
                 m for m in background["preferences"] if m["id"] not in used_memory
             ]
             system += "\n" + (context.resources or {})["prompts"].get("learning", "")
+        if research := root["input"].get("research"):
+            from knowledgeops_agent.research.execution import background as research_background
+            from knowledgeops_agent.research.methods import RESEARCH_DUTIES
+
+            with context.jobs.sessions() as session:
+                background["research"] = research_background(session, research)
+            system += "\n" + RESEARCH_DUTIES
+            if research.get("review_only"):
+                system += "\n本轮仅核对固定的简报、来源和已有结果。继续研究需要用户重开或要求修订。"
         background["task_notes"] = normalize_task_notes(request.state.get("task_notes"))
         background["history_status"] = request.state.get("task_history", {}).get(
             "status", "active_only"

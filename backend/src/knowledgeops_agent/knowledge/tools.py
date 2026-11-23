@@ -16,7 +16,7 @@ def search_knowledge(query: str, runtime: ToolRuntime[RunContext]) -> list[dict]
     正文无需曾在聊天展示。词法候选不等于已读证据；使用document_id、version_id、
     start调用read_knowledge核对，按返回的next_start继续补读；修改前仍须从0完整读取该版本。
     """
-    return runtime.context.knowledge.search(query)
+    return runtime.context.knowledge.search(query, root_id=runtime.context.root_id)
 
 
 @tool
@@ -24,7 +24,7 @@ def list_knowledge(runtime: ToolRuntime[RunContext], include_archived: bool = Fa
     """查看文章目录/当前版本。查找待恢复文章时 include_archived=true；正文须另行读取。"""
     return [
         {key: row[key] for key in ("id", "version_id", "version", "title", "summary", "archived")}
-        for row in runtime.context.knowledge.list_documents(include_archived=include_archived)
+        for row in runtime.context.knowledge.list_documents(include_archived=include_archived, root_id=runtime.context.root_id)
     ]
 
 
@@ -36,7 +36,7 @@ def knowledge_history(document_id: str, runtime: ToolRuntime[RunContext]) -> lis
             key: row[key]
             for key in ("document_id", "version_id", "version", "title", "action", "archived")
         }
-        for row in runtime.context.knowledge.history(document_id)
+        for row in runtime.context.knowledge.history(document_id, root_id=runtime.context.root_id)
     ]
 
 

@@ -2,6 +2,9 @@ import { useEffect, useId, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { X } from 'lucide-react';
 
+let openDialogs = 0;
+let initialBodyOverflow = '';
+
 /** 原生模态层约束背景交互；React 卸载时显式返回触发按钮，避免焦点落到 body。 */
 export function Dialog({
   title,
@@ -9,24 +12,30 @@ export function Dialog({
   footer,
   onClose,
   busy = false,
+  placement = 'center',
 }: {
   title: string;
   children: ReactNode;
   footer?: ReactNode;
   onClose: () => void;
   busy?: boolean;
+  placement?: 'center' | 'side';
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   useEffect(() => {
     const dialog = ref.current!;
     const returnTo = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    if (openDialogs === 0) {
+      initialBodyOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+    }
+    openDialogs += 1;
     dialog.showModal();
     return () => {
       dialog.close();
-      document.body.style.overflow = previousOverflow;
+      openDialogs -= 1;
+      if (openDialogs === 0) document.body.style.overflow = initialBodyOverflow;
       queueMicrotask(() => {
         if (!dialog.open && returnTo?.isConnected) returnTo.focus({ preventScroll: true });
       });
@@ -73,7 +82,11 @@ export function Dialog({
           first.focus();
         }
       }}
-      className="fixed inset-0 m-auto max-h-[90dvh] w-[min(800px,calc(100%_-_32px))] max-w-none rounded-2xl border border-line bg-white p-0 text-ink shadow-xl backdrop:bg-[#102e27]/35 open:flex open:flex-col max-md:max-h-[94dvh] max-md:w-[calc(100%_-_20px)]"
+      className={`fixed max-w-none border border-line bg-white p-0 text-ink shadow-xl backdrop:bg-[#102e27]/35 open:flex open:flex-col ${
+        placement === 'side'
+          ? 'inset-y-0 right-0 left-auto m-0 h-dvh max-h-none w-[min(520px,100%)] rounded-l-2xl max-md:rounded-none'
+          : 'inset-0 m-auto max-h-[90dvh] w-[min(800px,calc(100%_-_32px))] rounded-2xl max-md:max-h-[94dvh] max-md:w-[calc(100%_-_20px)]'
+      }`}
     >
       <header className="flex shrink-0 items-center justify-between gap-4 border-b border-line px-6 py-4 max-md:px-4">
         <h2 id={titleId} className="m-0 text-lg font-semibold">
@@ -89,7 +102,7 @@ export function Dialog({
           <X size={20} />
         </button>
       </header>
-      <div className="min-h-0 overflow-y-auto overscroll-contain px-6 py-5 max-md:px-4">
+      <div className={`min-h-0 overflow-y-auto overscroll-contain px-6 py-5 max-md:px-4 ${placement === 'side' ? 'grow' : ''}`}>
         {children}
       </div>
       {footer && (

@@ -67,13 +67,22 @@ def history_read(source_id: str, runtime: ToolRuntime[Any], offset: int = 0) -> 
         return {"error": "source_unavailable", "status": found["status"]}
     row = found["results"][0]
     text = row["text"]
+    excerpt = text[offset : offset + 4000]
+    from knowledgeops_agent.research.evidence import capture_excerpt
+
+    identity = capture_excerpt(
+        runtime.context, kind="history", title="会话原话", text=excerpt,
+        start=offset, end=offset + len(excerpt), offset_unit="characters",
+        history_id=row["id"], message_id=row.get("message_id"), role=row["role"],
+    )
     return {
         **row,
-        "text": text[offset : offset + 4000],
+        "text": excerpt,
         "offset": offset,
         "total_length": len(text),
         "status": found["status"],
         "next_offset": offset + 4000 if offset + 4000 < len(text) else None,
+        **({"research_evidence_id": identity} if identity else {}),
     }
 
 

@@ -38,16 +38,77 @@ def test_empty_database_enables_extension_and_builds_bm25_indexes():
             assert (
                 connection.execute(
                     text(
-                        "SELECT count(*) FROM pg_indexes WHERE indexname IN ('ix_history_chunks_bm25','ix_knowledge_chunks_bm25') AND indexdef LIKE '%USING paradedb%'"
+                        "SELECT count(*) FROM pg_indexes WHERE indexname IN ('ix_history_chunks_bm25','ix_knowledge_chunks_bm25','ix_source_chunks_bm25') AND indexdef LIKE '%USING paradedb%'"
                     )
                 ).scalar_one()
-                == 2
+                == 3
             )
     finally:
         fresh.dispose()
         with admin.connect() as connection:
             connection.execute(text(f'DROP DATABASE IF EXISTS "{database}"'))
         admin.dispose()
+
+
+def test_joint_search_migration_preserves_source_evidence_and_frozen_tool_policy(tmp_path):
+    from knowledgeops_agent.harness.tools.policy import ToolPolicyService
+    from knowledgeops_agent.persistence.models import Evidence, SourceSegment, SourceVersion
+    from knowledgeops_agent.sources.service import SourceService
+
+    engine = create_engine(os.environ["TEST_DATABASE_URL"])
+    assert engine.url.database == "knowledgeops_test"
+    schema = "source_search_" + uuid4().hex
+    try:
+        with engine.begin() as connection:
+            connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+            connection.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+            config = Config("alembic.ini")
+            config.attributes["connection"] = connection
+            command.upgrade(config, "0052")
+            sessions = sessionmaker(bind=connection, expire_on_commit=False)
+            quote = "紧急变更应由当班负责人审批。"
+            # 0052 的材料没有试用归属列，按当时结构写入旧记录。
+            connection.execute(text("""
+                INSERT INTO sources (id, identity_key, title, kind, created_at)
+                VALUES ('source', 'old-import', '旧手册', 'file', now())
+            """))
+            with sessions.begin() as session:
+                session.add(SourceVersion(
+                    id="version", source_id="source", number=1,
+                    content_hash="0" * 64, mime_type="text/plain",
+                ))
+                session.flush()
+                session.add(SourceSegment(
+                    id="segment", source_version_id="version", position=0,
+                    start_offset=0, end_offset=len(quote), text=quote,
+                ))
+                session.flush()
+                session.add(Evidence(
+                    id="original-citation", root_id="finished-run", source_segment_id="segment",
+                    start_offset=0, end_offset=len(quote), quote=quote,
+                ))
+            command.upgrade(config, "0053")
+            policy = ToolPolicyService(sessions)
+            frozen = policy.update(expected_revision=policy.get()["revision"], main_tools=["builtin:read_knowledge"])
+            previous = policy.history()
+            command.upgrade(config, "0054")
+            assert policy.history()[:-1] == previous
+            updated = policy.get()
+            assert updated["revision"] == frozen["revision"] + 1
+            assert updated["enabled"]["builtin:search_references"] is True
+            assert updated["resolved_main_tools"] == ["builtin:read_knowledge"]
+
+            command.upgrade(config, "0055")
+            sources = SourceService(sessions, tmp_path)
+            [hit] = sources.search("紧急变更 负责人")
+            assert (hit["segment_id"], hit["version_id"], hit["snippet"]) == ("segment", "version", quote)
+            assert sources.get_evidence("original-citation")["text"] == quote
+            assert connection.scalar(text("SELECT trial_conversation_id FROM sources WHERE id = 'source'")) is None
+            command.downgrade(config, "0052")
+            assert connection.scalar(text("SELECT quote FROM evidence WHERE id = 'original-citation'")) == quote
+            connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+    finally:
+        engine.dispose()
 
 
 def test_nonempty_backfill_preserves_sources_and_searches_late_chunks():

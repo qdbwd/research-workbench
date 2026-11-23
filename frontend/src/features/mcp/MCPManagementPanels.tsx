@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { messageOf, send, useResource } from '../../shared/api/api';
 import { Button } from '../../shared/ui/Button';
 import { Dialog } from '../../shared/ui/Dialog';
+import { DetailDialog } from '../../shared/ui/Workbench';
 import { ErrorBox, Loading } from '../../shared/ui/components';
 
 type Permission = 'deny' | 'read' | 'confirm';
@@ -204,12 +205,11 @@ export function MCPImportDialog({
                   提供的 {item.provided_secret_refs.length} 项变量将单独保存。
                 </p>
               )}
-              <details>
-                <summary>查看非秘密配置</summary>
+              <DetailDialog title="查看非秘密配置">
                 <pre className="max-h-64 overflow-auto text-xs">
                   {JSON.stringify(item.config, null, 2)}
                 </pre>
-              </details>
+              </DetailDialog>
             </section>
           ))}
         </div>
@@ -398,8 +398,7 @@ function Candidate({ row, changed }: { row: Operation; changed: () => void }) {
         </p>
       )}
       {!!row.result.progress?.length && (
-        <details className="mt-3">
-          <summary>准备进展</summary>
+        <DetailDialog className="mt-3" title="准备进展">
           <ol className="text-sm">
             {row.result.progress.map((item, index) => (
               <li key={index}>
@@ -420,7 +419,7 @@ function Candidate({ row, changed }: { row: Operation; changed: () => void }) {
               </li>
             ))}
           </ol>
-        </details>
+        </DetailDialog>
       )}
       {row.status === 'tested' && (
         <div className="mt-5 border-t border-line pt-4">
@@ -433,12 +432,11 @@ function Candidate({ row, changed }: { row: Operation; changed: () => void }) {
               <div key={tool.name} className="rounded-lg border border-line p-3">
                 <strong className="break-all">{tool.name}</strong>
                 <p className="text-sm">{tool.description}</p>
-                <details>
-                  <summary>参数结构</summary>
+                <DetailDialog title="参数结构">
                   <pre className="max-h-60 overflow-auto text-xs">
                     {JSON.stringify(tool.schema, null, 2)}
                   </pre>
-                </details>
+                </DetailDialog>
                 <label className="mt-2 block">
                   {tool.name} 调用许可
                   <select
@@ -498,8 +496,9 @@ type Cleanup = {
 };
 
 export function MCPCleanup({ version }: { version: number }) {
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const selected = params.get('cleanup');
+  const [open, setOpen] = useState(false);
   const [tick, setTick] = useState(0);
   const [error, setError] = useState('');
   const result = useResource<Cleanup[]>('/api/mcp/cleanup', `${version}:${tick}`);
@@ -511,12 +510,21 @@ export function MCPCleanup({ version }: { version: number }) {
     const timer = setInterval(() => { if (document.visibilityState !== 'hidden') setTick((value) => value + 1); }, 5000);
     return () => clearInterval(timer);
   }, [pending]);
-  if (!rows?.length && !result.error && !selected) return null;
+  const close = () => {
+    setOpen(false);
+    if (selected) setParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.delete('cleanup');
+      return next;
+    }, { replace: true });
+  };
   return (
-    <details className="mt-6 rounded-xl border border-line bg-white p-5" open={Boolean(selected) || undefined}>
-      <summary>后台清理与失败重试</summary>
+    <>
+      <Button type="button" className="button-secondary" onClick={() => setOpen(true)}>清理记录</Button>
+      {(open || selected) && <Dialog title="MCP 清理记录" onClose={close}>
       <ErrorBox message={error || result.error || detail.error} />
-      {detail.loading && <Loading />}
+      {(result.loading || detail.loading) && <Loading />}
+      {!rows?.length && !result.loading && !detail.loading && !result.error && !detail.error && <p>暂无清理记录。</p>}
       <p className="text-sm text-muted">
         保留仍在使用的安装与必要历史记录，只清理应用拥有的文件。第三方服务和外部目录由其所有者管理。
       </p>
@@ -560,7 +568,8 @@ export function MCPCleanup({ version }: { version: number }) {
           )}
         </section>
       ))}
-    </details>
+      </Dialog>}
+    </>
   );
 }
 

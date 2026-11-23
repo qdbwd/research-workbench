@@ -95,6 +95,16 @@ from knowledgeops_agent.learning.collaboration import (
     wait_learning_input,
 )
 from knowledgeops_agent.memory.tools import memory_read, memory_search
+from knowledgeops_agent.research.tools import (
+    continue_research,
+    propose_research_experiment,
+    read_research_experiment,
+    read_research_map,
+    set_research_focus,
+    submit_research_delivery,
+    update_research_map,
+)
+from knowledgeops_agent.retrieval.tools import search_references
 from knowledgeops_agent.sources.tools import (
     inspect_material,
     list_evidence,
@@ -118,6 +128,11 @@ SYSTEM_PROMPT = """你是 KnowledgeOps，一个以聊天为主要交互方式、
 普通工作文件和交付文件按任务在工作区处理；只有涉及正式知识库变更时，才应用知识草稿、发布和版本规则。
 新知识主题的框架引导只服务于学习任务；用户要执行明确操作时直接推进。知识特化增强相关任务，不要求所有任务先搜索知识库。
 优先组合现有通用工具；有匹配方法时读取Skill，有必要且已开放时使用专用工具、MCP或子Agent，不虚构未配置的能力。
+
+【应用中的研发任务】
+新对话和已有会话都可从输入框的「+」选择「研发模式」，在原输入框填写目标并点击「开始研发」。
+这会保存目标和研发简报。用户可在输入框上方查看简报、暂停、继续或取消任务。目前研发登记不自动启动后台研究。
+用户请你拟写研发目标时，提供可粘贴到输入框的文本，按需要说明目标、范围、可用材料和可核验的成果。由用户决定是否开始。
 
 【理解任务与交互推进】
 行动前辨别用户要的是解释、查证、讨论方案、整理草稿还是实际修改；梳理已知条件、关键缺口和本次要交付的结果。
@@ -207,6 +222,7 @@ LOCAL_TOOLS = {
     for tool in (
         *ASYNC_TOOLS,
         search_knowledge,
+        search_references,
         list_knowledge,
         knowledge_history,
         read_knowledge,
@@ -225,6 +241,13 @@ LOCAL_TOOLS = {
         wait_learning_input,
         propose_learning_framework,
         update_plan,
+        set_research_focus,
+        continue_research,
+        submit_research_delivery,
+        propose_research_experiment,
+        read_research_experiment,
+        read_research_map,
+        update_research_map,
         ask_clarification,
         call_model,
         prepare_changes,
@@ -313,7 +336,7 @@ def build_agent(context: RunContext, *, checkpointer):
     ]
     tools = bind_role_catalog(context, tools)
     # 主子图复用同一连接与回执服务；角色、只读上限与旧快照兼容由 MCP 层收窄。
-    external = mcp_tools(context)
+    external = [] if root_input.get("research") else mcp_tools(context)
     tools += external
     discovery = build_discovery(context, external, search_enabled="middleware:tool_search" in allowed)
     delegation_middleware = (
@@ -417,7 +440,7 @@ def initial_messages(context: RunContext) -> list:
     messages: list = []
     for item in rows:
         if item["role"] == "user":
-            messages.append(HumanMessage(item["content"]))
+            messages.append(HumanMessage(item["content"], id=item["id"]))
             continue
         # 新消息的协议随会话保存，完整回执过期后仍能准确继续；旧消息保留原回退。
         original = context.jobs.protocol_message(item["id"])

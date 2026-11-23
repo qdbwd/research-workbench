@@ -21,8 +21,23 @@ def allowed_local_ids(context, *, is_root: bool | None = None) -> set[str]:
     workspace = (context.resources or {}).get("workspace")
     if not workspace or not is_main or "middleware:read_file" not in allowed:
         allowed -= {item["id"] for item in tool_options() if item["condition"] == "workspace"}
-    if context.jobs.get_run(context.root_id)["input"].get("knowledge_only"):
+    inputs = context.jobs.get_run(context.root_id)["input"]
+    if inputs.get("knowledge_only"):
         allowed.discard("middleware:execute")
+    if inputs.get("research") or inputs.get("trial_case"):
+        # 专用实验入口接通前，研发只读材料并维护运行计划，不能借 Shell/文件/MCP 代跑实验。
+        allowed &= {
+            item["id"] for item in tool_options()
+            if item["effect"] in {"read", "delegate"} or item["condition"] == "research" or item["name"] in {
+                "update_plan", "task_note", "ask_clarification",
+            }
+        }
+        allowed.discard("middleware:tool_search")
+        if inputs.get("research", {}).get("review_only"):
+            allowed &= {item["id"] for item in tool_options()
+                        if item["effect"] == "read" and item["condition"] != "web"}
+    if inputs.get("trial_case"):
+        allowed -= {item["id"] for item in tool_options() if item["condition"] == "workspace"}
     return allowed
 
 

@@ -17,6 +17,7 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 from sqlalchemy import or_, select
 
 from knowledgeops_agent.persistence.models import ModelStep, RunEvent, new_id
+from knowledgeops_agent.retrieval.request_evidence import prepare_reference_messages
 
 _step_scope: ContextVar[tuple[str, str, int] | None] = ContextVar("model_step", default=None)
 
@@ -67,10 +68,14 @@ def bind_step_request(context, messages, tools, parameters):
         raise ValueError("模型步骤属于另一运行，不能跨主子 Agent 共享")
     with context.jobs.sessions.begin() as session:
         root = context.jobs._locked(session, context.root_id)
+        from knowledgeops_agent.research.execution import guard as guard_research
+
+        guard_research(session, root)
         step = session.scalar(select(ModelStep).where(
             ModelStep.run_id == run_id,
             or_(ModelStep.step_key == key, ModelStep.step_key.startswith(key + ":retry:", autoescape=True)),
         ).order_by(ModelStep.created_at.desc(), ModelStep.id.desc()).limit(1))
+        previous = None
         if step is not None:
             previous = context.gateway.ledger.linked_record(run_id, step.call_id)
             resumed = session.scalar(select(RunEvent).where(
@@ -83,11 +88,14 @@ def bind_step_request(context, messages, tools, parameters):
                 # 获得此权限；reserved/成功的尝试在任何代次都不重新发送。
                 key = key + f":retry:{root.generation}"
                 step = None
+        existing_step = step is not None
         if step is None:
+            messages, reference_ids = prepare_reference_messages(session, root, messages)
             snapshot = context.gateway._redact({
                 "messages": messages_to_dict(messages),
                 "tools": [convert_to_openai_tool(tool) for tool in tools],
                 "parameters": context.gateway.request_parameters(parameters),
+                **({"reference_evidence_ids": reference_ids} if reference_ids else {}),
             })
             step = ModelStep(
                 run_id=run_id, step_key=key, call_id=new_id(), authority_epoch=authority_epoch,
@@ -97,6 +105,18 @@ def bind_step_request(context, messages, tools, parameters):
             session.flush()
         if _digest(step.request_snapshot) != step.request_hash:
             raise ValueError("模型步骤请求快照校验失败，不能重新发送")
+        # 若仅绑定请求但尚未预占，恢复可能第一次发送。在同一受控事务内重新
+        # 去掉失效证据；已有供应商回执的请求保持原始指纹以便读取历史结果。
+        if existing_step and previous is None and step.request_snapshot.get("reference_evidence_ids"):
+            prepared, reference_ids = prepare_reference_messages(
+                session, root, messages_from_dict(step.request_snapshot["messages"]), verify_text=False,
+            )
+            if reference_ids != step.request_snapshot["reference_evidence_ids"]:
+                step.request_snapshot = {
+                    **step.request_snapshot, "messages": messages_to_dict(prepared),
+                    "reference_evidence_ids": reference_ids,
+                }
+                step.request_hash = _digest(step.request_snapshot)
         call_id, snapshot = step.call_id, step.request_snapshot
     # 正常路径保留 SDK 工具对象；只有重放时当前投影变化，才使用原 Schema。
     # 网关按原调用身份返回已保存结果，执行工具仍经过当前权限检查。

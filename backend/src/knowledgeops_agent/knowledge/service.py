@@ -36,12 +36,11 @@ from knowledgeops_agent.persistence.models import (
     new_id,
     utcnow,
 )
-from knowledgeops_agent.retrieval.index import add_knowledge_chunks
+from knowledgeops_agent.retrieval.index import add_knowledge_index
 from knowledgeops_agent.retrieval.search import (
     LexicalQuery,
     excerpt,
     search_expressions,
-    weighted_vector,
 )
 
 
@@ -113,6 +112,8 @@ class KnowledgeService:
 
     def _base(self, session, operation: DocumentChange) -> KnowledgeVersion | None:
         doc = session.get(KnowledgeDocument, operation.document_id) if operation.document_id else None
+        if doc and doc.trial_conversation_id:
+            raise ValueError("试用知识样例为固定版本，不能通过知识库修改。")
         if doc and doc.deleted_at:
             raise ValueError("文章已删除，不能通过旧草稿修改或恢复。")
         if operation.action == "create":
@@ -231,8 +232,11 @@ class KnowledgeService:
             raise ValueError("invalid idempotency key")
         with self.sessions.begin() as session:
             from knowledgeops_agent.app.runs.control import lock_control
+            from knowledgeops_agent.research.trial import run_trial_owner
 
             lock_control(session)
+            if run_trial_owner(session, root_id) is not None:
+                raise ValueError("试用成果请保存在研发任务中。")
             if guard:
                 guard(session)
             if operation_key:
@@ -881,7 +885,7 @@ class KnowledgeService:
                 doc.current_version_id = version.id
                 session.execute(delete(SearchEntry).where(SearchEntry.document_id == doc.id))
                 if not version.archived:
-                    self._add_index(session, version)
+                    add_knowledge_index(session, version)
                 version_ids.append(version.id)
                 session.flush()
             result = {
@@ -911,29 +915,6 @@ class KnowledgeService:
             draft.status = "published"
             session.flush()
             return result
-
-    def _add_index(self, session, version: KnowledgeVersion) -> None:
-        """索引和当前版本同事务；归档没有默认检索条目，但版本并未删除。"""
-        metadata = " ".join([*version.tags, version.summary, version.category])
-        session.add(
-            SearchEntry(
-                document_id=version.document_id,
-                version_id=version.id,
-                vector=weighted_vector(version.body, title=version.title, metadata=metadata),
-                normalized_text="\n".join(
-                    [
-                        version.title,
-                        version.summary,
-                        version.category,
-                        " ".join(version.tags),
-                        version.body,
-                    ]
-                ).lower(),
-            )
-        )
-        # 新片段外键挂在当前索引父记录下。替换/归档删除父记录时原子级联删除旧片段。
-        session.flush()
-        add_knowledge_chunks(session, version)
 
     def _version_view(self, version: KnowledgeVersion) -> dict:
         return {
@@ -986,7 +967,9 @@ class KnowledgeService:
             ]
             return result
 
-    def list_documents(self, *, include_archived: bool = False) -> list[dict]:
+    def list_documents(self, *, include_archived: bool = False, root_id: str | None = None) -> list[dict]:
+        from knowledgeops_agent.research.trial import run_trial_owner
+
         query = (
             select(KnowledgeVersion)
             .join(KnowledgeDocument, KnowledgeDocument.current_version_id == KnowledgeVersion.id)
@@ -996,11 +979,18 @@ class KnowledgeService:
         if not include_archived:
             query = query.where(KnowledgeVersion.archived.is_(False))
         with self.sessions() as session:
-            return [self._version_view(version) for version in session.scalars(query)]
+            scoped = query.where(KnowledgeDocument.trial_conversation_id == run_trial_owner(session, root_id))
+            return [self._version_view(version) for version in session.scalars(scoped)]
 
-    def history(self, document_id: str) -> list[dict]:
+    def history(self, document_id: str, *, root_id: str | None = None) -> list[dict]:
         """版本不可变；前端按版本 ID 查看和选择恢复目标。"""
+        from knowledgeops_agent.research.trial import run_trial_owner
+
         with self.sessions() as session:
+            if root_id is not None:
+                document = session.get(KnowledgeDocument, document_id)
+                if document is None or document.trial_conversation_id != run_trial_owner(session, root_id):
+                    raise KeyError("document not found")
             return [
                 self._version_view(version)
                 for version in session.scalars(
@@ -1018,16 +1008,25 @@ class KnowledgeService:
         version_id: str | None = None,
         start: int = 0,
         length: int = 6000,
+        current_only: bool = False,
     ) -> dict:
-        """按固定版本分页读取并登记已读区间，长正文不会被截断后冒充全文。"""
+        """登记固定正文读证据；新检索可要求候选仍是当前未撤回版本。"""
+        from knowledgeops_agent.research.trial import run_trial_owner
+
         with self.sessions.begin() as session:
+            if current_only:
+                from knowledgeops_agent.app.runs.control import lock_control
+
+                lock_control(session)
             doc = session.get(KnowledgeDocument, document_id)
-            if doc is None:
+            if doc is None or doc.trial_conversation_id != run_trial_owner(session, root_id):
                 raise KeyError("document not found")
             identity = version_id or doc.current_version_id
             version = session.get(KnowledgeVersion, identity) if identity else None
             if version is None or version.document_id != doc.id:
                 raise KeyError("document version not found")
+            if current_only and (doc.deleted_at is not None or version.archived or doc.current_version_id != version.id):
+                raise ValueError("候选已不可用，请重新检索")
             if not 0 <= start < len(version.body) or not 1 <= length <= 12000:
                 raise ValueError("invalid document range")
             end = min(len(version.body), start + length)
@@ -1086,7 +1085,7 @@ class KnowledgeService:
                 version = session.get(KnowledgeVersion, doc.current_version_id)
                 session.execute(delete(SearchEntry).where(SearchEntry.document_id == doc.id))
                 if version and not version.archived and not doc.deleted_at:
-                    self._add_index(session, version)
+                    add_knowledge_index(session, version)
                     count += 1
             return count
 
@@ -1096,15 +1095,19 @@ class KnowledgeService:
 
         return export_markdown(self.sessions, include_archived=include_archived)
 
-    def search(self, query: str, *, limit: int = 10) -> list[dict]:
+    def search(self, query: str, *, limit: int = 10, root_id: str | None = None) -> list[dict]:
         """先搜正文片段，再按文章去重；长文章不会因重复命中挤走其他候选。
 
         默认只查已发布的当前非归档版本。历史版本仍可按ID读取，检索片段不是
         已读证据；模型须根据返回的版本与偏移调用read_knowledge登记引用。
         """
+        from knowledgeops_agent.research.trial import run_trial_owner
+
         parsed = LexicalQuery.parse(query)
         if not parsed.terms:
             return []
+        with self.sessions() as session:
+            trial_owner = run_trial_owner(session, root_id)
         chunk = KnowledgeSearchChunk
         match, score = search_expressions(chunk, parsed, knowledge=True)
         candidates = (
@@ -1127,6 +1130,7 @@ class KnowledgeService:
                 match,
                 KnowledgeDocument.current_version_id == chunk.version_id,
                 KnowledgeDocument.deleted_at.is_(None),
+                KnowledgeDocument.trial_conversation_id == trial_owner,
                 KnowledgeVersion.archived.is_(False),
             )
             .subquery()

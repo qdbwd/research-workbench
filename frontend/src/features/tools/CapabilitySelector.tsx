@@ -16,6 +16,7 @@ export function CapabilitySelector({
   disabled = false,
   description,
   buttonLabel,
+  triggerOnly = false,
 }: {
   title: string;
   options: CapabilityChoice[];
@@ -24,6 +25,7 @@ export function CapabilitySelector({
   disabled?: boolean;
   description?: string;
   buttonLabel?: string;
+  triggerOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -41,40 +43,42 @@ export function CapabilitySelector({
       .toLocaleLowerCase()
       .includes(query.toLocaleLowerCase()),
   );
+  const trigger = (
+    <Button type="button" className="button-secondary" disabled={disabled} onClick={() => {
+      setQuery('');
+      setOpen(true);
+    }}>
+      {buttonLabel ?? (onChange ? `选择${title}` : `查看${title}`)}
+    </Button>
+  );
   return (
-    <section aria-label={title} className="min-w-0 rounded-xl border border-line bg-white p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <strong>{title}</strong>
-          <span className="ml-2 text-xs text-muted">
-            {onChange ? '已选 ' : ''}
-            {selected.length} 项
-          </span>
-        </div>
-        <Button
-          type="button"
-          className="secondary button-secondary"
-          disabled={disabled}
-          onClick={() => {
-            setQuery('');
-            setOpen(true);
-          }}
-        >
-          {buttonLabel ?? (onChange ? `选择${title}` : `查看${title}`)}
-        </Button>
-      </div>
-      {description && <p className="mb-0 text-xs text-muted">{description}</p>}
-      <div className="mt-3 flex flex-wrap gap-2">
-        {chosen.slice(0, 4).map((row) => (
-          <span key={row.id} className="rounded-md bg-canvas px-2 py-1 text-xs">
-            {capabilityName(row)}
-          </span>
-        ))}
-        {chosen.length > 4 && (
-          <span className="py-1 text-xs text-muted">另 {chosen.length - 4} 项</span>
-        )}
-        {!chosen.length && <span className="text-xs text-muted">尚未选择</span>}
-      </div>
+    <>
+      {triggerOnly ? trigger : (
+        <section aria-label={title} className="min-w-0 rounded-xl border border-line bg-white p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <strong>{title}</strong>
+              <span className="ml-2 text-xs text-muted">
+                {onChange ? '已选 ' : ''}
+                {selected.length} 项
+              </span>
+            </div>
+            {trigger}
+          </div>
+          {description && <p className="mb-0 text-xs text-muted">{description}</p>}
+          <div className="mt-3 flex flex-wrap gap-2">
+            {chosen.slice(0, 4).map((row) => (
+              <span key={row.id} className="rounded-md bg-canvas px-2 py-1 text-xs">
+                {capabilityName(row)}
+              </span>
+            ))}
+            {chosen.length > 4 && (
+              <span className="py-1 text-xs text-muted">另 {chosen.length - 4} 项</span>
+            )}
+            {!chosen.length && <span className="text-xs text-muted">尚未选择</span>}
+          </div>
+        </section>
+      )}
       {open && (
         <Dialog
           title={title}
@@ -162,6 +166,6 @@ export function CapabilitySelector({
         </Dialog>
       )}
       {detail && <CapabilityDetails choice={detail} onClose={() => setDetail(null)} />}
-    </section>
+    </>
   );
 }

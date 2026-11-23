@@ -4,8 +4,10 @@ test('新聊天导入先建立会话归属，返回保留未发送输入', async
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto('/');
-  await page.getByPlaceholder('提出问题，或说明希望如何整理知识…').fill('这段文字尚未发送');
-  await page.getByRole('button', { name: '导入学习材料' }).click();
+  await page.getByRole('textbox', { name: '发送给研发助手的消息' }).fill('这段文字尚未发送');
+  await page.getByRole('button', { name: '更多设置与材料', exact: true }).click();
+  await page.getByRole('button', { name: '文件和文件夹' }).click();
+  await page.getByRole('button', { name: '导入材料', exact: true }).click();
   await expect(page.getByRole('heading', { name: '会话材料', exact: true })).toBeVisible();
   const id = new URL(page.url()).searchParams.get('conversation_id')!;
   expect(id).toBeTruthy();
@@ -14,12 +16,13 @@ test('新聊天导入先建立会话归属，返回保留未发送输入', async
   await page.getByLabel('材料内容', { exact: true }).fill('# 新会话附件\n\n仅属于本会话。');
   await page.getByRole('button', { name: '保存材料', exact: true }).click();
   await expect(page.getByRole('heading', { name: '新会话附件', exact: true })).toBeVisible();
-  await page.getByRole('link', { name: '本会话材料', exact: true }).click();
+  await page.getByRole('link', { name: '返回会话材料', exact: true }).click();
   await page.getByRole('link', { name: '返回聊天', exact: true }).click();
-  await expect(page.getByPlaceholder('提出问题，或说明希望如何整理知识…')).toHaveValue('这段文字尚未发送');
+  await expect(page.getByRole('textbox', { name: '发送给研发助手的消息' })).toHaveValue('这段文字尚未发送');
   await page.getByRole('button', { name: '更多设置与材料', exact: true }).click();
-  await page.getByRole('button', { name: '导入或管理会话材料 →' }).click();
-  expect(new URL(page.url()).searchParams.get('conversation_id')).toBe(id);
+  await page.getByRole('button', { name: '文件和文件夹' }).click();
+  await page.getByRole('button', { name: '导入材料', exact: true }).click();
+  await expect(page).toHaveURL((url) => url.searchParams.get('conversation_id') === id);
   expect(errors).toEqual([]);
 });
 
@@ -33,8 +36,10 @@ test('会话材料独立保存后跨会话可用，原正文身份保持', async
   await expect(page.getByText('本次讨论附件', { exact: true })).toHaveCount(0);
   await page.goto(`/chat/${conversation.id}`);
   await page.getByRole('button', { name: '更多设置与材料', exact: true }).click();
-  await page.getByRole('button', { name: '导入或管理会话材料 →' }).click();
+  await page.getByRole('button', { name: '文件和文件夹' }).click();
+  await page.getByRole('button', { name: '导入材料', exact: true }).click();
   await expect(page.getByRole('heading', { name: '会话材料', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '关闭导入材料' }).click();
   await expect(page.getByRole('link', { name: '本次讨论附件', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '保存到材料库', exact: true }).click();
   await expect(page.getByText('已独立保留', { exact: true })).toBeVisible();

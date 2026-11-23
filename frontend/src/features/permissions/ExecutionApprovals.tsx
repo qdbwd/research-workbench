@@ -1,4 +1,5 @@
 import { Button } from '../../shared/ui/Button';
+import { DetailDialog } from '../../shared/ui/Workbench';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { messageOf, send, useResource } from '../../shared/api/api';
@@ -76,15 +77,13 @@ function FileActionPreview({ row }: { row: Action }) {
       <div><strong className="text-sm">查找内容</strong><pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words">{String(row.arguments.old_string ?? '')}</pre></div>
       <div><strong className="text-sm">替换为{row.arguments.replace_all ? '（替换全部匹配）' : ''}</strong><pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words">{String(row.arguments.new_string ?? '')}</pre></div>
     </div>}
-    {typeof target?.text === 'string' && <details>
-      <summary>查看核对时的文件内容{target.text_complete ? '' : '（部分内容）'}</summary>
+    {typeof target?.text === 'string' && <DetailDialog title={target.text_complete ? '查看核对时的文件内容' : '查看核对时的文件内容（部分内容）'}>
       <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words">{target.text}</pre>
-    </details>}
+    </DetailDialog>}
     {target?.kind === 'file' && row.status === 'pending' && <Link to={`/files?path=${encodeURIComponent(target.path)}`}>查看当前完整文件</Link>}
-    {target?.kind === 'directory' && <details>
-      <summary>查看目录范围（{members.length} 项）</summary>
+    {target?.kind === 'directory' && <DetailDialog title={`查看目录范围（${members.length} 项）`}>
       <ul className="max-h-64 overflow-auto break-all text-sm">{members.map(path => <li key={path}>{path}</li>)}</ul>
-    </details>}
+    </DetailDialog>}
   </div>;
 }
 
@@ -131,8 +130,7 @@ function ActionCard({
               </Button>
             </div>
             {row.rule_candidate && !reviewDenied ? (
-              <details className="mt-5">
-                <summary>减少重复询问</summary>
+              <DetailDialog className="mt-5" title="减少重复询问">
                 <label>
                   匹配方式
                   <select value={match} onChange={(event) => setMatch(event.target.value)}>
@@ -161,7 +159,7 @@ function ActionCard({
                     保存为跨会话规则
                   </Button>
                 </div>
-              </details>
+              </DetailDialog>
             ) : (
               <p className="muted text-muted small text-xs">
                 {row.tool_name === 'execute' ? '此命令包含脚本或复杂语法，需要逐次确认。'
@@ -303,10 +301,9 @@ export function ExecutionApprovals({
                   Agent；重新核对只检查当前内容是否等于原预期，再补齐回执和知识同步。
                 </p>
                 {row.current_preview && (
-                  <details className="mt-5">
-                    <summary>查看当前文件片段</summary>
+                  <DetailDialog className="mt-5" title="查看当前文件片段">
                     <pre>{row.current_preview}</pre>
-                  </details>
+                  </DetailDialog>
                 )}
                 <p className="muted text-muted small text-xs">
                   {row.inspection_error ||

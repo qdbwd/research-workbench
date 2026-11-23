@@ -144,7 +144,7 @@ test('explicit uv preparation is visible and its exported configuration is porta
     )
     .toBe('completed');
   await page.getByRole('button', { name: '刷新', exact: true }).click();
-  await page.getByText('后台清理与失败重试', { exact: true }).click();
+  await page.getByRole('button', { name: '清理记录' }).click();
   const cleanup = page.getByRole('region', { name: `清理：${name}`, exact: true });
   await expect(cleanup).toContainText('本次可回收内容已清理');
   await expect(cleanup).toContainText('已回收安装 1 个');

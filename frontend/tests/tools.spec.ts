@@ -9,7 +9,7 @@ test.beforeAll(async () => {
 type PolicySnapshot = {
   revision: number;
   enabled: Record<string, boolean>;
-  skill_enabled: Record<string, boolean>;
+  skill_enabled?: Record<string, boolean>;
   main_tools: string[] | null;
   main_tool_groups: string[] | null;
 };
@@ -27,11 +27,17 @@ test.beforeEach(async ({ request }) => {
 });
 test.afterEach(async ({ request }) => {
   const current = await (await request.get('/api/tools/policy')).json();
-  expect((await request.patch('/api/tools/policy', { data: {
+  // 只还原本文件改过的开关。已卸载技能的旧配置键可能仍用于版本审计，不能重新提交。
+  const response = await request.patch('/api/tools/policy', { data: {
     expected_revision: current.revision,
-    enabled: previousPolicy.enabled, skill_enabled: previousPolicy.skill_enabled,
+    enabled: {
+      'builtin:read_source': previousPolicy.enabled['builtin:read_source'] ?? true,
+      'middleware:read_file': previousPolicy.enabled['middleware:read_file'] ?? true,
+    },
+    skill_enabled: { 'code-documentation': previousPolicy.skill_enabled?.['code-documentation'] ?? true },
     main_tools: previousPolicy.main_tools, main_tool_groups: previousPolicy.main_tool_groups,
-  } })).ok()).toBe(true);
+  } });
+  expect(response.ok(), await response.text()).toBe(true);
 });
 
 async function select(page: Page, button: string, option: string, checked: boolean) {
@@ -71,7 +77,7 @@ test('compact tool settings retain conflict edits, empty selections, groups, and
     if (request.url().includes('/api/tools/effective')) reads.push(request.url());
   });
   await page.goto('/tools');
-  await expect(page.getByRole('heading', { name: '工具与能力', level: 1 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '智能体设置', level: 1 })).toBeVisible();
   const form = page.getByRole('form', { name: '工具策略配置' });
   await expect(form.getByRole('button', { name: '管理全部工具' })).toBeEnabled();
   expect(reads).toEqual([]);
@@ -111,7 +117,9 @@ test('compact tool settings retain conflict edits, empty selections, groups, and
   await page.getByRole('button', { name: '管理全部工具' }).click();
   await expect(page.getByRole('checkbox', { name: '读取文件与技能', exact: true })).toBeChecked();
   await page.getByRole('button', { name: '完成', exact: true }).click();
+  await form.getByRole('button', { name: '配置选择' }).click();
   await form.getByRole('checkbox', { name: '继承默认本地工具选择' }).uncheck();
+  await form.getByRole('button', { name: '完成配置' }).click();
   await form.getByRole('button', { name: '保存工具配置' }).click();
   await expect(form).toContainText(`当前配置修订 ${base + 3}`);
   expect(await (await page.request.get('/api/tools/policy')).json()).toMatchObject({
@@ -125,6 +133,7 @@ test('compact tool settings retain conflict edits, empty selections, groups, and
     .filter({ has: page.getByText('读取材料正文', { exact: true }) });
   await expect(source).toContainText('主Agent没有选择此工具或所属工具组');
   await closePreview(page);
+  await form.getByRole('button', { name: '配置选择' }).click();
   await page.getByRole('button', { name: '选择工具组' }).click();
   await page.getByRole('button', { name: '查看材料读取详情' }).click();
   const group = page.getByRole('dialog', { name: '材料读取', exact: true });
@@ -133,6 +142,7 @@ test('compact tool settings retain conflict edits, empty selections, groups, and
   await group.getByRole('button', { name: '关闭材料读取' }).click();
   await page.getByRole('checkbox', { name: '材料读取', exact: true }).check();
   await page.getByRole('button', { name: '完成', exact: true }).click();
+  await form.getByRole('button', { name: '完成配置' }).click();
   await form.getByRole('button', { name: '保存工具配置' }).click();
   await expect(form).toContainText(`当前配置修订 ${base + 4}`);
   const grouped = await (await page.request.get('/api/tools/policy')).json();
@@ -155,7 +165,9 @@ test('compact tool settings retain conflict edits, empty selections, groups, and
   await form.scrollIntoViewIfNeeded();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await page.screenshot({ path: `${evidenceDir}/tools-mobile.png`, fullPage: true });
+  await form.getByRole('button', { name: '配置选择' }).click();
   await form.getByRole('checkbox', { name: '继承默认本地工具选择' }).check();
+  await form.getByRole('button', { name: '完成配置' }).click();
   await form.getByRole('button', { name: '保存工具配置' }).click();
   await expect(form).toContainText(`当前配置修订 ${base + 5}`);
   expect(await (await page.request.get('/api/tools/policy')).json()).toMatchObject({
@@ -219,7 +231,7 @@ test('role selections use the same picker and old preview URLs open the precise 
   await page.request.patch('/api/tools/policy', {
     data: { expected_revision: policy.revision, enabled: { 'builtin:read_source': false } },
   });
-  await page.reload();
+  await page.goto(`/tools?role_id=${created.id}`);
   view = page.getByRole('dialog', { name: '角色的有效工具', exact: true });
   await expect(
     view.getByRole('listitem').filter({ has: page.getByText('读取材料正文', { exact: true }) }),

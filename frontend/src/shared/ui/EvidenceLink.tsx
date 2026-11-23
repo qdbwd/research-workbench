@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useResource } from '../api/api';
 import type { Evidence } from '../types/types';
 
@@ -12,9 +12,11 @@ export function evidenceTarget(evidence: Evidence): string | null {
 
 /** 读取已存在的证据身份解析目标；不再次搜索，不登记新的模型阅读。 */
 export function EvidenceLink({ id, children }: { id: string; children: ReactNode }) {
+  const { pathname, search, hash } = useLocation();
   const { data } = useResource<Evidence>(`/api/evidence/${id}`);
   const href = data ? evidenceTarget(data) : null;
+  const citationFrom = pathname.startsWith('/knowledge/') ? pathname + search + hash : undefined;
   return href && /^https?:\/\//i.test(href)
     ? <a href={href} target="_blank" rel="noreferrer noopener">{children}</a>
-    : <Link to={href ?? `/evidence/${id}`}>{children}</Link>;
+    : <Link to={href ?? `/evidence/${id}`} state={citationFrom ? { citationFrom } : undefined}>{children}</Link>;
 }

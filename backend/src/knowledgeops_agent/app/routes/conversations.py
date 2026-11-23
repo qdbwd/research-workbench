@@ -95,7 +95,28 @@ def client_state(request: Request):
 
 @router.post("/api/conversations", status_code=201)
 def create_conversation(body: ConversationInput, request: Request):
-    return svc(request).jobs.create_conversation(body.title, request_key=body.request_key)
+    dependencies = svc(request)
+    return dependencies.jobs.create_conversation(body.title, request_key=body.request_key,
+                                                 trial_case=body.trial_case, sources=dependencies.sources)
+
+
+@router.get("/api/research-trial")
+def research_trial_catalog():
+    from knowledgeops_agent.research.trial import trial_catalog
+
+    return trial_catalog()
+
+
+@router.get("/api/conversations/{conversation_id}/trial")
+def conversation_trial(conversation_id: str, request: Request):
+    from knowledgeops_agent.persistence.models import Conversation
+    from knowledgeops_agent.research.trial import trial_catalog
+
+    with svc(request).sessions() as session:
+        row = session.get(Conversation, conversation_id)
+        if row is None or row.deletion_state != "active":
+            raise KeyError("conversation not found")
+        return trial_catalog(row.trial_case) if row.trial_case else None
 
 
 @router.get("/api/conversations/{conversation_id}/messages")

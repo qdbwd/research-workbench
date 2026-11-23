@@ -108,6 +108,7 @@ test('async children can be guided and cancelled and results resume the parent w
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: testInfo.outputPath('async-children-mobile.png'), fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await page.getByRole('button', { name: '关闭已发送的补充要求' }).click();
   const second = page.locator('.child-run').filter({ hasText: children[1].task });
   await second.getByRole('button', { name: '取消这个子任务' }).click();
   await expect(second.getByText('已取消', { exact: true })).toBeVisible();

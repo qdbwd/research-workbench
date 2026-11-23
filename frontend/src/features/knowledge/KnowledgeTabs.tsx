@@ -2,9 +2,9 @@ import { NavLink } from 'react-router-dom';
 
 export function KnowledgeTabs() {
   const style =
-    'rounded-lg px-4 py-2 text-sm hover:bg-white [&.active]:bg-white [&.active]:font-semibold [&.active]:shadow-sm';
+    'border-b-2 border-transparent px-3 py-2 text-sm text-control hover:no-underline [&.active]:border-brand [&.active]:font-semibold [&.active]:text-brand';
   return (
-    <nav aria-label="知识库内容" className="mb-6 flex gap-2 border-b border-line pb-3">
+    <nav aria-label="知识库内容" className="mb-5 flex flex-wrap gap-1 border-b border-line">
       <NavLink to="/knowledge" end className={style}>
         已发布文章
       </NavLink>

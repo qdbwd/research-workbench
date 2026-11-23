@@ -83,8 +83,8 @@ it.each([
       </MemoryRouter>,
     );
     expect(await screen.findByText('查看运行详情')).toBeInTheDocument();
-    // 排队/等待也保持事件连接，使子任务结果和人工插入无需刷新即可出现。
-    expect(streams).toEqual(['/api/runs/root/events']);
+    // 可见链接出现后，React 才调度创建事件连接的 effect。
+    await waitFor(() => expect(streams).toEqual(['/api/runs/root/events']));
     if (initialStatus === 'waiting_children') {
       // 子结果使主任务短暂入队；刷新时两个专用状态查询均返回空。
       phase = 'queued';

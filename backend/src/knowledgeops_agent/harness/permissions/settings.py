@@ -37,6 +37,8 @@ def runtime_inputs(session, conversation: Conversation) -> dict:
     """
     settings = settings_view(conversation)
     result = {"runtime_settings": settings}
+    if conversation.trial_case:
+        result["trial_case"] = conversation.trial_case
     binding = conversation.runtime_settings.get("reasoning_binding")
     freeze = session.info.get("freeze_reasoning")
     if binding:

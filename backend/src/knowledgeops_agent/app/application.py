@@ -62,6 +62,8 @@ def create_app(*, services: Services | None = None, publish_jobs: bool = True) -
         stop = asyncio.Event()
 
         async def publish_loop():
+            from knowledgeops_agent.research.experiments import tick as tick_experiments
+
             queue = create_queue(dependencies.settings.celery_broker_url)
             publisher = OutboxPublisher(dependencies.sessions, queue)
             mcp_publisher = MCPPreparationPublisher(dependencies.sessions, queue)
@@ -79,6 +81,11 @@ def create_app(*, services: Services | None = None, publish_jobs: bool = True) -
                     await asyncio.to_thread(mcp_publisher.publish_due)
                 except Exception as exc:
                     logger.warning("MCP preparation publisher unavailable (%s)", type(exc).__name__)
+                if dependencies.settings.research_experiment_exchange:
+                    try:
+                        await asyncio.to_thread(tick_experiments, dependencies.jobs)
+                    except Exception as exc:
+                        logger.warning("research experiment exchange unavailable (%s)", type(exc).__name__)
                 try:
                     result = await asyncio.to_thread(dependencies.lifecycle.tick)
                     if (result.get("scan") or {}).get("error"):
@@ -247,6 +254,17 @@ def create_app(*, services: Services | None = None, publish_jobs: bool = True) -
 
     app.include_router(system_router)
     app.include_router(activity_router)
+    from knowledgeops_agent.app.routes.research import router as research_router
+    from knowledgeops_agent.research.service import ResearchConflict
+
+    @app.exception_handler(ResearchConflict)
+    async def research_conflict(request: Request, exc: ResearchConflict):
+        return JSONResponse(
+            status_code=409,
+            content={"detail": str(exc), "code": exc.code, "request_id": request.state.request_id, **exc.latest},
+        )
+
+    app.include_router(research_router)
     app.include_router(conversations_router)
     app.include_router(tools_router)
     app.include_router(skills_router)

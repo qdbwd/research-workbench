@@ -26,7 +26,10 @@ def reachable_artifacts(session):
 
 def replace_references(session, owner_kind: str, owner_id: str, value, *, snapshot: bool = False) -> set[str]:
     """与拥有者事务一起更新引用；清理器使用同一控制锁复查，不在预览后盲删。"""
-    if owner_kind not in {"snapshot", "message", "history", "draft", "asset", "checkpoint", "run", "run_input", "material", "workspace", "delivery"}:
+    if owner_kind not in {
+        "snapshot", "message", "history", "draft", "asset", "checkpoint", "run",
+        "run_input", "material", "workspace", "delivery", "research_revision", "research_commit",
+    }:
         raise ValueError("unsupported artifact reference owner")
     lock_control(session)
     if snapshot:

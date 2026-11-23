@@ -21,7 +21,7 @@ export function ConversationsPage() {
   const rows = usePagedResource<ConversationResult>(`/api/conversations/page?q=${encodeURIComponent(query)}`, version);
   return (
     <div>
-      <PageTitle eyebrow="CONVERSATIONS" title="全部会话">
+      <PageTitle title="全部会话">
         <Link className="button button-secondary" to="/">开始新对话</Link>
       </PageTitle>
       <ConversationDeletionHistory />

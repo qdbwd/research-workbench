@@ -14,7 +14,7 @@ type Preview = {
   version: string;
   eligible: boolean;
   blockers: string[];
-  counts: { messages: number; runs: number };
+  counts: { messages: number; runs: number; research_tasks?: number };
   preserved: string[];
   assets?: {
     versions_delete: number;
@@ -106,6 +106,9 @@ export function DeleteConversationDialog({
           <p>
             以下内容会保留：{preview.preserved.join('、')}。学习任务将解除会话关联并停止自动推进。
           </p>
+          {!!preview.counts.research_tasks && (
+            <p>关联的研发任务会解除会话绑定。你仍可在研发工作台查看简报和版本历史。</p>
+          )}
           {preview.assets?.ready && (
             <div className="my-4 rounded-lg bg-canvas p-4 text-sm">
               <p>

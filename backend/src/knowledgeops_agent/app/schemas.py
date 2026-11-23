@@ -17,6 +17,7 @@ class InputModel(BaseModel):
 class ConversationInput(InputModel):
     title: str = Field(default="新对话", max_length=300)
     request_key: str | None = Field(default=None, min_length=1, max_length=200)
+    trial_case: str | None = Field(default=None, min_length=1, max_length=80)
 
 
 class ConversationRenameInput(InputModel):

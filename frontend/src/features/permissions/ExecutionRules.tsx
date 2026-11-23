@@ -125,8 +125,8 @@ export function ExecutionRules() {
         </article>
       ))}
       {result.data?.length === 0 && <p className="muted text-muted">暂无命令规则。</p>}
-      <details className="mt-5">
-        <summary>手动添加规则</summary>
+      <section className="mt-5 border-t border-line pt-4">
+        <h3 className="text-sm font-semibold">手动添加规则</h3>
         <form
           onSubmit={async (event) => {
             event.preventDefault();
@@ -189,7 +189,7 @@ export function ExecutionRules() {
           </p>
           <Button disabled={busy || !root.data}>保存命令规则</Button>
         </form>
-      </details>
+      </section>
     </section>
   );
 }

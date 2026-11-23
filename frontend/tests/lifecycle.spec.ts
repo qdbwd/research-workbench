@@ -7,13 +7,15 @@ test('删除预览说明临时资产与保留资产，完成后实际释放无�
   test.setTimeout(120000);
   const seeded = await (await request.post('/api/__offline/lifecycle-seed?temporary=true')).json();
   await page.goto(`/chat/${seeded.id}`);
-  await page.getByRole('button', { name: '删除会话', exact: true }).click();
+  await page.locator(`.recent a[href="/chat/${seeded.id}"]`).click({ button: 'right' });
+  await page.getByRole('menuitem', { name: '删除会话', exact: true }).click();
   await expect(
     page.getByText('将回收：1 个材料版本、1 份临时草稿。', { exact: true }),
   ).toBeVisible();
   await expect(page.getByText(/继续保留：1 个材料版本、1 份草稿/)).toBeVisible();
   await page.screenshot({ path: info.outputPath('deletion-desktop.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole('dialog', { name: '删除会话' })).toBeVisible();
   await page.screenshot({ path: info.outputPath('deletion-mobile.png'), fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
@@ -40,7 +42,8 @@ test('chat deletion survives navigation and preserves independent source and dra
   const sources = await (await page.request.get('/api/sources')).json();
   const changes = await (await page.request.get('/api/changesets')).json();
   await page.goto(`/chat/${chat.id}`);
-  await page.getByRole('button', { name: '删除会话', exact: true }).click();
+  await page.locator(`.recent a[href="/chat/${chat.id}"]`).click({ button: 'right' });
+  await page.getByRole('menuitem', { name: '删除会话', exact: true }).click();
   await expect(page.getByText(/以下内容会保留/)).toBeVisible();
   await page.screenshot({ path: info.outputPath('deletion-preview.png'), fullPage: true });
   await page.getByRole('button', { name: '确认删除会话' }).click();
@@ -71,7 +74,8 @@ test('unfinished task blocks deletion without cancelling it', async ({ page }) =
     })
   ).json();
   await page.goto(`/chat/${chat.id}`);
-  await page.getByRole('button', { name: '删除会话', exact: true }).click();
+  await page.locator(`.recent a[href="/chat/${chat.id}"]`).click({ button: 'right' });
+  await page.getByRole('menuitem', { name: '删除会话', exact: true }).click();
   await expect(page.getByText('当前不能删除', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '确认删除会话' })).toBeDisabled();
   expect((await (await page.request.get(`/api/runs/${run.id}`)).json()).status).toBe('queued');

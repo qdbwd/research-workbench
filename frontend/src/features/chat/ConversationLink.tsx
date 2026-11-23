@@ -12,7 +12,11 @@ import { DeleteConversationDialog } from './DeleteConversationDialog';
 import { ConversationActivity } from '../activity/ApplicationActivity';
 
 /** 桌面右键、键盘菜单键与手机按钮共用重命名/删除菜单；删除沿用原预览和清理流程。 */
-export function ConversationLink({ chat }: { chat: Conversation }) {
+export function ConversationLink({ chat, onOpen, contained = false }: {
+  chat: Conversation;
+  onOpen?: () => void;
+  contained?: boolean;
+}) {
   const { refresh } = useWorkspace();
   const navigate = useNavigate();
   const currentChat = useMatch('/chat/:conversationId');
@@ -73,14 +77,33 @@ export function ConversationLink({ chat }: { chat: Conversation }) {
       window.removeEventListener('resize', close);
     };
   }, [menu]);
+  const menuContent = menu && (
+    <div
+      ref={menuRef}
+      role="menu"
+      aria-label="会话选项"
+      style={{ left: menu.x, top: menu.y }}
+      className="fixed z-50 w-[168px] rounded-lg border border-line bg-white p-1 text-ink shadow-lg"
+    >
+      <button role="menuitem" type="button" className="flex w-full items-center gap-2 rounded px-3 py-2 text-sm hover:bg-canvas"
+        onClick={() => { setMenu(null); setTitle(chat.title); setError(''); setEditing(true); }}>
+        <Pencil size={15} /> 重命名
+      </button>
+      <button role="menuitem" type="button" className="flex w-full items-center gap-2 rounded px-3 py-2 text-sm text-red-700 hover:bg-red-50"
+        onClick={() => { setMenu(null); setDeleting(true); }}>
+        <Trash2 size={15} /> 删除会话
+      </button>
+    </div>
+  );
   return (
     <>
-      <div className="group flex min-w-0 items-center rounded-md hover:bg-[#244237]">
+      <div className="group flex min-w-0 items-center rounded-md hover:bg-[#e2ebe2]">
         <NavLink
           ref={link}
           to={`/chat/${chat.id}`}
           title={chat.title}
-          className="min-w-0 flex-1 truncate rounded-[5px] px-[7px] py-[9px] text-xs text-[#b2c4b7] hover:no-underline [&.active]:bg-[#27483b] [&.active]:text-[#f0f5e8]"
+          className="min-w-0 flex-1 truncate rounded-md px-2.5 py-2 text-xs text-control hover:no-underline [&.active]:bg-[#dceadf] [&.active]:text-brand"
+          onClick={onOpen}
           onContextMenu={(event) => {
             event.preventDefault();
             openMenu(event.clientX, event.clientY);
@@ -98,7 +121,7 @@ export function ConversationLink({ chat }: { chat: Conversation }) {
         <ConversationActivity id={chat.id} />
         <button
           type="button"
-          className="shrink-0 rounded p-1 text-[#b2c4b7] opacity-0 hover:bg-[#28483b] focus:opacity-100 group-hover:opacity-100 max-md:opacity-100"
+          className="shrink-0 rounded p-1 text-control opacity-0 hover:bg-[#dceadf] focus:opacity-100 group-hover:opacity-100 max-md:opacity-100"
           aria-label={`会话“${chat.title}”的选项`}
           aria-haspopup="menu"
           aria-expanded={Boolean(menu)}
@@ -110,44 +133,7 @@ export function ConversationLink({ chat }: { chat: Conversation }) {
           <MoreHorizontal size={16} />
         </button>
       </div>
-      {menu &&
-        createPortal(
-          <div
-            ref={menuRef}
-            role="menu"
-            aria-label="会话选项"
-            style={{ left: menu.x, top: menu.y }}
-            className="fixed z-50 w-[168px] rounded-lg border border-line bg-white p-1 text-ink shadow-lg"
-          >
-            <button
-              role="menuitem"
-              type="button"
-              className="flex w-full items-center gap-2 rounded px-3 py-2 text-sm hover:bg-canvas"
-              onClick={() => {
-                setMenu(null);
-                setTitle(chat.title);
-                setError('');
-                setEditing(true);
-              }}
-            >
-              <Pencil size={15} />
-              重命名
-            </button>
-            <button
-              role="menuitem"
-              type="button"
-              className="flex w-full items-center gap-2 rounded px-3 py-2 text-sm text-red-700 hover:bg-red-50"
-              onClick={() => {
-                setMenu(null);
-                setDeleting(true);
-              }}
-            >
-              <Trash2 size={15} />
-              删除会话
-            </button>
-          </div>,
-          document.body,
-        )}
+      {menuContent && (contained ? menuContent : createPortal(menuContent, document.body))}
       {editing && (
         <Dialog title="重命名会话" onClose={closeEditor} busy={busy}>
           <form
@@ -191,7 +177,7 @@ export function ConversationLink({ chat }: { chat: Conversation }) {
           </form>
         </Dialog>
       )}
-      {deleting && (
+      {deleting && createPortal(
         <DeleteConversationDialog
           conversationId={chat.id}
           onClose={closeDelete}
@@ -200,7 +186,8 @@ export function ConversationLink({ chat }: { chat: Conversation }) {
             // 侧栏也能操作其他会话；只有删除当前会话才离开正在阅读的页面。
             if (currentChat?.params.conversationId === chat.id) navigate('/', { replace: true });
           }}
-        />
+        />,
+        document.body,
       )}
     </>
   );

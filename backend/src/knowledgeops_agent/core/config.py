@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     source_storage_root: Path = Path("/data/sources")
     # Compose 显式启用；库级测试/旧部署未设置时保留原存储合同。
     workspace_root: Path | None = None
+    # 只挂载实验控制器的交换目录。未部署时保留已有实验记录的读取能力。
+    research_experiment_exchange: Path | None = None
     workspace_execute_timeout: int = Field(default=60, ge=1, le=300)
     workspace_output_limit_bytes: int = Field(default=10485760, ge=1024, le=104857600)
     celery_broker_url: str = Field(default="redis://redis:6379/0", repr=False)
@@ -79,6 +81,14 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def require_online_credentials(self):
         """只在在线模式要求密钥；离线数据库/页面检查无需供应商凭据。"""
+        if self.research_experiment_exchange:
+            exchange = self.research_experiment_exchange
+            if not exchange.is_absolute():
+                raise ValueError("RESEARCH_EXPERIMENT_EXCHANGE must be an absolute dedicated path")
+            if self.workspace_root:
+                exchange, workspace = exchange.resolve(), self.workspace_root.resolve()
+                if exchange.is_relative_to(workspace) or workspace.is_relative_to(exchange):
+                    raise ValueError("research experiment exchange must be separate from the model workspace")
         if self.model_calls_enabled:
             if not self.openai_api_key.get_secret_value().strip():
                 raise ValueError("OPENAI_API_KEY is required when model calls are enabled")

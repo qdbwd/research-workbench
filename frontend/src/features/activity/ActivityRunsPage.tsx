@@ -17,7 +17,7 @@ type ActivityRun = {
 };
 const views: [View, string][] = [['attention', '待处理'], ['active', '进行中'], ['unread', '新结果'], ['all', '全部']];
 const reasons: Record<string, string> = { approval: '等待批准', input: '等待回答', unknown: '执行结果待核对', paused: '已暂停', recovery: '需要核对或恢复' };
-const kinds: Record<string, string> = { agent: '智能体任务', material: '材料解析', context_compaction: '上下文压缩', memory_classification: '记忆分类' };
+const kinds: Record<string, string> = { agent: '智能体任务', material: '材料解析', context_compaction: '上下文压缩', memory_classification: '记忆分类', research_start: '研发任务登记' };
 
 function RunList({ view }: { view: View }) {
   const activity = useApplicationActivity();
@@ -88,7 +88,7 @@ export function ActivityRunsPage() {
   const view: View = views.some(([id]) => id === raw) ? raw as View : 'attention';
   const { data } = useApplicationActivity();
   return <>
-    <PageTitle eyebrow="TASKS" title="运行记录"><Link to="/knowledge/reviews">查看知识变更 →</Link></PageTitle>
+    <PageTitle title="运行记录"><Link className="button button-secondary" to="/knowledge/reviews">查看知识变更 →</Link></PageTitle>
     <nav className="mb-4 flex flex-wrap gap-2" aria-label="任务分类">
       {views.map(([id, label]) => <Button key={id} className={id === view ? '' : 'button-secondary'} aria-pressed={id === view}
         onClick={() => setParams({ view: id })}>{label}{data ? ` ${data.counts[id]}` : ''}</Button>)}

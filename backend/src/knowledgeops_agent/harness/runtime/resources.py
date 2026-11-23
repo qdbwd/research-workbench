@@ -140,7 +140,8 @@ class ResourceService:
                     if learning_task
                     else root.input_data.get("memory_topic", "")
                 )
-                memory = freeze_memory(session, root.task[:500], topic=topic)
+                trial = root.input_data.get("trial_case")
+                memory = {"selected": [], "catalog": []} if trial else freeze_memory(session, root.task[:500], topic=topic)
                 learning = None
                 if learning_task:
                     learning = {
@@ -184,7 +185,7 @@ class ResourceService:
                     # 旧快照继续读取原preferences；新快照保存有界背景及只读版本目录。
                     "preferences": memory["selected"],
                     "memory": memory,
-                    "mcp": active_connections(session),
+                    "mcp": [] if trial else active_connections(session),
                     # 仅新根任务开放角色只读继承，旧冻结清单不得因升级扩大能力。
                     "child_mcp": 1,
                     "subagents": active_definitions(session),

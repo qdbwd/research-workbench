@@ -6,6 +6,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ChatPage } from './ChatPage';
+import { LearningPage } from '../learning/LearningPage';
 
 let namespace: string;
 beforeEach(() => { namespace = crypto.randomUUID(); });
@@ -23,6 +24,183 @@ afterEach(() => {
   vi.unstubAllGlobals();
   localStorage.clear();
   sessionStorage.clear();
+});
+
+it('prefills a trial draft without creating a conversation until submission', async () => {
+  const mutations: { url: string; body: Record<string, unknown> }[] = [];
+  configureFetch(async (url, options) => {
+    if (url === '/api/research-trial') return Response.json({
+      key: 'operations-pilot-v1', title: '运维试点', notice: '模拟资料',
+      prompts: [{ id: 'answer', mode: 'chat', label: '试用带引用的问答', text: '谁需要批准紧急变更？' }],
+      knowledge: ['变更规程'], materials: ['操作手册'],
+    });
+    if (options?.method === 'POST') {
+      mutations.push({ url, body: JSON.parse(String(options.body)) });
+      return Response.json({ id: url === '/api/conversations' ? 'trial-conversation' : 'trial-run' });
+    }
+    if (url.endsWith('/runtime-settings')) return Response.json({ permission_mode: 'ask', reasoning_effort: 'default', revision: 0 });
+    return Response.json(url.includes('/page') ? { items: [], next_cursor: null } : []);
+  });
+  const user = userEvent.setup();
+  render(<MemoryRouter><Routes>
+    <Route path="/" element={<ChatPage />} />
+    <Route path="/chat/:conversationId" element={<ChatPage />} />
+  </Routes></MemoryRouter>);
+  const trial = await screen.findByRole('button', { name: '试用带引用的问答' });
+  await waitFor(() => expect(trial).toBeEnabled());
+  await user.click(trial);
+  expect(screen.getByText('变更规程')).toBeVisible();
+  const input = screen.getByRole('textbox', { name: '发送给研发助手的消息' });
+  expect(input).toHaveValue('谁需要批准紧急变更？');
+  expect(mutations).toHaveLength(0);
+  await user.type(input, '也请引用手册。');
+  await sendMessage(user);
+  await waitFor(() => expect(mutations).toEqual([
+    { url: '/api/conversations', body: expect.objectContaining({ trial_case: 'operations-pilot-v1' }) },
+    { url: '/api/conversations/trial-conversation/messages', body: expect.objectContaining({ content: '谁需要批准紧急变更？也请引用手册。' }) },
+  ]));
+});
+
+it('opens a fixed citation alongside chat and returns focus without losing the draft', async () => {
+  configureFetch(async (url) => {
+    if (url.includes('/messages/page')) return Response.json({
+      items: [{ id: 'answer', role: 'assistant', content: '请核对[当时的说明](/api/evidence/old)。',
+        created_at: '2026-11-21T02:00:00Z' }],
+      revision: 1, total: 1, start: 0, older_cursor: null, newer_cursor: null,
+    });
+    if (url === '/api/evidence/old') return Response.json({
+      id: 'old', title: '历史规程', text: '需要审批', start: 2, end: 6,
+      document_id: 'procedure', knowledge_version_id: 'version-old', version: 2,
+      citation: '/api/evidence/old',
+    });
+    if (url === '/api/knowledge/procedure?version_id=version-old') return Response.json({ body: '📄先需要审批，然后登记。' });
+    return Response.json(url.includes('/page') ? { items: [], next_cursor: null } : []);
+  });
+  const user = userEvent.setup();
+  render(
+    <MemoryRouter initialEntries={['/chat/conversation']}>
+      <Routes>
+        <Route path="/chat/:conversationId" element={<ChatPage />} />
+        <Route path="/knowledge/:id" element={<p>已离开会话</p>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+  const input = screen.getByRole('textbox', { name: '发送给研发助手的消息' });
+  await waitFor(() => expect(input).toBeEnabled());
+  await user.type(input, '我还没写完');
+  const citation = await screen.findByRole('link', { name: '当时的说明' });
+  await user.click(citation);
+  const mark = await screen.findByText('需要审批');
+  expect(mark.tagName).toBe('MARK');
+  expect(mark.parentElement).toHaveTextContent('📄先需要审批，然后登记。');
+  expect(screen.queryByText('已离开会话')).not.toBeInTheDocument();
+  expect(input).toHaveValue('我还没写完');
+  await user.click(screen.getByRole('button', { name: '关闭 当时的说明' }));
+  expect(screen.queryByRole('region', { name: '资料查看器' })).not.toBeInTheDocument();
+  await waitFor(() => expect(citation).toHaveFocus());
+  expect(input).toHaveValue('我还没写完');
+});
+
+it('reviews the research brief and map in a closable tab without leaving the conversation', async () => {
+  const task = {
+    id: 'pilot', title: '内部问答试点', status: 'open', home_conversation_id: 'conversation', control_version: 1,
+    main_branch_id: 'main-branch', head: { id: 'initial', number: 1, state: {
+      phase: 'investigation', brief: { goal: '核对问答失败的原因', key_decisions: '复现错误引用', next_action: '比较候选片段' },
+    } },
+  };
+  configureFetch(async (url) => {
+    if (url.endsWith('/research-task') || url === '/api/research-tasks/pilot') return Response.json(task);
+    if (url.split('?')[0].endsWith('/map')) return Response.json({ revision_id: 'initial', number: 1, nodes: [] });
+    if (url.includes('/revisions')) return Response.json({ items: [], next_before: null });
+    return Response.json(url.includes('/page') ? { items: [], next_cursor: null } : []);
+  });
+  const user = userEvent.setup();
+  render(<MemoryRouter initialEntries={['/chat/conversation']}><Routes>
+    <Route path="/chat/:conversationId" element={<ChatPage />} />
+  </Routes></MemoryRouter>);
+  const input = screen.getByRole('textbox', { name: '发送给研发助手的消息' });
+  await waitFor(() => expect(input).toBeEnabled());
+  await user.type(input, '先验证旧版误引。');
+  await user.click(await screen.findByRole('button', { name: '查看研发简报' }));
+  expect(screen.getByRole('tab', { name: '研发任务' })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByText('核对问答失败的原因')).toBeVisible();
+  await user.click(screen.getByRole('button', { name: '研发地图' }));
+  expect(await screen.findByText('研究地图还没有主题。')).toBeVisible();
+  await user.click(screen.getByRole('button', { name: '关闭研发任务标签' }));
+  expect(input).toBeVisible();
+  expect(input).toHaveValue('先验证旧版误引。');
+});
+
+it('starts knowledge organization from the composer without sending or taking publication permission', async () => {
+  const submissions: { content: string; publication_mode: string; knowledge_only: boolean }[] = [];
+  configureFetch(
+    vi.fn(async (url: string, options?: RequestInit) => {
+      if (options?.method === 'POST') {
+        submissions.push(JSON.parse(String(options.body)));
+        return Response.json({ id: 'run-organize' }, { status: 202 });
+      }
+      return Response.json(url.includes('/page') ? { items: [], next_cursor: null } : []);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <MemoryRouter initialEntries={['/chat/conversation']}>
+      <Routes><Route path="/chat/:conversationId" element={<ChatPage />} /></Routes>
+    </MemoryRouter>,
+  );
+  const input = screen.getByRole('textbox', { name: /发送给.*的消息/ });
+  await waitFor(() => expect(input).toBeEnabled());
+  await user.type(input, '只整理检查点的恢复条件。');
+  await user.click(screen.getByRole('button', { name: '更多设置与材料' }));
+  await user.click(screen.getByRole('button', { name: '整理成知识' }));
+  expect(input).toHaveValue('请将相关讨论或材料整理成知识库文章。\n\n只整理检查点的恢复条件。');
+  expect(input).toHaveFocus();
+  expect(submissions).toHaveLength(0);
+  await sendMessage(user);
+  await waitFor(() => expect(submissions).toEqual([expect.objectContaining({
+    content: '请将相关讨论或材料整理成知识库文章。\n\n只整理检查点的恢复条件。',
+    publication_mode: 'ask',
+    knowledge_only: false,
+  })]));
+});
+
+it.each([true, false])('binds learning-task creation to the current conversation even if it is absent from recent chats (listed: %s)', async (listed) => {
+  const requests: string[] = [];
+  configureFetch(async (url, options) => {
+    if (options?.method === 'POST') {
+      requests.push(url);
+      const body = JSON.parse(String(options.body));
+      expect(body.conversation_id).toBe('conversation');
+      return Response.json({ id: 'new-learning-task' }, { status: 201 });
+    }
+    if (url === '/api/conversations') {
+      return Response.json(listed ? [{ id: 'conversation', title: '当前研究会话' }] : []);
+    }
+    return Response.json(url.includes('/page') ? { items: [], next_cursor: null } : []);
+  });
+  const user = userEvent.setup();
+  render(
+    <MemoryRouter initialEntries={['/chat/conversation']}>
+      <Routes>
+        <Route path="/chat/:conversationId" element={<ChatPage />} />
+        <Route path="/learning" element={<LearningPage />} />
+        <Route path="/learning/new-learning-task" element={<p>已创建学习任务</p>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+  expect(screen.queryByRole('heading', { name: '对话' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '删除会话' })).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '更多设置与材料' }));
+  await user.click(screen.getByRole('link', { name: '建立学习任务' }));
+  await screen.findByRole('option', { name: listed ? '当前研究会话' : '当前会话' });
+  expect(screen.getByRole('combobox', { name: '会话' })).toHaveValue('conversation');
+  expect(requests).toEqual([]);
+  await user.type(screen.getByRole('textbox', { name: '任务标题' }), '理解检查点');
+  await user.type(screen.getByRole('textbox', { name: '想了解什么、用于什么' }), '核对恢复规则');
+  expect(screen.getByRole('button', { name: '建立任务' })).toBeEnabled();
+  await user.click(screen.getByRole('button', { name: '建立任务' }));
+  expect(await screen.findByText('已创建学习任务')).toBeInTheDocument();
+  expect(requests).toEqual(['/api/learning-tasks']);
 });
 
 it('shows only provider-declared reasoning levels and submits the selected value', async () => {
@@ -62,9 +240,11 @@ it('shows only provider-declared reasoning levels and submits the selected value
   );
   const selector = await screen.findByRole('combobox', { name: '思考强度' });
   expect(screen.queryByRole('option', { name: '中' })).not.toBeInTheDocument();
+  await waitFor(() => expect(selector).toBeEnabled());
   await user.selectOptions(selector, 'max');
-  await waitFor(() => expect(screen.getByRole('textbox', { name: '发送给 KnowledgeOps 的消息' })).toBeEnabled());
-  await user.type(screen.getByRole('textbox', { name: '发送给 KnowledgeOps 的消息' }), '分析材料');
+  await waitFor(() => expect(selector).toHaveValue('max'));
+  await waitFor(() => expect(screen.getByRole('textbox', { name: '发送给研发助手的消息' })).toBeEnabled());
+  await user.type(screen.getByRole('textbox', { name: '发送给研发助手的消息' }), '分析材料');
   await sendMessage(user);
   await waitFor(() => expect(submissions[0].reasoning_effort).toBe('max'));
 });
@@ -125,7 +305,7 @@ it('reuses an uncertain request key but creates a fresh key after confirmed succ
       </Routes>
     </MemoryRouter>,
   );
-  const input = screen.getByRole('textbox', { name: '发送给 KnowledgeOps 的消息' });
+  const input = screen.getByRole('textbox', { name: '发送给研发助手的消息' });
   await waitFor(() => expect(input).toBeEnabled());
   await user.type(input, '继续');
   await sendMessage(user);
@@ -163,16 +343,20 @@ it('keeps the original request frozen while changed options remain in the next d
     </MemoryRouter>,
   );
   await user.click(screen.getByRole('button', { name: '更多设置与材料' }));
+  await user.click(screen.getByRole('button', { name: '本次任务设置' }));
   let option = screen.getByRole('checkbox', { name: '允许辅助模型' });
   expect(option).not.toBeChecked();
-  await waitFor(() => expect(screen.getByRole('textbox', { name: '发送给 KnowledgeOps 的消息' })).toBeEnabled());
-  await user.type(screen.getByRole('textbox', { name: '发送给 KnowledgeOps 的消息' }), '核对材料');
+  await user.click(screen.getByRole('button', { name: '完成' }));
+  await waitFor(() => expect(screen.getByRole('textbox', { name: '发送给研发助手的消息' })).toBeEnabled());
+  await user.type(screen.getByRole('textbox', { name: '发送给研发助手的消息' }), '核对材料');
   await sendMessage(user);
   expect(await screen.findByText('上次提交结果待核对')).toBeInTheDocument();
   expect(submissions[0].auxiliary).toBe(false);
   await user.click(screen.getByRole('button', { name: '更多设置与材料' }));
+  await user.click(screen.getByRole('button', { name: '本次任务设置' }));
   option = screen.getByRole('checkbox', { name: '允许辅助模型' });
   await user.click(option);
+  await user.click(screen.getByRole('button', { name: '完成' }));
   await user.click(screen.getByRole('button', { name: '核对提交结果' }));
   await user.click(await screen.findByRole('button', { name: '继续原提交' }));
   await waitFor(() => expect(submissions).toHaveLength(2));
@@ -204,12 +388,16 @@ it('lets the user turn subagent delegation off without forcing it back on', asyn
     </MemoryRouter>,
   );
   await user.click(screen.getByRole('button', { name: '更多设置与材料' }));
+  await user.click(screen.getByRole('button', { name: '本次任务设置' }));
   const option = screen.getByRole('checkbox', { name: '允许子Agent分工' });
-  await waitFor(() => expect(screen.getByRole('textbox', { name: '发送给 KnowledgeOps 的消息' })).toBeEnabled());
   if ((option as HTMLInputElement).checked) await user.click(option);
-  await user.type(screen.getByRole('textbox', { name: '发送给 KnowledgeOps 的消息' }), '自行核对');
+  await user.click(screen.getByRole('button', { name: '完成' }));
+  await waitFor(() => expect(screen.getByRole('textbox', { name: '发送给研发助手的消息' })).toBeEnabled());
+  await user.type(screen.getByRole('textbox', { name: '发送给研发助手的消息' }), '自行核对');
   await sendMessage(user);
   await waitFor(() => expect(submissions).toHaveLength(1));
   expect(submissions[0].delegation).toBe(false);
-  expect(option).not.toBeChecked();
+  await user.click(screen.getByRole('button', { name: '更多设置与材料' }));
+  await user.click(screen.getByRole('button', { name: '本次任务设置' }));
+  expect(screen.getByRole('checkbox', { name: '允许子Agent分工' })).not.toBeChecked();
 });

@@ -39,6 +39,9 @@ def claim_source(session, source_id: str, *, conversation_id: str | None = None,
     source = session.get(db.Source, source_id)
     if source is None:
         raise KeyError("source not found")
+    owner = trial_scope(session, kind, identity)
+    if source.trial_conversation_id != owner:
+        raise ValueError("试用材料仅供所属试用会话使用。")
     target = source_id + (":" + identity if kind == "conversation" else "")
     if kind in {"library", "conversation"} and session.scalar(select(db.CleanupJob.id).where(
         db.CleanupJob.target_kind == "source", db.CleanupJob.target_id == target,
@@ -59,17 +62,28 @@ def library_predicate():
     saved = select(db.SourceUse.source_id).where(
         db.SourceUse.source_id == db.Source.id, db.SourceUse.owner_kind == "library",
     ).correlate(db.Source).exists()
-    return or_(~db.Source.ownership_known, saved)
+    return and_(db.Source.trial_conversation_id.is_(None), or_(~db.Source.ownership_known, saved))
+
+
+def trial_scope(session, kind: str, identity: str) -> str | None:
+    if kind != "conversation":
+        return None
+    row = session.get(db.Conversation, identity)
+    return identity if row is not None and row.trial_case else None
 
 
 def scope_predicate(session, *, conversation_id=None, root_id=None, include_library=True):
     scopes = [library_predicate()] if include_library else []
     if conversation_id or root_id:
         kind, identity = resolve_owner(session, conversation_id=conversation_id, root_id=root_id)
-        scopes.append(select(db.SourceUse.source_id).where(
+        owner = trial_scope(session, kind, identity)
+        claimed = select(db.SourceUse.source_id).where(
             db.SourceUse.source_id == db.Source.id,
             and_(db.SourceUse.owner_kind == kind, db.SourceUse.owner_id == identity),
-        ).correlate(db.Source).exists())
+        ).correlate(db.Source).exists()
+        if owner is not None:
+            return claimed & (db.Source.trial_conversation_id == owner)
+        scopes.append(claimed & db.Source.trial_conversation_id.is_(None))
     return or_(*scopes) if scopes else False
 
 

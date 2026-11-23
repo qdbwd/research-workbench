@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api, messageOf, send } from '../../shared/api/api';
 import { Button } from '../../shared/ui/Button';
 import { Dialog } from '../../shared/ui/Dialog';
+import { DetailDialog } from '../../shared/ui/Workbench';
 import { ErrorBox } from '../../shared/ui/components';
 import type { SkillEntry, SkillPreview } from './types';
 
@@ -239,11 +240,7 @@ export function SkillImportDialog({
             {preview.preview.compatibility ||
               '运行依赖请核对技能正文。脚本尚未执行，依赖是否齐备尚未验证。'}
           </p>
-          <details className="rounded-lg border border-line p-3">
-            <summary className="cursor-pointer text-sm">
-              完整文件清单 · {preview.preview.resources.length} 个文件 ·{' '}
-              {preview.preview.total_bytes.toLocaleString()} 字节
-            </summary>
+          <DetailDialog title={`完整文件清单 · ${preview.preview.resources.length} 个文件 · ${preview.preview.total_bytes.toLocaleString()} 字节`}>
             <ul className="max-h-52 overflow-y-auto pl-5 text-xs [overflow-wrap:anywhere]">
               {preview.preview.resources.map((item) => (
                 <li key={item.path} className="my-2">
@@ -251,13 +248,12 @@ export function SkillImportDialog({
                 </li>
               ))}
             </ul>
-          </details>
-          <details className="rounded-lg border border-line p-3">
-            <summary className="cursor-pointer text-sm">查看将保存的 SKILL.md</summary>
+          </DetailDialog>
+          <DetailDialog title="查看将保存的 SKILL.md">
             <pre className="max-h-80 overflow-auto whitespace-pre-wrap text-xs [overflow-wrap:anywhere]">
               {preview.preview.content}
             </pre>
-          </details>
+          </DetailDialog>
           <div className="flex flex-wrap items-end gap-3">
             <label className="grid min-w-0 flex-1 gap-2 text-sm">
               试读资源

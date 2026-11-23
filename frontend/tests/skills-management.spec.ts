@@ -11,7 +11,7 @@ test('manage a complete skill through preview, read, enable, update, export and 
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto('/skills');
-  await expect(page.getByRole('heading', { name: 'Skills', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '技能', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '导入技能', exact: true }).click();
   let dialog = page.getByRole('dialog', { name: '导入技能', exact: true });
   await dialog.getByLabel('选择 SKILL.md 或 ZIP').setInputFiles({

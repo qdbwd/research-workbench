@@ -132,6 +132,7 @@ test('PDF upload becomes a durable material job and invalid web URLs retain feed
   await page.setContent('<p>Browser fixture: persistent materials, budget 80.</p>');
   const pdf = await page.pdf({ format: 'A4' });
   await page.goto('/sources');
+  await page.getByRole('button', { name: '导入材料', exact: true }).click();
   await page
     .getByLabel('上传材料文件')
     .setInputFiles({ name: 'browser.pdf', mimeType: 'application/pdf', buffer: pdf });
@@ -143,6 +144,8 @@ test('PDF upload becomes a durable material job and invalid web URLs retain feed
   await expect(page.getByText('已取消', { exact: true })).toBeVisible();
   await expect(page.getByText('模型请求总上限', { exact: true })).toHaveCount(0);
   await page.goto('/sources');
+  await page.getByRole('button', { name: '导入材料', exact: true }).click();
+  await page.getByRole('combobox', { name: '来源', exact: true }).selectOption('url');
   await page.getByLabel('网页地址').fill('file:///etc/passwd');
   await page.getByRole('button', { name: '开始导入网页' }).click();
   await expect(page.getByRole('alert')).toContainText('public HTTP');
@@ -151,6 +154,8 @@ test('PDF upload becomes a durable material job and invalid web URLs retain feed
 
 test('import material, preview its text, and retain validation errors', async ({ page }) => {
   await page.goto('/sources');
+  await page.getByRole('button', { name: '导入材料', exact: true }).click();
+  await page.getByRole('combobox', { name: '来源', exact: true }).selectOption('text');
   await page.getByLabel('材料标题').fill('浏览器导入材料');
   await page.getByLabel('材料内容').fill('这份材料来自浏览器端导入，可定位到实际片段。');
   await page.getByRole('button', { name: '保存材料' }).click();
@@ -159,6 +164,7 @@ test('import material, preview its text, and retain validation errors', async ({
   await page.reload();
   await expect(page.getByRole('heading', { name: '浏览器导入材料' })).toBeVisible();
   await page.goto('/sources');
+  await page.getByRole('button', { name: '导入材料', exact: true }).click();
   await page
     .getByLabel('上传材料文件')
     .setInputFiles({ name: 'bad.txt', mimeType: 'text/plain', buffer: Buffer.from([255]) });
@@ -179,12 +185,14 @@ test('review, publish, read evidence, edit, and reopen a historical version', as
   await page.getByRole('link', { name: '预算规则原始材料' }).click();
   await expect(page).toHaveURL(/\/sources\/[^?]+\?version=/);
   await expect(page.locator('.document-reader')).toContainText('重试也计入');
-  await page.goto(articleUrl);
+  await page.getByRole('link', { name: '返回知识正文' }).click();
+  await expect(page).toHaveURL(articleUrl);
   await page.getByRole('button', { name: '编辑', exact: true }).click();
   const editor = page.getByLabel('Markdown 正文');
   await editor.fill((await editor.inputValue()) + '\n\n补充：预算由程序强制检查。');
   await page.getByRole('button', { name: '保存新版本' }).click();
   await expect(page.getByText('补充：预算由程序强制检查。', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '版本历史' }).click();
   await page.getByLabel('文章历史版本').selectOption({ label: 'v1' });
   await expect(page.getByText('正在查看历史版本。', { exact: false })).toBeVisible();
   await expect(page.getByText('补充：预算由程序强制检查。', { exact: true })).toHaveCount(0);
@@ -193,12 +201,14 @@ test('review, publish, read evidence, edit, and reopen a historical version', as
     fullPage: true,
   });
   await page.getByRole('button', { name: '恢复为此版本' }).click();
-  await expect(page).toHaveURL(/\/changes\/[a-f0-9-]+$/);
-  await expect(page.locator('.markdown')).not.toContainText('补充：预算由程序强制检查。');
+  await expect(page).toHaveURL(/\/knowledge\/reviews\/[a-f0-9-]+$/);
+  await expect(page.locator('.markdown').last()).not.toContainText('补充：预算由程序强制检查。');
   await page.getByRole('button', { name: '确认并发布' }).click();
   await expect(page.getByText('已发布', { exact: true })).toBeVisible();
   await page.goto(articleUrl);
+  await page.getByRole('button', { name: '版本历史' }).click();
   await expect(page.getByLabel('文章历史版本').locator('option:checked')).toHaveText('v3');
+  await page.getByRole('button', { name: '关闭文章版本历史' }).click();
   await page.getByRole('button', { name: '归档文章' }).click();
   await page.getByRole('button', { name: '确认并发布' }).click();
   await expect(page.getByText('已发布', { exact: true })).toBeVisible();
@@ -210,6 +220,7 @@ test('review, publish, read evidence, edit, and reopen a historical version', as
   await page.getByRole('button', { name: '确认并发布' }).click();
   await expect(page.getByText('已发布', { exact: true })).toBeVisible();
   await page.goto(articleUrl);
+  await page.getByRole('button', { name: '版本历史' }).click();
   await expect(page.getByLabel('文章历史版本').locator('option:checked')).toHaveText('v5');
 });
 
@@ -217,7 +228,7 @@ test('queued chat survives refresh and can be cancelled and explicitly resumed',
   page,
 }) => {
   await page.goto('/');
-  await page.getByLabel('发送给 KnowledgeOps 的消息').fill('请梳理知识库已有主题');
+  await page.getByLabel('发送给研发助手的消息').fill('请梳理知识库已有主题');
   await page.getByRole('button', { name: '发送', exact: true }).click();
   await expect(page).toHaveURL(/\/chat\//);
   await expect(page.locator('.message.user')).toContainText('请梳理知识库已有主题');

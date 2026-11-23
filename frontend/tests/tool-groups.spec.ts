@@ -12,8 +12,8 @@ test('editable tool groups show real role impact, preserve explicit tools, and w
   page.on('pageerror', (error) => errors.push(error.message));
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/tools');
-  await page.getByRole('link', { name: '管理工具组' }).click();
-  await expect(page.getByRole('heading', { name: '工具组', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '管理工具组' }).click();
+  await expect(page.getByRole('dialog', { name: '管理工具组', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '创建工具组', exact: true }).click();
   let editor = page.getByRole('dialog', { name: '创建工具组', exact: true });
   await editor.getByLabel('工具组名称', { exact: true }).fill('浏览器资料核对');

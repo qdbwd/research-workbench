@@ -45,7 +45,7 @@ test('two units, genuine feedback, manual role document, review and pause resume
   )!;
   await page.getByRole('button', { name: '切换到此任务并进入对话', exact: true }).click();
   await page
-    .getByLabel('发送给 KnowledgeOps 的消息')
+    .getByLabel('发送给研发助手的消息')
     .fill('本任务请用SQL例子；以后解释先给具体例子。');
   const accepted = page.waitForResponse(
     (r) =>

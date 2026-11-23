@@ -105,6 +105,21 @@ function open() {
   window.history.replaceState({}, '', '/tools');
   render(<App />);
 }
+
+it('opens tool groups over the current settings and keeps the policy draft', async () => {
+  serve();
+  open();
+  const form = within(await screen.findByRole('form', { name: '工具策略配置' }));
+  await userEvent.click(form.getByRole('button', { name: '管理全部工具' }));
+  await userEvent.click(screen.getByRole('checkbox', { name: 'read_source' }));
+  await userEvent.click(screen.getByRole('button', { name: '完成' }));
+  await userEvent.click(screen.getByRole('button', { name: '管理工具组' }));
+  const dialog = await screen.findByRole('dialog', { name: '管理工具组' });
+  expect(within(dialog).getByRole('searchbox', { name: '搜索工具组' })).toBeVisible();
+  expect(window.location.pathname).toBe('/tools');
+  await userEvent.keyboard('{Escape}');
+  expect(form.getByRole('button', { name: '保存工具配置' })).toBeEnabled();
+});
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -114,9 +129,9 @@ afterEach(() => {
 it('keeps the page compact and loads effective tools only when requested', async () => {
   const sent = serve();
   open();
-  expect(await screen.findByRole('heading', { name: '工具与能力', level: 1 })).toBeVisible();
-  expect(screen.getByRole('link', { name: '管理MCP连接' })).toHaveAttribute('href', '/mcp');
-  expect(screen.getByRole('link', { name: '管理子Agent' })).toHaveAttribute('href', '/subagents');
+  expect(await screen.findByRole('heading', { name: '智能体设置', level: 1 })).toBeVisible();
+  expect(screen.getByRole('link', { name: 'MCP 连接' })).toHaveAttribute('href', '/mcp');
+  expect(screen.getByRole('link', { name: '子智能体' })).toHaveAttribute('href', '/subagents');
   expect(screen.queryByRole('region', { name: '有效工具预览' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: '查看配置历史' })).not.toBeInTheDocument();
   expect(
@@ -179,23 +194,29 @@ it('distinguishes default inheritance, explicit empty selection and selected gro
   const sent = serve();
   open();
   let form = within(await screen.findByRole('form', { name: '工具策略配置' }));
+  await userEvent.click(form.getByRole('button', { name: '配置选择' }));
   await userEvent.click(form.getByRole('checkbox', { name: '继承默认本地工具选择' }));
+  await userEvent.click(form.getByRole('button', { name: '完成配置' }));
   await userEvent.click(form.getByRole('button', { name: '保存工具配置' }));
   await waitFor(() =>
     expect(sent[0]).toEqual({ expected_revision: 0, main_tools: [], main_tool_groups: [] }),
   );
   await screen.findByText('当前配置修订 1');
   form = within(screen.getByRole('form', { name: '工具策略配置' }));
+  await userEvent.click(form.getByRole('button', { name: '配置选择' }));
   await userEvent.click(form.getByRole('button', { name: '选择工具组' }));
   await userEvent.click(screen.getByRole('checkbox', { name: '材料读取' }));
   await userEvent.click(screen.getByRole('button', { name: '完成' }));
+  await userEvent.click(form.getByRole('button', { name: '完成配置' }));
   await userEvent.click(form.getByRole('button', { name: '保存工具配置' }));
   await waitFor(() =>
     expect(sent[1]).toEqual({ expected_revision: 1, main_tool_groups: ['materials_read'] }),
   );
   await screen.findByText('当前配置修订 2');
   form = within(screen.getByRole('form', { name: '工具策略配置' }));
+  await userEvent.click(form.getByRole('button', { name: '配置选择' }));
   await userEvent.click(form.getByRole('checkbox', { name: '继承默认本地工具选择' }));
+  await userEvent.click(form.getByRole('button', { name: '完成配置' }));
   await userEvent.click(form.getByRole('button', { name: '保存工具配置' }));
   await waitFor(() =>
     expect(sent[2]).toEqual({ expected_revision: 2, main_tools: null, main_tool_groups: null }),

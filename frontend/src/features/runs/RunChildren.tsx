@@ -1,4 +1,5 @@
 import { Button } from '../../shared/ui/Button';
+import { DetailDialog } from '../../shared/ui/Workbench';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { messageOf, send, useResource } from '../../shared/api/api';
@@ -116,8 +117,7 @@ function ChildCard({ child, run, changed }: { child: ChildRun; run: Run; changed
           </div>
         </form>
       )}
-      <details className="mt-5" onToggle={(event) => setShowInstructions(event.currentTarget.open)}>
-        <summary>已发送的补充要求</summary>
+      <DetailDialog className="mt-5" title="已发送的补充要求" onOpenChange={setShowInstructions}>
         <ErrorBox message={instructions.error} />
         {instructions.loading && <p className="muted text-muted">正在读取…</p>}
         {instructions.data?.length === 0 && <p className="muted text-muted">还没有追加要求。</p>}
@@ -133,7 +133,7 @@ function ChildCard({ child, run, changed }: { child: ChildRun; run: Run; changed
             <p>{entry.content}</p>
           </div>
         ))}
-      </details>
+      </DetailDialog>
     </article>
   );
 }

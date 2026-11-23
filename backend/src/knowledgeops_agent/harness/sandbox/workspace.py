@@ -103,6 +103,9 @@ class WorkspaceBackend(LocalShellBackend):
             scope.read_verified = bool(
                 not result.error and result.file_data is not None and not result.no_lines_requested
             )
+            data = result.file_data
+            if scope.read_verified and data is not None and data.encoding == "utf-8" and len(data.content) <= 5000:
+                scope.read_excerpt = data.content, max(0, offset)
         return result
 
     def ls(self, path: str):

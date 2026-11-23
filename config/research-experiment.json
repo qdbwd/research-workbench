@@ -1,0 +1,6 @@
+{
+  "kind": "reranker-check-v1",
+  "image": "ghcr.io/astral-sh/uv@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58",
+  "script_sha256": "9be7b2f74d8f1b7c76fdd4fadd2a1a101a76bbd9c98411bd7b0af9c8baa4d37a",
+  "timeout_seconds": 15
+}

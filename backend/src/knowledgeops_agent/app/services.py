@@ -38,8 +38,11 @@ class Services:
 
     def __post_init__(self):
         # 显式注入的应用实例同样使用事务内引用合同，不能只在默认构造函数生效。
-        self.sessions.configure(info={**self.sessions.kw.get("info", {}),
-                                      "source_store": FileStore(self.sources.storage_root)})
+        self.sessions.configure(info={
+            **self.sessions.kw.get("info", {}),
+            "source_store": FileStore(self.sources.storage_root),
+            "research_experiment_exchange": self.settings.research_experiment_exchange,
+        })
         install_reference_tracking(self.sessions)
 
     @cached_property

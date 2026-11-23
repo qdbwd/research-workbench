@@ -4,6 +4,7 @@ import { api, messageOf, send, useResource } from '../../shared/api/api';
 import { useWorkspace } from '../../shared/state/workspace';
 import { Button } from '../../shared/ui/Button';
 import { ErrorBox, Loading } from '../../shared/ui/components';
+import { Dialog } from '../../shared/ui/Dialog';
 
 type Preview = {
   version: string;
@@ -165,8 +166,9 @@ export function AssetDeletionDialog({
 
 /** 刷新浏览器后仍能找到未结束/失败的删除；只有存在运行作业时才轮询。 */
 export function AssetDeletionHistory({ kind }: { kind?: 'knowledge' | 'run' } = {}) {
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const selected = params.get('deletion');
+  const [open, setOpen] = useState(false);
   const { version, refresh } = useWorkspace();
   const [tick, setTick] = useState(0);
   const [error, setError] = useState('');
@@ -185,17 +187,20 @@ export function AssetDeletionHistory({ kind }: { kind?: 'knowledge' | 'run' } = 
     return () => clearInterval(timer);
   }, [pending]);
   if (!jobs?.length && !result.error && !selected) return null;
+  const title = kind ? '删除管理' : '最近的删除';
+  function close() {
+    setOpen(false);
+    if (selected) setParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.delete('deletion');
+      return next;
+    }, { replace: true });
+  }
   return (
-    <details
-      className="mt-8"
-      role="region"
-      aria-label={kind ? '删除管理' : '最近的删除'}
-      open={Boolean(selected) || !kind || result.data?.some((job) => job.status === 'failed') || undefined}
-    >
-      <summary className="cursor-pointer text-sm text-muted">
-        {kind ? '删除管理' : '最近的删除'}
-        {result.data?.some((job) => job.status === 'failed') ? ' · 有清理失败的记录' : ''}
-      </summary>
+    <section className="mt-6 flex flex-wrap items-center gap-2">
+      <Button type="button" className="button-secondary text-xs" onClick={() => setOpen(true)}>{title}</Button>
+      {result.data?.some((job) => job.status === 'failed') && <span className="text-xs text-danger">有清理失败的记录</span>}
+      {(open || selected) && <Dialog title={title} onClose={close}>
       <ErrorBox message={error || result.error || selection.error} />
       {selected && selection.data && !selectedJob && <p className="text-sm text-muted">此删除记录属于其他管理页面，请从运行记录中的后台操作入口打开。</p>}
       {selection.loading && <Loading />}
@@ -261,6 +266,7 @@ export function AssetDeletionHistory({ kind }: { kind?: 'knowledge' | 'run' } = 
           </div>
         ))}
       </div>
-    </details>
+      </Dialog>}
+    </section>
   );
 }

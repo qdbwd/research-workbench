@@ -8,6 +8,8 @@ export type DraftData = {
   auxiliary: boolean;
   reasoning: string;
   permission: string;
+  researchMode?: true;
+  trialCase?: string;
 };
 
 export const emptyDraft = (): DraftData => ({ content: '', selected: [], mode: 'ask', knowledgeOnly: false,
@@ -19,10 +21,10 @@ export type MessageBody = {
 };
 export type PendingSubmission = {
   id: string;
-  intent: 'send' | 'materials';
+  intent: 'send' | 'materials' | 'research';
   revision: number;
   data: DraftData;
-  creation: { title: string; request_key: string };
+  creation: { title: string; request_key: string; trial_case?: string };
   body: MessageBody;
   needsSettings: boolean;
   stage: 'creation' | 'settings' | 'message';
@@ -54,6 +56,8 @@ export function normalizeDraft(raw: unknown): DraftData {
     if (typeof value[field] === 'boolean') result[field] = value[field];
   if (typeof value.reasoning === 'string' && value.reasoning.length <= 40) result.reasoning = value.reasoning;
   if (['ask', 'auto_review'].includes(String(value.permission))) result.permission = value.permission as string;
+  if (value.researchMode === true) result.researchMode = true;
+  if (typeof value.trialCase === 'string' && /^[a-z0-9-]{1,80}$/.test(value.trialCase)) result.trialCase = value.trialCase;
   return result;
 }
 
@@ -186,9 +190,12 @@ export class DraftStore {
       if (row.pending) throw new Error('请先核对上一次提交，不能另建请求。');
       if (row.revision !== expected || row.conflicts.length) throw new Error('请先处理草稿的不同版本。');
       const data = structuredClone(row.data);
-      if (intent === 'send' && !data.content.trim()) throw new Error('请先填写消息。');
+      if (intent !== 'materials' && !data.content.trim()) throw new Error('请先填写消息。');
       row.pending = { id: crypto.randomUUID(), intent, revision: row.revision, data,
-        creation: { title: intent === 'send' ? data.content.trim().slice(0, 30) : '新对话', request_key: crypto.randomUUID() },
+        creation: {
+          title: intent !== 'materials' ? data.content.trim().slice(0, 30) : '新对话', request_key: crypto.randomUUID(),
+          ...(intent !== 'materials' && data.trialCase ? { trial_case: data.trialCase } : {}),
+        },
         body: { content: data.content, source_ids: data.selected, publication_mode: data.mode,
           knowledge_only: data.knowledgeOnly, delegation: data.delegation, auxiliary: data.auxiliary,
           reasoning_effort: data.reasoning, request_key: crypto.randomUUID() },
@@ -229,8 +236,8 @@ export class DraftStore {
       if (row.deleted || row.pending?.id !== id) return row;
       const sent = row.pending;
       // 只退休实际发送的正文版本；之后输入以及其他标签的冲突副本不受影响。
-      if (sent.intent === 'send' && row.revision === sent.revision && sameDraft(row.data, sent.data)) {
-        row.data = { ...row.data, content: '', selected: [] };
+      if (sent.intent !== 'materials' && row.revision === sent.revision && sameDraft(row.data, sent.data)) {
+        row.data = { ...row.data, content: '', selected: [], researchMode: undefined, trialCase: undefined };
         row.revision += 1;
       }
       row.lastAccepted = { id, runId, intent: sent.intent };

@@ -9,6 +9,7 @@ type Transport = {
 const transport: Transport = { get: api, post: send };
 type CreationReceipt = { state: 'accepted' | 'not_accepted' | 'deleted'; conversation_id?: string };
 type Receipt = { state: 'accepted' | 'not_accepted'; run_id?: string };
+type ResearchReceipt = { state: 'accepted' | 'not_accepted'; task?: { id: string } };
 type Settings = { permission_mode: string; reasoning_effort: string; revision: number };
 
 /** 刷新/重新打开时只读服务器事实；结果未知绝不能以重新 POST 作为查询方式。 */
@@ -37,6 +38,15 @@ export async function reconcileSubmission(store: SubmissionStore, scope: string,
         return store.complete(scope, pending.id, receipt.run_id);
       }
       if (receipt.state !== 'not_accepted') throw new Error('暂时无法确认是否受理，请重新核对。');
+    }
+    if (pending.intent === 'research') {
+      const path = `/api/conversations/${row.conversationId}/research-task/start-receipt`;
+      const receipt = await http.get<ResearchReceipt>(`${path}?operation_id=${encodeURIComponent(pending.body.request_key)}`);
+      if (receipt.state === 'accepted') {
+        if (!receipt.task?.id) throw new Error('研发启动回执缺少任务身份。');
+        return store.complete(scope, pending.id);
+      }
+      if (receipt.state !== 'not_accepted') throw new Error('暂时无法确认研发是否已开始。');
     }
     if (row.pending?.needsSettings) {
       const settings = await http.get<Settings>(`/api/conversations/${row.conversationId}/runtime-settings`);
@@ -91,13 +101,20 @@ export async function dispatchSubmission(store: SubmissionStore, scope: string, 
     if (pending.intent === 'materials') return store.complete(scope, id);
     row = await store.updatePending(scope, id, { stage: 'message', state: 'unknown', error: '' });
     if (row.pending?.id !== id) return row;
+    if (pending.intent === 'research') {
+      const task = await http.post<{ id: string }>(`/api/conversations/${row.conversationId}/research-task`,
+        { operation_id: pending.body.request_key, goal: pending.body.content, source_ids: pending.body.source_ids });
+      if (!task.id) throw new Error('研发启动响应缺少任务身份。');
+      return store.complete(scope, id);
+    }
     const accepted = await http.post<{ id: string }>(`/api/conversations/${row.conversationId}/messages`, pending.body);
     if (!accepted.id) throw new Error('发送响应缺少任务身份。');
     return store.complete(scope, id, accepted.id);
   } catch (failure) {
     // 首次请求的明确参数/权限拒绝可回到编辑；曾有丢失响应时继续保护原身份。
     const rejected = !pending?.uncertain && failure instanceof ApiError
-      && [400, 403, 404, 422].includes(failure.status);
+      && ([400, 403, 404, 422].includes(failure.status)
+        || (pending?.intent === 'research' && failure.code === 'conversation_bound'));
     return store.updatePending(scope, id, { state: rejected ? 'rejected' : 'unknown', uncertain: !rejected,
       error: rejected ? messageOf(failure) : `提交结果尚未确认，请核对原请求：${messageOf(failure)}` });
   }

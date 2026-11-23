@@ -7,7 +7,7 @@ from knowledgeops_agent.app.lifecycle.references import replace_references
 from knowledgeops_agent.app.runs.control import lock_control
 from knowledgeops_agent.persistence import models as db
 
-CATALOG_STATE = "asset-references-v5"
+CATALOG_STATE = "asset-references-v6"
 
 # 身份格式与在线保存路径一致；额外资产沿明确所属类型命名，避免互相覆盖。
 SOURCES = (
@@ -29,7 +29,16 @@ SOURCES = (
     (db.RunArtifact, "material", ""),
     (db.Run, "run_input", ""),
     (db.DeliveredFile, "delivery", ""),
+    (db.ResearchRevision, "research_revision", ""),
+    (db.ResearchCommit, "research_commit", ""),
 )
+
+
+def research_reference_value(state):
+    """简报材料版本已经固定；材料身份本身不使未来版本也成为依赖。"""
+    return {**state, "material_refs": [
+        {"source_version_id": entry["source_version_id"]} for entry in state.get("material_refs", [])
+    ]}
 
 
 def reference_value(session, row):
@@ -44,6 +53,10 @@ def reference_value(session, row):
         return row.content
     if isinstance(row, db.TaskHistoryRecord):
         return row.payload
+    if isinstance(row, db.ResearchRevision):
+        return research_reference_value(row.state)
+    if isinstance(row, db.ResearchCommit):
+        return {**row.snapshot, "research_revision_id": row.revision_id}
     if isinstance(row, db.ChangeSetRevision):
         return row.operations
     if isinstance(row, db.KnowledgeVersion):

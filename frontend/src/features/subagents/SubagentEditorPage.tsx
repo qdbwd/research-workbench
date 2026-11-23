@@ -1,6 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
 import {
-  Link,
   useBeforeUnload,
   useBlocker,
   useNavigate,
@@ -11,6 +10,7 @@ import { messageOf, send, useResource } from '../../shared/api/api';
 import { Button } from '../../shared/ui/Button';
 import { Dialog } from '../../shared/ui/Dialog';
 import { ErrorBox, Loading, PageTitle } from '../../shared/ui/components';
+import { BackLink } from '../../shared/ui/Workbench';
 import {
   RoleFields,
   emptyFields,
@@ -245,8 +245,8 @@ export function SubagentEditorPage() {
   const loading = role.loading || options.loading || templates.loading;
   return (
     <>
-      <PageTitle eyebrow="子角色配置" title={definitionId ? '编辑子Agent' : '创建子Agent'} />
-      <Link to="/subagents">返回子Agent列表</Link>
+      <BackLink to="/subagents">返回子智能体</BackLink>
+      <PageTitle title={definitionId ? '编辑子Agent' : '创建子Agent'} />
       <p className="text-muted">
         设置角色的任务分工、提示与可用能力。子Agent保持只读，继承主任务模型并共享预算。
       </p>

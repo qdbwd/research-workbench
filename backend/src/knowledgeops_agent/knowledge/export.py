@@ -48,6 +48,7 @@ def export_markdown(sessions, *, include_archived: bool = False) -> bytes:
                 .join(
                     KnowledgeDocument, KnowledgeDocument.current_version_id == KnowledgeVersion.id
                 )
+                .where(KnowledgeDocument.trial_conversation_id.is_(None))
                 .order_by(KnowledgeDocument.id)
             )
         }

@@ -21,6 +21,7 @@ _LINK = re.compile(
     rf"(?P<id>{_ID})(?P<suffix>[^\s\]\)<>`\"']*)"
 )
 _ARTIFACT = re.compile(rf"(?<![\w/.:])/(?:api/)?runs/[^/\s]+/artifacts/({_ID})")
+_RESEARCH_REVISION = re.compile(rf"(?<![\w/.:])/(?:api/)?research(?:-tasks)?/{_ID}/branches/{_ID}/revisions/({_ID})")
 _MATERIAL_FILE = re.compile(rf"(?<![\w.])artifacts/({_ID})/([0-9a-f]{{64}})\.txt(?![\w.])")
 # 兼容既有摘要生成器写出的明确补读指令；普通日志里的裸UUID仍不是引用。
 _LEGACY_READ = re.compile(rf"(?<![A-Za-z0-9_])read_tool_result(?:读取|\s+read)?\s+({_ID})")
@@ -30,7 +31,7 @@ _FIELDS = {"evidence_id": "evidence", "source_id": "sources", "source_version_id
            "summary_artifact_id": "material", "changeset_id": "changesets", "draft_id": "changesets",
            "knowledge_version_id": "knowledge-versions", "base_version_id": "knowledge-versions",
            "restore_version_id": "knowledge-versions", "result_version_id": "knowledge-versions",
-           "document_id": "knowledge"}
+           "document_id": "knowledge", "research_revision_id": "research-revisions"}
 _CATALOGS = {"artifact_ids", "source_ids", "evidence_ids", "allowed_evidence_ids", "validated_evidence_ids",
              "source_catalog", "evidence_catalog", "material_catalog"}
 
@@ -63,6 +64,8 @@ def candidates(value):
                 yield kind, identity
         for identity in evidence_ids(value):
             yield "evidence", identity
+        for identity in _RESEARCH_REVISION.findall(value):
+            yield "research-revisions", identity.lower()
         for identity in _ARTIFACT.findall(value):
             yield "material", identity.lower()
         for identity in _LEGACY_READ.findall(value):
@@ -138,6 +141,7 @@ def _targets(session, value):
         (("deliveries",), db.DeliveredFile, "delivery:"),
         (("changes", "changesets"), db.ChangeSet, "draft:"),
         (("material",), db.RunArtifact, "material:"),
+        (("research-revisions",), db.ResearchRevision, "research_revision:"),
     ):
         ids = set().union(*(found.get(alias, set()) for alias in aliases))
         if ids:
@@ -252,6 +256,14 @@ def reachable_assets(session, *, excluding_conversation: str | None = None, excl
         db.ChangeSet.publication_root_id.in_(live_runs),
         ])
     roots.append(select(_node("draft:", db.ChangeSet.id)).where(or_(*draft_roots)))
+    roots.append(select(_node("research_revision:", db.ResearchRevision.id))
+                 .join(db.ResearchBranch, db.ResearchBranch.id == db.ResearchRevision.branch_id)
+                 .join(db.ResearchTask, db.ResearchTask.id == db.ResearchBranch.task_id)
+                 .where(db.ResearchTask.deleted_at.is_(None)))
+    roots.append(select(_node("research_commit:", db.ResearchCommit.id))
+                 .join(db.ResearchBranch, db.ResearchBranch.id == db.ResearchCommit.branch_id)
+                 .join(db.ResearchTask, db.ResearchTask.id == db.ResearchBranch.task_id)
+                 .where(db.ResearchTask.deleted_at.is_(None)))
     # 其余独立业务拥有者必须仍存在。派生索引、事件和Evidence表本身均不在此列。
     for model, prefix in ((db.PreferenceRevision, "memory:"), (db.LearningTaskRevision, "learning:"),
                           (db.LearningTask, "learning-current:"), (db.LearningUnit, "learning-unit:"),

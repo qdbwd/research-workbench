@@ -1,8 +1,9 @@
 import { Button } from '../../shared/ui/Button';
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { messageOf, send, useResource } from '../../shared/api/api';
 import { Empty, ErrorBox, Loading, PageTitle } from '../../shared/ui/components';
+import { BackLink } from '../../shared/ui/Workbench';
 import { useWorkspace } from '../../shared/state/workspace';
 import type { Conversation } from '../../shared/types/types';
 
@@ -214,7 +215,7 @@ function CollaborationPanel({ taskId }: { taskId: string }) {
   );
 }
 
-export function ConversationLearning({ conversationId }: { conversationId: string }) {
+function ConversationLearning({ conversationId }: { conversationId: string }) {
   const { version, refresh } = useWorkspace();
   const rows = useResource<LearningTask[]>(
     `/api/learning-tasks?conversation_id=${encodeURIComponent(conversationId)}`,
@@ -223,6 +224,7 @@ export function ConversationLearning({ conversationId }: { conversationId: strin
   const current = rows.data?.find((row) => row.selected);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  if (!current && !rows.error && !error) return null;
   return (
     <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
       <ErrorBox message={error || rows.error} />
@@ -265,11 +267,7 @@ export function ConversationLearning({ conversationId }: { conversationId: strin
             </label>
           )}
         </>
-      ) : (
-        <p>
-          当前为普通对话。<Link to="/learning">建立学习任务或查看已有任务</Link>
-        </p>
-      )}
+      ) : null}
     </section>
   );
 }
@@ -543,13 +541,15 @@ function TaskEditor({ task, changed }: { task: LearningTask; changed: () => void
 
 export function LearningPage() {
   const { taskId } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const { version, refresh } = useWorkspace();
   const [tick, setTick] = useState(0);
   const tasks = useResource<LearningTask[]>(taskId ? null : '/api/learning-tasks', tick);
   const detail = useResource<LearningTask>(taskId ? `/api/learning-tasks/${taskId}` : null, tick);
   const conversations = useResource<Conversation[]>(taskId ? null : '/api/conversations', version);
-  const [conversationId, setConversationId] = useState('');
+  const conversationId = searchParams.get('conversation_id') ?? '';
+  const listedConversation = conversations.data?.some((row) => row.id === conversationId);
   const [title, setTitle] = useState('');
   const [goal, setGoal] = useState('');
   const [mode, setMode] = useState('interactive');
@@ -558,7 +558,8 @@ export function LearningPage() {
   const pendingCreate = useRef({ fingerprint: '', key: '', conversationId: '' });
   return (
     <>
-      <PageTitle eyebrow="LEARNING" title={detail.data?.title ?? '学习与整理'} />
+      {taskId && <BackLink to="/learning">返回学习与整理</BackLink>}
+      <PageTitle title={detail.data?.title ?? '学习与整理'} />
       <ErrorBox message={error || tasks.error || detail.error || conversations.error} />
       {(tasks.loading || detail.loading) && <Loading />}
       {taskId ? (
@@ -616,8 +617,17 @@ export function LearningPage() {
             <h2>新学习任务</h2>
             <label>
               会话
-              <select value={conversationId} onChange={(e) => setConversationId(e.target.value)}>
+              <select value={conversationId} onChange={(e) => {
+                const selected = e.target.value;
+                setSearchParams((current) => {
+                  const next = new URLSearchParams(current);
+                  if (selected) next.set('conversation_id', selected);
+                  else next.delete('conversation_id');
+                  return next;
+                }, { replace: true });
+              }}>
                 <option value="">新建独立会话</option>
+                {conversationId && !listedConversation && <option value={conversationId}>当前会话</option>}
                 {conversations.data?.map((row) => (
                   <option key={row.id} value={row.id}>
                     {row.title}
@@ -642,6 +652,7 @@ export function LearningPage() {
             </label>
             <Button disabled={busy || !title.trim() || !goal.trim()}>建立任务</Button>
           </form>
+          {conversationId && <ConversationLearning key={conversationId} conversationId={conversationId} />}
           {tasks.data?.length === 0 && (
             <Empty title="还没有学习任务">可先创建任务，再在对话中梳理框架。</Empty>
           )}

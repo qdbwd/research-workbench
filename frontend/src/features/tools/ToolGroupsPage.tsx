@@ -274,7 +274,7 @@ function GroupEditor({
   );
 }
 
-export function ToolGroupsPage() {
+export function ToolGroupsPanel({ onChanged }: { onChanged?: () => void }) {
   const [version, setVersion] = useState(0);
   const groups = useResource<ToolGroup[]>('/api/tools/groups', version);
   const catalog = useResource<{ tools: (CapabilityChoice & { source: string })[] }>(
@@ -286,13 +286,11 @@ export function ToolGroupsPage() {
   );
   const [query, setQuery] = useState('');
   const tools = (catalog.data?.tools ?? []).filter((row) => row.source !== 'mcp');
-  const shown = groups.data?.filter((row) => `${row.name} ${row.description}`.includes(query));
+  const shown = groups.data?.filter((row) =>
+    `${row.name} ${row.description}`.toLowerCase().includes(query.trim().toLowerCase()),
+  );
   return (
     <>
-      <Link to="/tools" className="mb-3 inline-block text-sm">
-        ← 工具与能力
-      </Link>
-      <PageTitle eyebrow="能力配置" title="工具组" />
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <p className="m-0 max-w-2xl text-sm text-muted">
           把常一起使用的工具放在一个组中，供主智能体和子智能体选择。编辑前可查看对已配置角色的影响。
@@ -321,12 +319,12 @@ export function ToolGroupsPage() {
           onChange={(event) => setQuery(event.target.value)}
         />
       </label>
-      <div className="grid grid-cols-2 gap-4 max-lg:grid-cols-1">
+      <div className="divide-y divide-line rounded-lg border border-line">
         {shown?.map((group) => (
           <article
             key={group.id}
             aria-label={group.name}
-            className="min-w-0 rounded-xl border border-line bg-white p-5"
+            className="min-w-0 px-4 py-3"
           >
             <div className="flex items-start gap-3">
               <span className="rounded-lg bg-canvas p-2 text-brand">
@@ -359,6 +357,7 @@ export function ToolGroupsPage() {
               options={tools}
               selected={group.tool_ids}
               disabled={!catalog.data}
+              triggerOnly
             />
           </article>
         ))}
@@ -373,9 +372,21 @@ export function ToolGroupsPage() {
           onSaved={() => {
             setEditing(null);
             setVersion((n) => n + 1);
+            onChanged?.();
           }}
         />
       )}
+    </>
+  );
+}
+
+/** 旧的直达地址保留，常规入口在智能体设置的弹窗。 */
+export function ToolGroupsPage() {
+  return (
+    <>
+      <Link to="/tools" className="button button-secondary mb-4">← 返回智能体设置</Link>
+      <PageTitle title="工具组" />
+      <ToolGroupsPanel />
     </>
   );
 }

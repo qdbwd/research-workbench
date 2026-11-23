@@ -75,10 +75,10 @@ test('rich document typography and keyboard controls survive the CSS reset', asy
   const menu = page.getByRole('button', { name: '更多设置与材料' });
   await menu.focus();
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('checkbox', { name: '允许辅助模型' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '本次任务设置' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(menu).toBeFocused();
-  await expect(page.getByRole('checkbox', { name: '允许辅助模型' })).not.toBeVisible();
+  await expect(page.getByRole('button', { name: '本次任务设置' })).not.toBeVisible();
   await expect(page.getByRole('button', { name: '发送', exact: true })).toBeDisabled();
   const chats = await (await page.request.get('/api/conversations')).json();
   await page.goto(`/chat/${chats[0].id}`);

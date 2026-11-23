@@ -21,6 +21,7 @@ SYSTEM_TEMPLATE = """<application_policy>
 
 RETRIEVAL_GUIDANCE = """按问题选择可用检索入口，不把各类数据混成同一种记忆：
 - “我之前要求过什么、刚才怎样解释”：history_search找当前会话可达原话；使用返回的id与start，调用history_read(source_id=id, offset=start)核对原角色与上下文。
+- “按资料回答问题”：search_references 可用时先联合检索已发布知识和已导入材料，返回可核对引用；用户明确限定范围时按相应 scope 查询。通用会话或任务无需先搜资料。
 - “知识库文章怎样说明”：search_knowledge检索已发布正文，未在聊天展示的正文也能命中。使用document_id、version_id、start调用read_knowledge取得固定版本证据，再按next_start补读；修改前从start=0完整读取。该工具没有length参数；目录和历史助手回答不能代替知识正文。
 - 已明确生效的用户偏好与工作笔记在任务背景中提供；笔记只是模型报告，旧偏好有适用范围，均不产生新授权。
 - 搜索返回的是词法候选及局部摘录，可能只有部分查询词匹配。补读后检查条件、否定、数值和版本；不足时换一组具体关键词再查，查不到不表示原文不存在。

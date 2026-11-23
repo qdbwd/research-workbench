@@ -1,7 +1,8 @@
 import { Button } from '../../shared/ui/Button';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, FileCheck2 } from 'lucide-react';
+import { FileCheck2 } from 'lucide-react';
+import { BackLink } from '../../shared/ui/Workbench';
 import { messageOf, send, usePagedResource, useResource } from '../../shared/api/api';
 import {
   Badge,
@@ -21,7 +22,7 @@ export function ChangesPage() {
   const result = usePagedResource<ChangeSet>(`/api/changesets/page?status=${status}`, version);
   return (
     <>
-      <PageTitle eyebrow="YOUR KNOWLEDGE, CONNECTED" title="知识库">
+      <PageTitle title="知识库">
         <Link className="button secondary button-secondary" to="/runs">
           查看运行记录 →
         </Link>
@@ -104,14 +105,8 @@ export function ChangePage() {
   const draft = result.data;
   return (
     <>
-      <Link
-        className="back-link mb-[15px] inline-flex items-center gap-1.5 text-xs"
-        to="/knowledge/reviews"
-      >
-        <ArrowLeft size={15} />
-        返回知识库审阅
-      </Link>
-      <PageTitle eyebrow="READ BEFORE PUBLISHING" title="审阅知识变更" />
+      <BackLink to="/knowledge/reviews">返回知识库审阅</BackLink>
+      <PageTitle title="审阅知识变更" />
       <ErrorBox message={error || result.error} />
       {draft?.retention_intent === 'temporary' && draft.status !== 'published' && (
         <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-white p-4">

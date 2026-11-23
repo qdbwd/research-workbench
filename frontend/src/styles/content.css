@@ -29,6 +29,21 @@
       text-decoration: underline;
       text-underline-offset: 3px;
     }
+    & a.chat-citation {
+      color: #2563a0;
+      text-decoration: none;
+      & svg {
+        display: inline-block;
+        width: 0.9em;
+        height: 0.9em;
+        margin-inline-end: 0.25em;
+        vertical-align: -0.08em;
+      }
+      &:hover,
+      &:focus-visible {
+        text-decoration: underline;
+      }
+    }
     & blockquote {
       border-left: 3px solid #aac3a0;
       margin: 20px 0;
@@ -56,6 +71,23 @@
       border: 1px solid #d9e1d2;
       padding: 9px 14px;
     }
+  }
+  .chat-evidence-pane {
+    width: clamp(325px, 44%, 760px);
+    flex-shrink: 0;
+    border-inline-start-width: 1px;
+    @media (width < 64rem) {
+      position: absolute;
+      z-index: 10;
+      inset: 0;
+      width: auto;
+      border-inline-start-width: 0;
+    }
+  }
+  .evidence-tab[data-active='true'],
+  .research-pane-section[aria-pressed='true'] {
+    background: var(--color-sidebar);
+    color: var(--color-brand);
   }
   .source-text {
     white-space: pre-wrap;

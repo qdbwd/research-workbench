@@ -1,0 +1,81 @@
+{
+  "scenario": "operations-pilot",
+  "version": 1,
+  "questions": [
+    {
+      "id": "approval",
+      "question": "线上紧急操作是否能先做再找人补签？",
+      "facts": ["当班负责人事前批准"],
+      "evidence": ["change-policy@2"],
+      "reject_evidence": ["change-policy@1"]
+    },
+    {
+      "id": "backup-approver",
+      "question": "找不到现班负责人时要找谁签字？",
+      "facts": ["备班负责人审批"],
+      "evidence": ["change-policy@2"]
+    },
+    {
+      "id": "no-confirmation",
+      "question": "两个负责人都没有确认，线上改动应怎么处置？",
+      "facts": ["保持原状态"],
+      "evidence": ["change-policy@2"]
+    },
+    {
+      "id": "environment",
+      "question": "这套线上审批规则适用于测试环境吗？",
+      "facts": ["仅适用于生产环境", "测试环境按自己的测试变更流程处理"],
+      "evidence": ["change-policy@2"]
+    },
+    {
+      "id": "pre-change",
+      "question": "开工之前如何保留恢复手段？",
+      "facts": ["记录回滚点"],
+      "evidence": ["change-runbook@1"]
+    },
+    {
+      "id": "after-change",
+      "question": "变更结束后应查哪些信号？",
+      "facts": ["错误率", "请求延迟", "核心业务探针"],
+      "evidence": ["change-runbook@1"]
+    },
+    {
+      "id": "rollback",
+      "question": "健康检查持续异常后的恢复依据是什么？",
+      "facts": ["按已记录的回滚点恢复", "通知当班负责人"],
+      "evidence": ["change-runbook@1"]
+    },
+    {
+      "id": "cross-source",
+      "question": "要开始一次生产紧急变更，除了批复，还要准备哪些值班检查？",
+      "facts": ["当班负责人事前批准", "记录回滚点", "核对监控看板"],
+      "evidence": ["change-policy@2", "change-runbook@1"]
+    },
+    {
+      "id": "escalation-and-change",
+      "question": "如果故障已持续超过十五分钟，登记升级能代替紧急变更批准吗？",
+      "facts": ["通知事件负责人", "升级记录不能代替变更审批", "当班负责人事前批准"],
+      "evidence": ["incident-escalation@1", "change-policy@2"]
+    },
+    {
+      "id": "probe-paraphrase",
+      "question": "进程还活着能证明业务恢复了吗？",
+      "facts": ["只能证明进程仍在运行", "记录业务探针及连续观测结果"],
+      "evidence": ["health-checks@1"]
+    },
+    {
+      "id": "unknown-calendar",
+      "question": "今天夜班的备班负责人叫什么名字？",
+      "facts": [],
+      "evidence": [],
+      "unanswerable": true
+    },
+    {
+      "id": "unknown-threshold",
+      "question": "请求延迟超过多少毫秒就必须回滚？",
+      "facts": [],
+      "evidence": [],
+      "unanswerable": true
+    }
+  ]
+}
