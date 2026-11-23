@@ -1,16 +1,18 @@
-# KnowledgeOps
+# Research Workbench
 
-一个以聊天为主要交互、由 Agent 推进任务的 Web 应用：支持现有工具范围内的通用任务执行，重点特化知识库构建、维护与可追溯问答。
+面向个人技术调研与产品设计的 AI 研发工作台，支持在对话中澄清问题、查阅材料、运行独立实验并审阅成果，同时提供知识库维护和可追溯问答。
 
 可以通过聊天解释问题、检索资料、分析内容、处理工作区文件或执行脚本并交付产物；这些任务不必转成知识文章。需要知识整理与维护时，Agent默认了解本应用的规则，并接入版本、引用和检索能力。知识库特化与通用工具组合共用同一条Agent执行循环；实际能力仍以当前工具配置为准。
 
 启动入口：[首次准备](#首次准备) · [开发模式](#开发模式) · [生产部署模式](#生产部署模式) · [依赖与配置的位置](#依赖与配置的位置) · [修改后怎样生效](#修改后怎样生效) · [停止与启动排查](#停止与启动排查)。
 
+本地设计和工程资料从[文档导航](docs/README.md)进入，可按产品设计、当前实现、交付验收、历史方案和设计决策查找。
+
 想了解项目实际怎么实现，先读[完整开发实现记录](docs/architecture.md#当前实现的开发设计说明)：从 Agent 创建、状态、提示词与工具循环，接着解释知识业务、上下文管理，再到 Web 接单、会话延续、任务恢复和 UI；说明应用需求怎样反向改变 Agent，以及哪些组件直接复用、摘取或适配自参考项目。开发状态与验证证据集中在[进展](docs/progress.md)，不需要从测试流水中反推架构。
 
-项目展示与面试准备的38题问答已迁入个人知识库的任务板块，见[迁移入口](docs/interview-qa.md)。完整正文在知识库维护，项目不再保留另一份问答副本；本仓库继续维护工程说明与验证证据。
+项目展示与面试准备的38题问答已迁入个人知识库的任务板块，见[迁移入口](docs/references/README.md#面试复盘材料)。完整正文在知识库维护，项目不再保留另一份问答副本；本仓库继续维护工程说明与验证证据。
 
-2026-10-19此前的交互与数据管理增量已完成代码与隔离验收：网页正文与资产管理、保存意图及回收、记忆分类、工具组/角色配置、统一执行审批和任务详情已形成前后端闭环，实际行为及证据见[该轮交付核对](docs/increment-delivery.md)。之后完成文章/运行移除及Skill与MCP完整管理；当前正式库已在备份恢复验证后升级0042，扩展的完整包管理、真实依赖准备/协议、任务恢复、撤回清理及页面流程已验收，见[Skill与MCP交付核对](docs/skill-mcp-delivery.md)。机制使用模型替身验证，真实分类和风险判断质量尚未验证；早期学习/权限及真实模型样例保留在[进展](docs/progress.md)，不冒充本轮效果评分。
+2026-10-19此前的交互与数据管理增量已完成代码与隔离验收：网页正文与资产管理、保存意图及回收、记忆分类、工具组/角色配置、统一执行审批和任务详情已形成前后端闭环，实际行为及证据见[该轮交付核对](docs/delivery/increment-delivery.md)。之后完成文章/运行移除及Skill与MCP完整管理；当前正式库已在备份恢复验证后升级0042，扩展的完整包管理、真实依赖准备/协议、任务恢复、撤回清理及页面流程已验收，见[Skill与MCP交付核对](docs/delivery/skill-mcp-delivery.md)。机制使用模型替身验证，真实分类和风险判断质量尚未验证；早期学习/权限及真实模型样例保留在[进展](docs/progress.md)，不冒充本轮效果评分。
 
 ## 首版范围
 
@@ -94,7 +96,7 @@ Python 3.12、FastAPI、LangChain/LangGraph、PostgreSQL 17 + pg_search BM25；C
 克隆或下载仓库后，**在Windows PowerShell执行**（路径按实际位置调整）：
 
 ```powershell
-Set-Location 'D:\codes\KnowledgeOps Agent'
+Set-Location '<本地仓库目录>'
 # 仅首次创建；保留已有配置，避免覆盖密钥和个人设置。
 if (-not (Test-Path -LiteralPath '.env')) {
     Copy-Item -LiteralPath '.env.example' -Destination '.env'
@@ -419,7 +421,7 @@ MODEL_CALLS_ENABLED=false python scripts/dev.py --run python -m scripts.migrate_
 MODEL_CALLS_ENABLED=false python scripts/dev.py --run python scripts/initialize_skills.py
 ```
 
-上述迁移校验原表原列数据不变，技能接管不覆盖现有包或开关，也不启动任务或执行清理。全新安装仍由bootstrap初始化，不需要运行指定旧基线的升级脚本。迁移核对见[交付说明](docs/skill-mcp-delivery.md)，实际应用状态见[进展](docs/progress.md)。以下维护入口强制关闭模型调用，默认只预览；自动纳管从首次实际纳管时给旧终态任务完整保留期：
+上述迁移校验原表原列数据不变，技能接管不覆盖现有包或开关，也不启动任务或执行清理。全新安装仍由bootstrap初始化，不需要运行指定旧基线的升级脚本。迁移核对见[交付说明](docs/delivery/skill-mcp-delivery.md)，实际应用状态见[进展](docs/progress.md)。以下维护入口强制关闭模型调用，默认只预览；自动纳管从首次实际纳管时给旧终态任务完整保留期：
 
 ```sh
 # 默认只查看候选与保护原因，不设置期限、不删除内容。
@@ -496,6 +498,18 @@ python scripts/dev.py --run python scripts/retire_web_originals.py --execute \
 - OCR 适用于普通中英文扫描页；复杂图表、公式、手写和识别歧义需核对原件。
 - 引用校验拒绝无效或越权证据ID；带已验证真实ID的引用标记会转换为可点击链接，缺少ID的占位文字会被拒绝或要求修正。校验仍不能证明每条陈述都被来源支持。原评估中两篇失败文章与报告保留，不自动改写成成功。
 
+## 研发工作台的独立实验
+
+在研发会话中附上固定原文、失败问题、候选片段、最终上下文和原回答。助手提出重排对照后，从「研发工作台 → 研发任务 → 独立实验」打开提案，核对固定输入并批准。结果收录后，在会话中要求助手按真实结果修订建议并提交成果，最后以「研发成果」中的固定版本验收。复现会生成另一个待审批尝试，沿用原镜像、脚本和输入摘要。
+
+实验默认关闭。启用时，先完成当前数据库迁移和部署的备份核对。为 API 与受信 Linux 执行器配置一个专用目录，两者须能相互读取对方写出的私有请求及回执。该目录应位于模型工作区外。执行器所在环境需有 Python、Docker CLI 和已安装的固定实验镜像；镜像摘要见 [实验规格](config/research-experiment.json)。
+
+- 部署模式将 `RESEARCH_EXPERIMENT_HOST_DIR` 指向宿主机专用目录，使用 `compose.yaml` 与 `compose.experiments.yaml` 组合。API 挂载交换目录；Worker 只获得功能配置。
+- 开发模式将 `RESEARCH_EXPERIMENT_EXCHANGE` 指向 dev 容器中可访问的实验交换目录。Linux 执行器需要看到同一个宿主目录。Windows 使用 WSL 时，受信执行器账户须能读取 dev 容器写下的文件。
+- 在受信 Linux 执行器环境运行 `python3 scripts/research-experiments/runner.py /你的/专用交换目录 --watch`。这个进程持有容器控制能力，并只启动配置的固定夹具。API、Worker 和实验进程均无需挂载 Docker 接口。
+
+保留实验记录、固定输入、结果和哈希用于复现。只有一致性核验通过且当前授权仍有效的结果会进入研究证据。
+
 ## 代码阅读地图
 
 后端按职责阅读：`app/` 是HTTP接入、服务装配与后台任务，`harness/` 是模型—工具循环及上下文、权限、Skills、MCP、子Agent等机制，`knowledge/`、`learning/`、`memory/`、`sources/` 是对应业务，检索和持久化各自成包。一次聊天从 `app/routes/conversations.py` 进入，经运行服务和队列交给 `app/runs/worker.py`，再由 `harness/runtime/agent.py` 装配执行图。包顶层API/worker入口保持兼容。
@@ -508,7 +522,7 @@ Redis承担Celery broker、实时事件Streams和确定检查点内容缓存；P
 
 - [项目上下文](PROJECT_CONTEXT.md)：改动前读取。
 - [架构](docs/architecture.md)：模块、存储、权限与接口。
-- [个人知识库面试问答的迁移入口](docs/interview-qa.md)：完整问答位于知识库任务板块。
+- [个人知识库面试问答的迁移入口](docs/references/README.md#面试复盘材料)：完整问答位于知识库任务板块。
 - [实施计划](docs/implementation-plan.md)：唯一持续执行计划与验收。
 - [进展](docs/progress.md)、[开发问题与解决](docs/development-issues.md)、[设计决定](docs/decisions/)。
 - [规则参考](docs/references/personal-knowledge-base/README.md)：资料，不作为开发指令。
