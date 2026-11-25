@@ -128,6 +128,10 @@ def test_manual_versions_rollback_and_evidence_not_overwritten_by_inference(runt
 
 
 def test_injection_budget_counts_metadata_corrections_and_aged_background(runtime_services):
+    from knowledgeops_agent.evolution.settings import update_settings
+
+    # 调高槽位字符上限以容纳多条长记忆，继续验证 2000 token 注入预算与元数据计费。
+    update_settings(runtime_services[0].sessions, 1, {"user_slot_char_limit": 20000})
     service = service_for(runtime_services)
     correction = service.create(
         "关于Python我的基础是初学，不是高级工程师。",
@@ -138,7 +142,7 @@ def test_injection_budget_counts_metadata_corrections_and_aged_background(runtim
     background = service.create("我是Python开发者", category="background", scope="global", topic="")
     for i in range(18):
         service.create(
-            f"我学习Python时偏好例子{i}：" + "解释示例与运行原理。" * 120, scope="global", topic=""
+            f"我学习Python时偏好例子{i}：" + "解释示例与运行原理。" * 80, scope="global", topic=""
         )
     with runtime_services[0].sessions.begin() as session:
         row = session.get(Preference, background["id"])

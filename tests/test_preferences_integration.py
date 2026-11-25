@@ -30,10 +30,12 @@ def test_preference_web_lifecycle_requires_revision_and_no_model(client, service
     assert len(services.gateway.ledger.records()) == 0
 
 
-def test_single_intent_call_extracts_preference_separately_from_publication(runtime_services):
+def test_single_intent_call_extracts_preference_separately_from_publication(
+    runtime_services, monkeypatch
+):
+    from test_memory_integration import _prepare_legacy_intent_snapshot
     from test_preferences import proposal
 
-    from knowledgeops_agent.harness.runtime.resources import prepare_resources
     from knowledgeops_agent.knowledge.intent import ensure_publication_intent
     from knowledgeops_agent.memory.service import PreferenceService
 
@@ -61,7 +63,8 @@ def test_single_intent_call_extracts_preference_separately_from_publication(runt
             )
 
     context.gateway.client = Classifier()
-    prepare_resources(context)
+    # 模拟升级前冻结的旧版 v5 意图快照，验证旧运行仍将偏好提取与发布授权分离处理。
+    _prepare_legacy_intent_snapshot(context, monkeypatch)
     result = ensure_publication_intent(context)
     service = PreferenceService(context.jobs.sessions)
     assert result["mode"] == "preview"

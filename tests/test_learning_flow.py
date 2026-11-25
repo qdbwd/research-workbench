@@ -67,7 +67,7 @@ def test_two_units_revision_review_pause_profile_update_and_publish(services, tm
 
     def inject_real_feedback(unit, observations):
         # 在第一单元发布后、根运行结束前模拟真人点击“引导当前任务”。
-        # 消息仍经真实enqueue/guide/解释/提取，不直接改配置或伪造用户证据。
+        # 消息仍经真实enqueue/guide/解释，前台 v6 应用学习配置并将长期记忆交由后台复盘。
         if delivered or not observations or observations[-1].name != "publish_changes":
             return
         current = next(
@@ -93,7 +93,10 @@ def test_two_units_revision_review_pause_profile_update_and_publish(services, tm
     assert provider.intent_calls == 1 and len(delivered) == 1
     from knowledgeops_agent.memory.service import MemoryService
 
-    assert len(MemoryService(services.sessions).list()) == 1
+    assert services.jobs.publication_intent(first["id"])["preferences"] == {
+        "delegated": "evolution_review"
+    }
+    assert MemoryService(services.sessions).list() == []
     paused = tasks.control(task["id"], expected_revision=task["revision"], action="pause")
     queued = next(r for r in services.jobs.list_runs() if r["status"] == "interrupted")
     assert (
