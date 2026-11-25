@@ -103,6 +103,8 @@ function serve(initial: Role[] = [], conflict = false, mcp = false) {
         ? Response.json(row)
         : Response.json({ detail: '子Agent角色不存在' }, { status: 404 });
     }
+    if (url === '/api/conversation-projects') return Response.json({ items: [] });
+    if (url.startsWith('/api/conversations/page')) return Response.json({ items: [], next_cursor: null });
     return Response.json([]);
   });
   vi.stubGlobal('fetch', fetcher);

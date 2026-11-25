@@ -46,8 +46,19 @@ export type ResearchSummary = {
 
 export type ResearchTask = ResearchSummary & {
   main_branch_id: string;
+  write_branch_id?: string;
+  write_branch_name?: string;
+  write_version?: number;
   head: ResearchRevision;
 };
+
+export function isNewerResearchTask(candidate: ResearchTask, current: ResearchTask) {
+  if (candidate.control_version !== current.control_version) return candidate.control_version > current.control_version;
+  const candidateWrite = candidate.write_version ?? 1;
+  const currentWrite = current.write_version ?? 1;
+  if (candidateWrite !== currentWrite) return candidateWrite > currentWrite;
+  return candidate.head.number > current.head.number;
+}
 
 export const researchStatuses: Record<string, string> = {
   open: '待推进', paused: '已暂停', closed: '已取消', awaiting_acceptance: '待验收', completed: '已完成',

@@ -31,12 +31,10 @@ export function EffectiveCapabilities({
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [knowledge, setKnowledge] = useState(false);
-  const [auxiliary, setAuxiliary] = useState(false);
   const [delegation, setDelegation] = useState(true);
   const [detail, setDetail] = useState<CapabilityChoice | null>(null);
   const params = new URLSearchParams({
     knowledge_only: String(knowledge),
-    auxiliary: String(auxiliary),
     delegation: String(delegation),
   });
   if (roleId) params.set('role_id', roleId);
@@ -70,14 +68,6 @@ export function EffectiveCapabilities({
                 onChange={(e) => setKnowledge(e.target.checked)}
               />
               仅知识库
-            </label>
-            <label className="m-0 flex-row items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={auxiliary}
-                onChange={(e) => setAuxiliary(e.target.checked)}
-              />
-              允许辅助模型
             </label>
             {!roleId && (
               <label className="m-0 flex-row items-center gap-2 text-sm">

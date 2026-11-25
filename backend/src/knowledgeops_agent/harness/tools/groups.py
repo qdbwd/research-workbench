@@ -27,7 +27,6 @@ GROUP_DESCRIPTIONS = {
     "task_continuity": "查找会话原话并维护当前任务要点。",
     "long_term_memory": "检索和核对当前任务允许使用的长期记忆。",
     "learning": "读取学习草稿、征求反馈并保存待确认的学习安排。",
-    "auxiliary": "调用辅助模型，仍须任务显式开启并受共享预算约束。",
     "knowledge_maintenance": "管理知识草稿与发布；发布仍需独立业务授权。",
     "delegation": "创建、查看、等待及管理只读子任务。",
     "web": "搜索和读取公开网页，仍受任务联网选择约束。",
@@ -72,7 +71,17 @@ def read_groups(
                 )
             }
         )
-    result = [deepcopy(row) for row in groups.values() if include_deleted or not row["deleted"]]
+    result = []
+    known = {row["id"] for row in tool_options()}
+    for row in groups.values():
+        if not include_deleted and row["deleted"]:
+            continue
+        item = deepcopy(row)
+        # 已下线的历史内置工具（如 builtin:call_model）不再暴露在实时目录或未迁移组中。
+        item["tool_ids"] = [key for key in item["tool_ids"] if key in known]
+        if not include_deleted and item["id"] == "auxiliary" and not item["tool_ids"]:
+            continue
+        result.append(item)
     if not child_only:
         return result
     allowed = {row["id"] for row in tool_options(child_only=True)}

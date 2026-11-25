@@ -16,7 +16,7 @@ import { Activity, BookOpen, Compass, Files, FlaskConical, GraduationCap, List, 
 import { useResource } from '../shared/api/api';
 import { ChatPage } from '../features/chat/ChatPage';
 import { BackgroundDeletions } from '../features/chat/BackgroundDeletions';
-import { ConversationLink } from '../features/chat/ConversationLink';
+import { ConversationDirectory } from '../features/chat/ConversationDirectory';
 import { ConversationsPage } from '../features/chat/ConversationsPage';
 import { ArticlePage, KnowledgePage } from '../features/knowledge/KnowledgePage';
 import { ChangesPage, ChangePage } from '../features/changes/ChangesPage';
@@ -32,6 +32,7 @@ import { MCPPage } from '../features/mcp/MCPPage';
 import { SubagentsPage } from '../features/subagents/SubagentsPage';
 import { SubagentEditorPage } from '../features/subagents/SubagentEditorPage';
 import { ToolsPage } from '../features/tools/ToolsPage';
+import { RetrievalPage } from '../features/tools/RetrievalPage';
 import { ApplicationActivity, ActivityIndicator } from '../features/activity/ApplicationActivity';
 import { SkillsPage } from '../features/skills/SkillsPage';
 import { ToolGroupsPage } from '../features/tools/ToolGroupsPage';
@@ -53,7 +54,7 @@ const navigationStyle =
 function WorkspaceLayout() {
   const { pathname } = useLocation();
   const [showRecent, setShowRecent] = useState(false);
-  const configuringAgent = /^\/(tools|skills|mcp|subagents)(\/|$)/.test(pathname);
+  const configuringAgent = /^\/(tools|skills|mcp|subagents|retrieval)(\/|$)/.test(pathname);
   const [version, setVersion] = useState(0);
   const refresh = useCallback(() => setVersion((value) => value + 1), []);
   const workspace = useMemo(() => ({ version, refresh }), [version, refresh]);
@@ -117,8 +118,7 @@ function WorkspaceLayout() {
                 最近对话
                 <Link to="/conversations" className="button button-quiet p-1" aria-label="查看全部会话" title="查看全部会话"><List size={17} aria-hidden="true" /></Link>
               </div>
-              {recent.map((chat) => <ConversationLink key={chat.id} chat={chat} />)}
-              {!recent.length && <p className="mx-2.5 my-1 text-xs text-control">还没有对话</p>}
+              <ConversationDirectory />
             </section>
             <nav className="mt-auto grid gap-0.5 border-t border-line pt-2 max-md:col-span-2 max-md:grid-cols-[repeat(2,minmax(0,1fr))] max-md:pt-1" aria-label="管理">
               <NavLink className={navigationStyle} to="/runs">
@@ -140,8 +140,7 @@ function WorkspaceLayout() {
             {showRecent && <Dialog title="最近对话" onClose={() => setShowRecent(false)}
               footer={<Link to="/conversations" className="button button-secondary" onClick={() => setShowRecent(false)}>查看全部会话</Link>}>
               <div className="mobile-conversations">
-                {recent.map((chat) => <ConversationLink key={chat.id} chat={chat} onOpen={() => setShowRecent(false)} contained />)}
-                {!recent.length && <p>还没有对话。</p>}
+                <ConversationDirectory onOpen={() => setShowRecent(false)} />
               </div>
             </Dialog>}
           </aside>
@@ -210,6 +209,7 @@ export default function App() {
           <Route path="/subagents/new" element={<SubagentEditorPage />} />
           <Route path="/subagents/:definitionId/edit" element={<SubagentEditorPage />} />
           <Route path="/tools" element={<ToolsPage />} />
+          <Route path="/retrieval" element={<RetrievalPage />} />
           <Route path="/skills" element={<SkillsPage />} />
           <Route path="/tools/groups" element={<ToolGroupsPage />} />
           <Route path="/system" element={<SystemPage />} />

@@ -19,10 +19,10 @@ test('chat keeps a compact composer visible while reading older messages', async
   const box = (await composer.boundingBox())!;
   expect(box.y + box.height).toBeLessThanOrEqual(900);
   expect(box.y).toBeGreaterThan(400);
-  await expect(page.getByRole('checkbox', { name: '允许辅助模型' })).not.toBeVisible();
+  await expect(page.getByRole('checkbox', { name: '仅使用知识库' })).not.toBeVisible();
   await page.getByRole('button', { name: '更多设置与材料' }).click();
   await page.getByRole('button', { name: '本次任务设置' }).click();
-  await expect(page.getByRole('checkbox', { name: '允许辅助模型' })).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: '仅使用知识库' })).toBeVisible();
   await page.keyboard.press('Escape');
   await page.locator('.chat-scroll').evaluate((element) => { element.scrollTop = 0; });
   await expect(page.getByRole('button', { name: '回到最新消息' })).toBeVisible();

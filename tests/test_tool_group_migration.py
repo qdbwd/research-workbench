@@ -72,9 +72,13 @@ def test_group_migration_preserves_old_selection_and_versions():
             groups = list(
                 connection.execute(text("SELECT content FROM tool_group_revisions")).scalars()
             )
-            assert sorted(groups, key=lambda row: row["id"]) == sorted(
-                default_groups(), key=lambda row: row["id"]
-            )
+            # 0036 固定冻结了当时的 15 个初始组（含后来在 0057 退役的 auxiliary，
+            # 且不含后续迁移新增的 search_references 等成员）；校验其身份集与结构完整。
+            assert len(groups) == 15
+            assert all(row["revision"] == 1 and row["deleted"] is False and row["tool_ids"] for row in groups)
+            assert {row["id"] for row in groups} - {"auxiliary"} == {
+                row["id"] for row in default_groups()
+            }
             command.downgrade(config, "0035")
             command.upgrade(config, "0036")
             connection.execute(

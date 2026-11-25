@@ -6,7 +6,14 @@ import { ErrorBox } from '../../shared/ui/components';
 import { researchApi, type ResearchTask } from './api';
 import { nodeStatuses, type MapEvidence, type ResearchMap, type ResearchNode } from './mapApi';
 
-export function ResearchNodeEditor({ task, map, node, onSaved, onClose, onConflict, remove = false }: {
+export type ResearchNodeDraft = {
+  values: Record<string, FormDataEntryValue>;
+  evidenceIds: string[];
+  binding: { revision: string; control: number };
+};
+
+export function ResearchNodeEditor({ task, map, node, onSaved, onClose, onConflict, remove = false,
+  inline = false, draft, onDraft }: {
   task: ResearchTask;
   map: ResearchMap;
   node: ResearchNode | null;
@@ -14,13 +21,17 @@ export function ResearchNodeEditor({ task, map, node, onSaved, onClose, onConfli
   onClose: () => void;
   onConflict: () => void;
   remove?: boolean;
+  inline?: boolean;
+  draft?: ResearchNodeDraft;
+  onDraft?: (draft: ResearchNodeDraft) => void;
 }) {
   const formId = useId();
+  const formRef = useRef<HTMLFormElement>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [binding] = useState({ revision: map.revision_id, control: task.control_version });
+  const [binding] = useState(draft?.binding ?? { revision: map.revision_id, control: task.control_version });
   const [offset, setOffset] = useState(0);
-  const [evidenceIds, setEvidenceIds] = useState(node?.evidence_ids ?? []);
+  const [evidenceIds, setEvidenceIds] = useState(draft?.evidenceIds ?? node?.evidence_ids ?? []);
   const pending = useRef<{ signature: string; key: string } | null>(null);
   const base = researchApi(task.id) + '/map';
   const catalog = useResource<{ items: MapEvidence[]; next_offset: number | null }>(
@@ -28,9 +39,19 @@ export function ResearchNodeEditor({ task, map, node, onSaved, onClose, onConfli
   );
   const evidence = new Map((node?.evidence ?? []).map(item => [item.id, item]));
   for (const item of catalog.data?.items ?? []) evidence.set(item.id, item);
+  const field = (name: string, initial?: string | null) => String(draft?.values[name] ?? initial ?? '');
+  const stale = binding.revision !== map.revision_id || binding.control !== task.control_version;
+  const title = remove ? '移除研究主题' : node ? '编辑研究主题' : '新增研究主题';
+
+  function remember(ids: string[]) {
+    if (onDraft && formRef.current) onDraft({
+      values: Object.fromEntries(new FormData(formRef.current)),
+      evidenceIds: ids, binding,
+    });
+  }
 
   async function save(form: HTMLFormElement) {
-    if (busy) return;
+    if (busy || (inline && stale)) return;
     const values = new FormData(form);
     const read = (name: string) => String(values.get(name) ?? '').trim();
     const parentId = read('parent_id') || null;
@@ -65,28 +86,31 @@ export function ResearchNodeEditor({ task, map, node, onSaved, onClose, onConfli
     }
   }
 
-  return <Dialog title={remove ? '移除研究主题' : node ? '编辑研究主题' : '新增研究主题'}
-    busy={busy} onClose={onClose} footer={<>
-      <Button type="button" className="button-secondary" disabled={busy} onClick={onClose}>取消</Button>
-      <Button type="submit" disabled={busy} form={formId} className={remove ? 'bg-danger text-white' : ''}>
+  const actions = <>
+      <Button type="button" className="button-secondary" disabled={busy} onClick={onClose}>
+        {inline ? (stale ? '载入最新内容' : '重置表单') : '取消'}
+      </Button>
+      <Button type="submit" disabled={busy || (inline && (stale || !draft))} form={formId} className={remove ? 'bg-danger text-white' : ''}>
         {remove ? '确认移除' : '保存主题'}
       </Button>
-    </>}>
-    <form id={formId} className="grid gap-4" onSubmit={event => {
+    </>;
+  const form = <form ref={formRef} id={formId} aria-label={inline ? title : undefined}
+    className="grid min-w-0 gap-3 [&_label]:m-0"
+    onChange={() => remember(evidenceIds)} onSubmit={event => {
       event.preventDefault();
       void save(event.currentTarget);
     }}>
       {remove && <p>将《{node?.question}》从当前地图移除。原版本可以继续查看。</p>}
       {!remove && <>
         <label className="grid gap-1 text-sm font-semibold">具体问题
-          <input name="question" defaultValue={node?.question} required minLength={3} maxLength={300} autoFocus />
+          <input name="question" defaultValue={field('question', node?.question)} required minLength={3} maxLength={300} autoFocus={!inline} />
         </label>
         <label className="grid gap-1 text-sm font-semibold">解决标准
-          <textarea name="criteria" defaultValue={node?.criteria} required maxLength={1200} rows={2} />
+          <textarea name="criteria" defaultValue={field('criteria', node?.criteria)} required maxLength={1200} rows={2} />
         </label>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-2 gap-3 max-[420px]:grid-cols-1">
           <label className="grid gap-1 text-sm font-semibold">上级主题
-            <select name="parent_id" defaultValue={node?.parent_id ?? ''}>
+            <select name="parent_id" defaultValue={field('parent_id', node?.parent_id)}>
               <option value="">顶层主题</option>
               {map.nodes.filter(item => item.id !== node?.id).map(item => (
                 <option key={item.id} value={item.id}>{item.question}</option>
@@ -94,13 +118,13 @@ export function ResearchNodeEditor({ task, map, node, onSaved, onClose, onConfli
             </select>
           </label>
           <label className="grid gap-1 text-sm font-semibold">状态
-            <select name="status" defaultValue={node?.status ?? 'open'}>
+            <select name="status" defaultValue={field('status', node?.status ?? 'open')}>
               {Object.entries(nodeStatuses).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
             </select>
           </label>
         </div>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" name="required" defaultChecked={node?.required ?? true} />
+        <label className="flex flex-row items-center gap-2 text-sm">
+          <input type="checkbox" name="required" defaultChecked={draft ? Boolean(draft.values.required) : node?.required ?? true} />
           是上级主题必须解决的依赖
         </label>
         {[
@@ -108,16 +132,19 @@ export function ResearchNodeEditor({ task, map, node, onSaved, onClose, onConfli
           { name: 'assessment', label: '判断理由', initial: node?.reason, maxLength: 1200 },
           { name: 'details', label: '详情记录', initial: node?.details, maxLength: 4000 },
         ].map(({ name, label, initial, maxLength }) => <label key={name} className="grid gap-1 text-sm font-semibold">
-          {label}<textarea name={name} defaultValue={initial} maxLength={maxLength} rows={2} />
+          {label}<textarea name={name} defaultValue={field(name, initial)} maxLength={maxLength} rows={2} />
         </label>)}
         <fieldset className="grid max-h-48 gap-2 overflow-auto rounded-lg border border-line p-2.5 text-sm">
           <legend className="font-semibold">已读证据 · 已选 {evidenceIds.length} 项</legend>
-          {[...evidence.values()].map(item => <label key={item.id} className="flex items-start gap-2">
+          {[...evidence.values()].map(item => <label key={item.id} className="flex flex-row items-start gap-2">
             <input type="checkbox" checked={evidenceIds.includes(item.id)} disabled={
               !evidenceIds.includes(item.id) && (!item.available || evidenceIds.length >= 12)
             } onChange={event => {
               const checked = event.target.checked;
-              setEvidenceIds(current => checked ? [...current, item.id] : current.filter(id => id !== item.id));
+              event.stopPropagation();
+              const next = checked ? [...evidenceIds, item.id] : evidenceIds.filter(id => id !== item.id);
+              setEvidenceIds(next);
+              remember(next);
             }} />
             <span className="min-w-0 [overflow-wrap:anywhere]">
               {item.title ?? '固定来源'}{item.available ? ` · ${item.quote}` : ' · 已无法读取'}
@@ -133,9 +160,16 @@ export function ResearchNodeEditor({ task, map, node, onSaved, onClose, onConfli
         </fieldset>
       </>}
       <label className="grid gap-1 text-sm font-semibold">变更理由
-        <textarea name="change_reason" required maxLength={1000} rows={2} />
+        <textarea name="change_reason" defaultValue={field('change_reason')} required maxLength={1000} rows={2} />
       </label>
       <ErrorBox message={error} />
-    </form>
-  </Dialog>;
+      {inline && <>
+        {stale && <p className="m-0 text-sm text-control" role="status">
+          研究进展已变化。当前输入已保留，载入最新内容会重置表单。
+        </p>}
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line pt-3">{actions}</div>
+      </>}
+    </form>;
+
+  return inline ? form : <Dialog title={title} busy={busy} onClose={onClose} footer={actions}>{form}</Dialog>;
 }

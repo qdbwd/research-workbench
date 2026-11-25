@@ -67,14 +67,12 @@ def effective_tools(
     request: Request,
     role_id: str | None = None,
     knowledge_only: bool = False,
-    auxiliary: bool = False,
     delegation: bool = True,
 ):
     return effective_catalog(
         svc(request).sessions,
         role_id=role_id,
         knowledge_only=knowledge_only,
-        auxiliary=auxiliary,
         delegation=delegation,
         workspace_enabled=svc(request).settings.workspace_root is not None,
     )

@@ -1,0 +1,82 @@
+# 可选本地 GPU 嵌入与重排服务（HuggingFace TEI）。
+# 默认不随 compose.yaml / compose.dev.yaml 启动，避免日常开发占用笔记本显存。
+#
+# 按需启动本地 GPU 嵌入服务示例：
+#   docker compose -f compose.yaml -f compose.dev.yaml -f compose.embedding.yaml --profile embedding up -d tei-embedding
+#
+# 对应 .env 示例配置：
+#   EMBEDDING_PROVIDER=tei
+#   EMBEDDING_BASE_URL=http://tei-embedding:80
+#   EMBEDDING_MODEL=microsoft/harrier-oss-v1-270m
+#   EMBEDDING_DIMENSIONS=640
+#   EMBEDDING_QUERY_PREFIX="Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: "
+#   EMBEDDING_NORMALIZE=true
+
+services:
+  tei-embedding:
+    profiles: [embedding]
+    image: ${TEI_EMBEDDING_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:120-1.9}
+    command:
+      - --model-id
+      - ${TEI_EMBEDDING_MODEL:-microsoft/harrier-oss-v1-270m}
+      - --revision
+      - ${TEI_EMBEDDING_REVISION:-31de22b673913c7d658c0f03f792d77c2dcf8ebd}
+      - --dtype
+      - ${TEI_EMBEDDING_DTYPE:-float32}
+      - --pooling
+      - ${TEI_EMBEDDING_POOLING:-last-token}
+      - --max-client-batch-size
+      - "16"
+      - --max-batch-tokens
+      - "2048"
+    environment:
+      HF_HUB_CACHE: /data
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://huggingface.co}
+    volumes:
+      # 持久化卷缓存权重，避免重建容器重复下载或塞满容器可写层。
+      - tei-model-cache:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:80/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  tei-reranker:
+    profiles: [rerank]
+    image: ${TEI_RERANKER_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:120-1.9}
+    command:
+      - --model-id
+      - ${TEI_RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}
+      - --dtype
+      - ${TEI_RERANKER_DTYPE:-float16}
+      - --max-client-batch-size
+      - "16"
+    environment:
+      HF_HUB_CACHE: /data
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://huggingface.co}
+    volumes:
+      - tei-model-cache:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:80/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+volumes:
+  tei-model-cache:

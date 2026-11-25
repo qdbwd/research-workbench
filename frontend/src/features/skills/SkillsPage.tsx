@@ -9,6 +9,7 @@ import { HelpHint } from '../../shared/ui/Workbench';
 import { AgentSettingsTabs } from '../tools/AgentSettingsTabs';
 import { CapabilityDetails } from '../tools/CapabilityDetails';
 import { SkillImportDialog } from './SkillImportDialog';
+import { SkillMethodProposals } from './SkillMethodProposals';
 import type { SkillEntry } from './types';
 
 export function SkillsPage() {
@@ -16,6 +17,7 @@ export function SkillsPage() {
   const [local, setLocal] = useState(0);
   const catalog = useResource<SkillEntry[]>('/api/skills', `${version}:${local}`);
   const [query, setQuery] = useState('');
+  const [proposalsOpen, setProposalsOpen] = useState(false);
   const [editor, setEditor] = useState<{ skill: SkillEntry | null } | null>(null);
   const [detail, setDetail] = useState<SkillEntry | null>(null);
   const [confirm, setConfirm] = useState<{
@@ -115,17 +117,21 @@ export function SkillsPage() {
           />
           <Search size={17} className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2" />
         </div>
-        <Button
-          disabled={busy}
-          onClick={() => {
-            setEditor({ skill: null });
-            setError('');
-          }}
-        >
-          <Upload size={16} />
-          导入技能
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button className="button-secondary" onClick={() => setProposalsOpen(true)}>方法改进提案</Button>
+          <Button
+            disabled={busy}
+            onClick={() => {
+              setEditor({ skill: null });
+              setError('');
+            }}
+          >
+            <Upload size={16} />
+            导入技能
+          </Button>
+        </div>
       </div>
+      {proposalsOpen && <SkillMethodProposals onClose={() => setProposalsOpen(false)} onPublished={reload} />}
       {!confirm && <ErrorBox message={error} />}
       <ErrorBox message={catalog.error} />
       {(busy || notice) && (

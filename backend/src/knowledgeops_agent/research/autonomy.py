@@ -22,9 +22,10 @@ _EXHAUSTED_REASON = "已达到累计运行额度，请核对已保存的进展�
 SCOPE_KEYS = ("goal", "scope", "constraints", "acceptance_criteria")
 
 
-def latest(session, task_id):
-    return session.scalar(select(ResearchPermit).where(ResearchPermit.task_id == task_id)
-                          .order_by(ResearchPermit.created_at.desc(), ResearchPermit.id.desc()).limit(1))
+def latest(session, task_id, branch_id):
+    return session.scalar(select(ResearchPermit).where(
+        ResearchPermit.task_id == task_id, ResearchPermit.branch_id == branch_id,
+    ).order_by(ResearchPermit.created_at.desc(), ResearchPermit.id.desc()).limit(1))
 
 
 def view(permit):
@@ -83,7 +84,7 @@ def time_exhausted(permit, root, active_ms):
 
 
 def attach(session, task, revision):
-    permit = latest(session, task.id)
+    permit = latest(session, task.id, revision.branch_id)
     if permit and permit.status == "active" and _matches_scope(session, permit, revision):
         return permit.id
     return None
@@ -138,26 +139,33 @@ def reserve_tool(session, jobs, root, is_search):
     }
 
 
-def invalidate(session, task_id, reason):
-    permit = latest(session, task_id)
-    if permit and permit.status in {"active", "paused", "recovery_required"}:
+def invalidate(session, task_id, reason, *, branch_id=None):
+    query = select(ResearchPermit).where(
+        ResearchPermit.task_id == task_id, ResearchPermit.status.in_(("active", "paused", "recovery_required")),
+    )
+    if branch_id is not None:
+        query = query.where(ResearchPermit.branch_id == branch_id)
+    for permit in session.scalars(query):
         permit.status, permit.reason = "revoked", reason
 
 
 def apply_control(session, task, action):
-    permit = latest(session, task.id)
-    if not permit:
-        return
     if action == "cancel":
         invalidate(session, task.id, "研发任务已结束。")
-    elif action == "pause" and permit.status == "active":
-        permit.status, permit.reason = "paused", "用户已暂停研发。"
-    elif action == "resume" and permit.status == "paused":
-        if _available(permit):
-            permit.status, permit.reason = "active", None
-        else:
-            permit.status, permit.reason = "exhausted", _EXHAUSTED_REASON
-    return permit
+        return {}
+    relevant = ("active",) if action == "pause" else ("paused", "exhausted")
+    permits = session.scalars(select(ResearchPermit).where(
+        ResearchPermit.task_id == task.id, ResearchPermit.status.in_(relevant),
+    )).all()
+    for permit in permits:
+        if action == "pause":
+            permit.status, permit.reason = "paused", "用户已暂停研发。"
+        elif permit.status == "paused":
+            if _available(permit):
+                permit.status, permit.reason = "active", None
+            else:
+                permit.status, permit.reason = "exhausted", _EXHAUSTED_REASON
+    return {permit.id: permit for permit in permits}
 
 
 def recover(session):
@@ -200,7 +208,7 @@ def _schedule(session, jobs, task, permit, action, request_key):
         input_data={
             **runtime_inputs(session, conversation),
             "research": binding, "publication_mode": "preview", "knowledge_only": not permit.budgets["searches"],
-            "delegation": True, "auxiliary": False, "source_ids": [],
+            "delegation": True, "source_ids": [],
         },
         budgets=permit.budgets.copy(),
         created_at=jobs.now(),
@@ -232,7 +240,7 @@ def control(sessions, jobs, task_id, body):
         task = session.get(ResearchTask, task_id)
         if task is None or task.deleted_at is not None:
             raise KeyError("没有找到该研发任务。")
-        branch = session.get(ResearchBranch, task.main_branch_id)
+        branch = session.get(ResearchBranch, task.writing_branch_id)
         if (task.control_version, branch.head_revision_id) != (body.expected_control_version, body.expected_revision_id):
             raise ResearchConflict("autonomy_conflict", "任务或简报已变化，请刷新后确认。", task=task, branch=branch)
         conversation = session.get(Conversation, task.home_conversation_id) if task.home_conversation_id else None
@@ -240,7 +248,7 @@ def control(sessions, jobs, task_id, body):
                 or conversation.deletion_state != "active"):
             raise ResearchConflict("task_unavailable", "请从有可用会话的进行中研发任务启动自主推进。")
         head = session.get(ResearchRevision, branch.head_revision_id)
-        permit = latest(session, task.id)
+        permit = latest(session, task.id, branch.id)
         if body.action == "grant":
             if permit and permit.status in {"active", "paused", "recovery_required"}:
                 raise ResearchConflict("permit_exists", "原自主授权仍有效或待恢复，请先处理。")
@@ -264,14 +272,27 @@ def control(sessions, jobs, task_id, body):
                 raise ResearchConflict("research_busy", "请先处理会话中待回复、审批或正在执行的任务。")
             permit.status, permit.reason = "active", None
             run = session.get(Run, permit.latest_run_id) if permit.latest_run_id else None
+            from knowledgeops_agent.harness.models.validation import (
+                OUTPUT_LIMIT_FAILURE,
+                PROTOCOL_FAILURE,
+            )
+
+            # 因模型协议泄漏或输出上限失败的检查点末尾留有无效 AIMessage，直接 resume 会立刻重放报错；
+            # 此类失败改为在同一 Permit 剩余额度下新排一条干净续跑，保留已有修订与研究进展。
+            poisoned_output = (
+                run is not None
+                and run.status == "failed"
+                and run.stop_reason in {PROTOCOL_FAILURE, OUTPUT_LIMIT_FAILURE}
+            )
             if (run and run.lifecycle_state == "active" and run.status in {"interrupted", "failed"}
+                    and not poisoned_output
                     and run.input_data.get("research", {}).get("research_revision_id") == head.id):
                 jobs.resume(run.id, session=session)
             else:
                 _schedule(session, jobs, task, permit, head.state["brief"].get("next_action") or "核对已有进展后继续。",
                           f"research:{permit.id}:recover:{fingerprint(body.operation_id)}")
         head = session.get(ResearchRevision, branch.head_revision_id)
-        return _save_receipt(session, key, request_hash, {"task": task_view(task, head), "permit": view(permit)})
+        return _save_receipt(session, key, request_hash, {"task": task_view(task, head, branch), "permit": view(permit)})
 
 
 def finished(session, jobs, root):
@@ -292,6 +313,9 @@ def finished(session, jobs, root):
     intent = root.input_data.get("research_next")
     task = session.get(ResearchTask, permit.task_id)
     branch = session.get(ResearchBranch, permit.branch_id)
+    if branch.id != task.writing_branch_id:
+        permit.status, permit.reason = "recovery_required", "会话已改用其他写入分支，继续原分支需要明确确认。"
+        return
     if not intent or task.status != "open" or not task.home_conversation_id:
         return
     if (intent["revision_id"] != branch.head_revision_id

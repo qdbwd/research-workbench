@@ -5,7 +5,6 @@ export type DraftData = {
   mode: 'ask' | 'preview' | 'direct';
   knowledgeOnly: boolean;
   delegation: boolean;
-  auxiliary: boolean;
   reasoning: string;
   permission: string;
   researchMode?: true;
@@ -13,18 +12,18 @@ export type DraftData = {
 };
 
 export const emptyDraft = (): DraftData => ({ content: '', selected: [], mode: 'ask', knowledgeOnly: false,
-  delegation: true, auxiliary: false, reasoning: 'default', permission: 'ask' });
+  delegation: true, reasoning: 'default', permission: 'ask' });
 
 export type MessageBody = {
   content: string; source_ids: string[]; publication_mode: DraftData['mode']; knowledge_only: boolean;
-  delegation: boolean; auxiliary: boolean; reasoning_effort: string; request_key: string;
+  delegation: boolean; reasoning_effort: string; request_key: string;
 };
 export type PendingSubmission = {
   id: string;
   intent: 'send' | 'materials' | 'research';
   revision: number;
   data: DraftData;
-  creation: { title: string; request_key: string; trial_case?: string };
+  creation: { title: string; request_key: string; trial_case?: string; project_id?: string };
   body: MessageBody;
   needsSettings: boolean;
   stage: 'creation' | 'settings' | 'message';
@@ -33,7 +32,7 @@ export type PendingSubmission = {
   error: string;
 };
 export type DraftRecord = {
-  key: string; namespace: string; kind: 'draft'; scope: string; conversationId?: string;
+  key: string; namespace: string; kind: 'draft'; scope: string; conversationId?: string; projectId?: string;
   revision: number; change: number; data: DraftData;
   conflicts: { writer: string; data: DraftData; updatedAt: number }[];
   pending: PendingSubmission | null;
@@ -42,7 +41,7 @@ export type DraftRecord = {
 };
 type Pointer = { key: string; namespace: string; kind: 'pointer'; scope: string };
 type Row = DraftRecord | Pointer;
-export type DraftAddress = { conversationId?: string; newId?: string; legacy?: Partial<DraftData> };
+export type DraftAddress = { conversationId?: string; newId?: string; projectId?: string; legacy?: Partial<DraftData> };
 export const sameDraft = (a: DraftData, b: DraftData) => JSON.stringify(a) === JSON.stringify(b);
 
 /** 旧 sessionStorage 是迁入素材，不可信字段不能变成执行选项。 */
@@ -52,7 +51,7 @@ export function normalizeDraft(raw: unknown): DraftData {
   if (typeof value.content === 'string') result.content = value.content;
   if (Array.isArray(value.selected)) result.selected = value.selected.filter((id): id is string => typeof id === 'string');
   if (['ask', 'preview', 'direct'].includes(String(value.mode))) result.mode = value.mode as DraftData['mode'];
-  for (const field of ['knowledgeOnly', 'delegation', 'auxiliary'] as const)
+  for (const field of ['knowledgeOnly', 'delegation'] as const)
     if (typeof value[field] === 'boolean') result[field] = value[field];
   if (typeof value.reasoning === 'string' && value.reasoning.length <= 40) result.reasoning = value.reasoning;
   if (['ask', 'auto_review'].includes(String(value.permission))) result.permission = value.permission as string;
@@ -141,7 +140,8 @@ export class DraftStore {
       }
       if (existing?.kind === 'draft') return existing;
       const row: DraftRecord = { key: this.key(scope), namespace: this.namespace, kind: 'draft', scope,
-        conversationId: address.conversationId, revision: 0, change: 0, data: normalizeDraft(address.legacy),
+        conversationId: address.conversationId, projectId: address.projectId,
+        revision: 0, change: 0, data: normalizeDraft(address.legacy),
         conflicts: [], pending: null, deleted: false, updatedAt: Date.now() };
       rows.put({ key: this.pointer(name), namespace: this.namespace, kind: 'pointer', scope } satisfies Pointer);
       rows.put(row);
@@ -195,9 +195,10 @@ export class DraftStore {
         creation: {
           title: intent !== 'materials' ? data.content.trim().slice(0, 30) : '新对话', request_key: crypto.randomUUID(),
           ...(intent !== 'materials' && data.trialCase ? { trial_case: data.trialCase } : {}),
+          ...(row.projectId ? { project_id: row.projectId } : {}),
         },
         body: { content: data.content, source_ids: data.selected, publication_mode: data.mode,
-          knowledge_only: data.knowledgeOnly, delegation: data.delegation, auxiliary: data.auxiliary,
+          knowledge_only: data.knowledgeOnly, delegation: data.delegation,
           reasoning_effort: data.reasoning, request_key: crypto.randomUUID() },
         needsSettings: !row.conversationId, stage: row.conversationId ? 'message' : 'creation',
         state: 'unknown', uncertain: false, error: '' };

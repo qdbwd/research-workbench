@@ -1,12 +1,10 @@
 import { Button } from '../../shared/ui/Button';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { FileText, Square, Activity, ArrowDown, FlaskConical, MessageSquare, X } from 'lucide-react';
+import { FileText, ArrowDown, FlaskConical, MessageSquare, X } from 'lucide-react';
 import {
-  api,
   messageOf,
   send,
-  terminal,
   usePagedResource,
   useResource,
 } from '../../shared/api/api';
@@ -14,9 +12,7 @@ import type { CollectionPage } from '../../shared/api/api';
 import { Badge, Empty, ErrorBox, Loading, Markdown } from '../../shared/ui/components';
 import type {
   ChangeSet,
-  Guidance,
   Run,
-  RunEvent,
   Source,
 } from '../../shared/types/types';
 import { useWorkspace } from '../../shared/state/workspace';
@@ -26,6 +22,7 @@ import { ComposerControls } from './ComposerControls';
 import { useComposerDraft } from './useComposerDraft';
 import { ComposerRecovery } from './ComposerRecovery';
 import type { DraftData } from './drafts/store';
+import { LiveRunPanel } from '../runs/LiveRunPanel';
 import { RunPauseControl } from '../runs/RunPauseControl';
 import { RunQuestions } from '../runs/RunQuestions';
 import { RunChildren } from '../runs/RunChildren';
@@ -36,127 +33,10 @@ import type { EvidenceTab } from './ChatEvidencePane';
 import { ResearchControls } from '../research/ResearchControls';
 import { ResearchChatPane } from '../research/ResearchChatPane';
 import { ResearchTrialStarter, type TrialCatalog, type TrialPrompt } from './ResearchTrialStarter';
-import { researchStatuses } from '../research/api';
+import { isNewerResearchTask, researchStatuses } from '../research/api';
 import type { ResearchTask } from '../research/api';
 
 type ConversationSettings = { permission_mode: string; reasoning_effort: string; revision: number };
-
-/** 一个任务的流式观察，不承担运行生命周期；组件卸载只关闭连接，不取消 Agent。 */
-function LiveRun({ initial, onChanged }: { initial: Run; onChanged: () => void }) {
-  const [run, setRun] = useState(initial);
-  const [activity, setActivity] = useState(
-    initial.status === 'waiting_children' ? '等待子任务结果' : '等待执行',
-  );
-  const [partial, setPartial] = useState('');
-  const [connection, setConnection] = useState('');
-  const [error, setError] = useState('');
-  const [guidance, setGuidance] = useState<Guidance[]>([]);
-  useEffect(() => {
-    const source = new EventSource(`/api/runs/${initial.id}/events`);
-    source.addEventListener('progress', (message: MessageEvent) => {
-      const event: RunEvent = JSON.parse(message.data);
-      setConnection('');
-      if (event.kind === 'model_started') {
-        setActivity('正在阅读与决策');
-        setPartial('');
-      }
-      if (event.kind === 'model_delta')
-        setPartial((value) => value + String(event.data.text ?? ''));
-      if (event.kind === 'tool_started') setActivity(`正在执行 · ${event.data.name}`);
-      if (event.kind === 'guidance_pending') setActivity('已收到引导，等待安全点处理');
-      if (event.kind === 'guidance_applied') {
-        setActivity('已应用新指令');
-        setPartial('');
-      }
-      if (event.kind === 'pause_requested') setActivity('正在收尾暂停，保留当前响应');
-      if (event.kind === 'waiting_children') setActivity('等待子任务结果');
-      if (event.kind === 'children_ready') setActivity('子结果已就绪，准备继续');
-      if (event.kind === 'guidance_ready') setActivity('已收到新要求，准备继续');
-      if (
-        [
-          'finished',
-          'paused',
-          'waiting_input',
-          'question_pending',
-          'waiting_children',
-          'child_started',
-          'child_finished',
-          'child_updated',
-          'children_ready',
-          'guidance_ready',
-        ].includes(event.kind)
-      )
-        onChanged();
-    });
-    source.addEventListener('closed', () => {
-      source.close();
-      onChanged();
-    });
-    source.onerror = () => setConnection('连接暂时断开，正在重连；后台任务仍可继续。');
-    const timer = window.setInterval(() => {
-      Promise.all([
-        api<Run>(`/api/runs/${initial.id}`),
-        api<Guidance[]>(`/api/runs/${initial.id}/guidance`),
-      ])
-        .then(([value, deliveries]) => {
-          setRun(value);
-          setGuidance(deliveries);
-          if (terminal(value.status) || ['paused', 'waiting_input'].includes(value.status)) {
-            source.close();
-            onChanged();
-          }
-        })
-        .catch((error: Error) => setError(error.message));
-    }, 2000);
-    return () => {
-      source.close();
-      window.clearInterval(timer);
-    };
-  }, [initial.id, onChanged]);
-  return (
-    <div className="live-run card mb-5.5 rounded-[11px] border border-[#c9dac5] bg-white px-5 py-4 text-[13px] max-md:p-4.5 [&>p]:mt-2.5 [&>p]:mb-0">
-      <div className="row flex items-center gap-3 between justify-between">
-        <span className="row flex items-center gap-3">
-          <Activity size={17} />
-          <strong>{activity}</strong>
-          <Badge status={run.status} />
-        </span>
-        <RunPauseControl run={run} onChanged={onChanged} />
-        <Button
-          className="quiet button-quiet small text-xs"
-          disabled={run.cancel_requested}
-          onClick={async () => {
-            try {
-              setRun(await send<Run>(`/api/runs/${run.id}/cancel`));
-            } catch (error) {
-              setError(messageOf(error));
-            }
-          }}
-        >
-          <Square size={12} />
-          {run.cancel_requested ? '正在取消…' : '取消任务'}
-        </Button>
-      </div>
-      <p className="muted text-muted small text-xs">
-        {run.tool_calls} 次工具尝试 · <Link to={`/runs/${run.id}`}>查看运行详情</Link>
-      </p>
-      {partial && (
-        <div className="stream-preview mt-3.5 max-h-[180px] overflow-auto leading-[1.8] whitespace-pre-wrap text-[#6c7a69]">
-          {partial}
-        </div>
-      )}
-      {connection && <p className="muted text-muted small text-xs">{connection}</p>}
-      {guidance.map((item) => (
-        <p key={item.id} className="muted text-muted small text-xs">
-          引导消息 {item.user_sequence} ·{' '}
-          {{ pending: '等待应用', applied: '已应用', stale: '未应用，目标已变化' }[item.status]}
-          {item.result.reason || item.result.authorization_error}
-        </p>
-      ))}
-      <ErrorBox message={error} />
-    </div>
-  );
-}
 
 export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled?: boolean } = {}) {
   const { conversationId } = useParams();
@@ -205,7 +85,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
   const [controlledResearch, setControlledResearch] = useState<ResearchTask | null>(null);
   const loadedResearch = conversationId && research.data?.home_conversation_id === conversationId ? research.data : null;
   const researchTask = loadedResearch && controlledResearch?.id === loadedResearch.id
-    && controlledResearch.control_version > loadedResearch.control_version ? controlledResearch : loadedResearch;
+    && isNewerResearchTask(controlledResearch, loadedResearch) ? controlledResearch : loadedResearch;
   const hasResearchTab = Boolean(researchTask && researchTab?.taskId === researchTask.id);
   const showResearch = hasResearchTab && researchTab?.selected;
   function selectResearchTab(selected: boolean) {
@@ -218,9 +98,11 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
     requestAnimationFrame(() => strip.current?.focus({ preventScroll: true }));
   }
   const researchBound = Boolean(researchTask && !['closed', 'completed'].includes(researchTask.status));
-  const composer = useComposerDraft(conversationId, searchParams.get('draft') ?? undefined);
+  const draftProject = searchParams.get('project');
+  const composer = useComposerDraft(conversationId, searchParams.get('draft') ?? undefined,
+    !conversationId && draftProject && /^[0-9a-f-]{36}$/.test(draftProject) ? draftProject : undefined);
   const { state: composerState, session: composerSession } = composer;
-  const { content, selected, mode, knowledgeOnly, delegation, auxiliary, reasoning, permission, researchMode, trialCase } = composerState.data;
+  const { content, selected, mode, knowledgeOnly, delegation, reasoning, permission, researchMode, trialCase } = composerState.data;
   const trial = useResource<TrialCatalog | null>(conversationId
     ? `/api/conversations/${encodeURIComponent(conversationId)}/trial` : '/api/research-trial');
   const trialCatalog = trial.data?.prompts?.length ? trial.data : null;
@@ -248,7 +130,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
     messageInput.current?.focus();
   }
   function researchChanged(next: ResearchTask) {
-    setControlledResearch(next);
+    setControlledResearch((previous) => previous?.id === next.id && isNewerResearchTask(previous, next) ? previous : next);
     refresh();
   }
   const setSelected = (value: string[]) => edit('selected', value);
@@ -449,6 +331,9 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
     );
   const hasQueued = runs.data.some((run) => run.status === 'queued');
   const latestExecution = runs.data.find((run) => run.kind !== 'research_start');
+  const activeResearch = guideTarget?.input?.research;
+  const workingElsewhere = researchTask && activeResearch?.task_id === researchTask.id
+    && activeResearch.branch_id !== (researchTask.write_branch_id ?? researchTask.main_branch_id);
   const pending =
     drafts.data?.filter((draft) => ['draft', 'approved'].includes(draft.status)) ?? [];
   return (
@@ -537,7 +422,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
             ))}
             {messages.newer && <div className="my-4 text-center"><Button className="button-quiet text-xs" disabled={messages.loading}
               onClick={() => void messages.loadNewer()}>加载更新的消息</Button></div>}
-            {active && <LiveRun key={active.id} initial={active} onChanged={onChanged} />}
+            {active && <LiveRunPanel key={active.id} initial={active} onChanged={onChanged} />}
             {runs.data
               .filter((run) => ['paused', 'waiting_input'].includes(run.status))
               .map((run) => (
@@ -702,7 +587,12 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
             <span className="rounded-md bg-white px-2 py-1 text-xs text-brand" role="status">
               {researchStatuses[researchTask.status] ?? researchTask.status}
             </span>
-            <span className="text-xs text-control">写入主线</span>
+            <span className="text-xs text-control [overflow-wrap:anywhere]">
+              {researchTask.status === 'closed' ? '取消前写入' : '写入'} {researchTask.write_branch_name ?? 'main'}
+            </span>
+            {workingElsewhere && <span className="text-xs text-control [overflow-wrap:anywhere]">
+              存量运行 · {activeResearch?.branch_name ?? '原分支'}
+            </span>}
             <Button type="button" ref={strip} className="button-secondary text-xs" onClick={() => selectResearchTab(true)}>查看研发简报</Button>
             <ResearchControls key={researchTask.id} task={researchTask} onChanged={researchChanged} />
           </section>
@@ -774,8 +664,6 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
             setKnowledgeOnly={(value) => edit('knowledgeOnly', value)}
             delegation={delegation}
             setDelegation={(value) => edit('delegation', value)}
-            auxiliary={auxiliary}
-            setAuxiliary={(value) => edit('auxiliary', value)}
             materials={materials.data ?? []}
             selected={selected}
             setSelected={setSelected}
@@ -804,7 +692,14 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
     {hasResearchTab && researchTask && <div role="tabpanel" id={`${tabId}-research-panel`} aria-labelledby={`${tabId}-research`}
       className={`scrollbar-subtle min-h-0 min-w-0 flex-1 overflow-auto overscroll-contain ${showResearch ? '' : 'hidden'}`}
       inert={!showResearch || (narrow && Boolean(shownEvidence))}>
-      <ResearchChatPane key={researchTask.id} task={researchTask} onChanged={researchChanged} />
+      <ResearchChatPane
+        key={researchTask.id}
+        task={researchTask}
+        activeRun={active}
+        onRunChanged={onChanged}
+        onOpenChat={() => selectResearchTab(false)}
+        onChanged={researchChanged}
+      />
     </div>}
     {shownEvidence && currentEvidence && <ChatEvidencePane tabs={currentEvidence.tabs} active={shownEvidence} narrow={narrow}
       onActivate={(active) => setEvidenceView({ ...currentEvidence, active })} onClose={closeEvidence}

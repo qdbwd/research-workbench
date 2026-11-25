@@ -2,7 +2,7 @@
 
 字段契约参考 DeerFlow 5ecc1c2 managed_subagents/base.py，使用标准 Pydantic
 校验而不引入其存储抽象、模型选择或工具黑名单；本项目使用正向许可目录。
-角色定义不是发布授权，也不能扩大根任务的网络、辅助模型或预算选择。
+角色定义不是发布授权，也不能扩大根任务的网络或预算选择。
 """
 
 from __future__ import annotations

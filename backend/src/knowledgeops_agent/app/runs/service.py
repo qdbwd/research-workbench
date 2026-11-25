@@ -221,13 +221,15 @@ class RunService:
         }
 
     def create_conversation(self, title: str = "新对话", *, request_key: str | None = None,
-                            trial_case: str | None = None, sources=None) -> dict:
+                            trial_case: str | None = None, sources=None, project_id: str | None = None) -> dict:
         title = title.strip()[:300] or "新对话"
         if request_key is not None and not 1 <= len(request_key) <= 200:
             raise ValueError("invalid conversation creation key")
-        creation_hash = fingerprint([title, trial_case] if trial_case else title) if request_key else None
+        payload = [title, trial_case, project_id] if project_id else ([title, trial_case] if trial_case else title)
+        creation_hash = fingerprint(payload) if request_key else None
         with self.sessions.begin() as session:
             from knowledgeops_agent.app.runs.control import lock_control
+            from knowledgeops_agent.persistence.models import ConversationProject
 
             lock_control(session)
             if request_key:
@@ -238,7 +240,8 @@ class RunService:
                         raise ValueError("idempotency key belongs to a different creation request")
                     return {"id": prior.id, "title": prior.title}
             row = Conversation(title=title, creation_key=request_key,
-                               creation_fingerprint=creation_hash, trial_case=trial_case, created_at=self.now())
+                               creation_fingerprint=creation_hash, trial_case=trial_case, created_at=self.now(),
+                               project_id=project_id if project_id and session.get(ConversationProject, project_id) else None)
             session.add(row)
             session.flush()
             if trial_case:
@@ -273,7 +276,10 @@ class RunService:
                         request_fingerprint,
                     )
 
-                    inputs = {name: body[name] for name in ("publication_mode", "knowledge_only", "delegation", "auxiliary", "source_ids")}
+                    inputs = {
+                        "auxiliary": False,
+                        **{name: body[name] for name in ("publication_mode", "knowledge_only", "delegation", "source_ids")},
+                    }
                     if body.get("learning_task_id") is not None:
                         inputs["learning_task_id"] = body["learning_task_id"]
                     old_inputs = normalized_inputs(prior.input_data)
@@ -375,7 +381,6 @@ class RunService:
         publication_mode: Literal["ask", "preview", "direct"] = "ask",
         knowledge_only: bool = False,
         delegation: bool = True,
-        auxiliary: bool = False,
         reasoning: dict | None = None,
         inherit_reasoning: bool = False,
         expected_runtime_revision: int | None = None,
@@ -394,7 +399,6 @@ class RunService:
             "publication_mode": publication_mode,
             "knowledge_only": knowledge_only,
             "delegation": delegation,
-            "auxiliary": auxiliary,
             "source_ids": source_ids or [],
         }
         if learning_task_id is not None:
@@ -429,9 +433,9 @@ class RunService:
                     if prior.input_fingerprint != request_fingerprint(conversation_id, task, comparison, limits):
                         raise ValueError("idempotency key belongs to a different request")
                     return self._view(prior)
-                # 旧任务缺少辅助开关等价于关闭；仅规范化比较，不回写历史输入。
+                # 历史任务可能带有已下线的 auxiliary=False 字段；仅规范化比较，不回写历史输入。
                 prior_inputs = {"auxiliary": False, **prior.input_data}
-                comparison_inputs = dict(inputs)
+                comparison_inputs = {"auxiliary": False, **inputs}
                 prior_inputs.pop("runtime_settings", None)
                 prior_inputs.pop("trial_case", None)
                 prior_inputs.pop("research", None)

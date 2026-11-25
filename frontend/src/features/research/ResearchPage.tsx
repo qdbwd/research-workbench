@@ -8,9 +8,10 @@ import { Empty, ErrorBox, Loading } from '../../shared/ui/components';
 import { BackLink, WorkbenchHeading, WorkbenchPanel } from '../../shared/ui/Workbench';
 import { ResearchBrief } from './ResearchBrief';
 import { ResearchBriefEditor } from './ResearchBriefEditor';
+import { ResearchCommits } from './ResearchCommits';
 import { ResearchControls } from './ResearchControls';
 import { ResearchFocus } from './ResearchFocus';
-import { researchApi, researchPath, researchPhases, researchStatuses, revisionSuffix } from './api';
+import { isNewerResearchTask, researchApi, researchPath, researchPhases, researchStatuses, revisionSuffix } from './api';
 import type { ResearchRevision, ResearchSummary, ResearchTask, RevisionSummary } from './api';
 
 const formatDate = (date: string) =>
@@ -136,9 +137,9 @@ export function RevisionHistory({ task, endpoint }: { task: ResearchTask; endpoi
     before === null ? endpoint : `${endpoint}?before=${before}`,
     task.head.id,
   );
-  const history = researchPath(task.id) + revisionSuffix(task.main_branch_id);
+  const history = researchPath(task.id) + revisionSuffix(task.write_branch_id ?? task.main_branch_id);
   return (
-    <WorkbenchPanel title="版本历史" description="打开固定修订，查看当时保存的简报。">
+    <WorkbenchPanel title="自动修订" description="打开固定修订，查看当时保存的简报。">
       <ErrorBox message={revisions.error} />
       {revisions.loading && !revisions.data && <Loading />}
       {revisions.data && (
@@ -195,15 +196,12 @@ function CurrentResearch({ loaded, onRefresh }: { loaded: ResearchTask; onRefres
   const [editing, setEditing] = useState(false);
   const [adjusting, setAdjusting] = useState(false);
   const [confirmation, setConfirmation] = useState(false);
+  const [showCommits, setShowCommits] = useState(false);
   // 丢失旧响应后重放可能返回较早的回执；当前页仍以已知的最新修订为准。
-  function isNewer(candidate: ResearchTask, current: ResearchTask) {
-    return candidate.control_version > current.control_version ||
-      (candidate.control_version === current.control_version && candidate.head.number > current.head.number);
-  }
-  const task = observed && isNewer(observed, loaded) ? observed : loaded;
-  const endpoint = researchApi(task.id) + revisionSuffix(task.main_branch_id);
+  const task = observed && isNewerResearchTask(observed, loaded) ? observed : loaded;
+  const endpoint = researchApi(task.id) + revisionSuffix(task.write_branch_id ?? task.main_branch_id);
   function remember(snapshot: ResearchTask) {
-    setObserved((prior) => (prior && isNewer(prior, snapshot) ? prior : snapshot));
+    setObserved((prior) => (prior && isNewerResearchTask(prior, snapshot) ? prior : snapshot));
   }
   return (
     <div className="mx-auto max-w-6xl">
@@ -230,12 +228,14 @@ function CurrentResearch({ loaded, onRefresh }: { loaded: ResearchTask; onRefres
       <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-control">
         <Link to={researchPath(task.id) + '/map'} className="button button-secondary text-xs">研究地图</Link>
         <Link to={researchPath(task.id) + '/experiments'} className="button button-secondary text-xs">独立实验</Link>
+        <Button type="button" className="button-secondary text-xs" aria-expanded={showCommits}
+          onClick={() => setShowCommits((value) => !value)}>分支与提交</Button>
         <span className="inline-flex items-center gap-2 rounded-full bg-brand/10 px-3 py-1 font-semibold text-brand">
           <FlaskConical size={15} aria-hidden="true" />{' '}
           {researchPhases[task.head.state.phase] ?? task.head.state.phase}
         </span>
         <span role="status">{researchStatuses[task.status] ?? task.status}</span>
-        <span>主线 · 版本 {task.head.number}</span>
+        <span>{task.write_branch_name ?? 'main'} · 版本 {task.head.number}</span>
         {!editing && task.status === 'open' && (
           <Button type="button" className="button-secondary" onClick={() => setAdjusting(true)}>调整研究焦点</Button>
         )}
@@ -246,6 +246,8 @@ function CurrentResearch({ loaded, onRefresh }: { loaded: ResearchTask; onRefres
           </span>
         )}
       </div>
+      {showCommits && !editing && <div className="mb-5"><ResearchCommits key={task.id} task={task}
+        onChanged={(next) => { remember(next); onRefresh(); }} /></div>}
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_18rem]">
         {editing ? (
           <ResearchBriefEditor
@@ -263,7 +265,7 @@ function CurrentResearch({ loaded, onRefresh }: { loaded: ResearchTask; onRefres
         ) : (
           <ResearchBrief brief={task.head.state.brief} materials={task.head.state.material_refs} />
         )}
-        <RevisionHistory task={task} endpoint={endpoint} />
+        <RevisionHistory key={task.head.branch_id} task={task} endpoint={endpoint} />
       </div>
       {adjusting && <ResearchFocus task={task} onClose={() => setAdjusting(false)}
         onRefresh={() => { setAdjusting(false); onRefresh(); }}

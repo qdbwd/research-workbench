@@ -12,6 +12,8 @@ type ReviewAction = 'accept' | 'request_changes';
 type Delivery = {
   id: string;
   branch_id: string;
+  branch_name: string;
+  branch_archived: boolean;
   source_revision_id: string;
   submit_run_id: string;
   status: string;
@@ -52,7 +54,9 @@ export function ResearchDeliveries({ task, onChanged }: {
   const result = useResource<{ items: Delivery[] }>(open ? base + '/deliveries' : null, version);
   const items = result.data?.items ?? [];
   const selected = items.find(row => row.id === selectedId) ?? items[0];
-  const canReview = selected?.status === 'submitted' && task.status === 'awaiting_acceptance';
+  const selectedIsWriting = selected?.branch_id === (task.write_branch_id ?? task.main_branch_id);
+  const canReview = selected?.status === 'submitted' && !selected.branch_archived &&
+    (task.status === 'open' || task.status === 'awaiting_acceptance' || (!selectedIsWriting && task.status === 'completed'));
 
   function close() {
     setOpen(false);
@@ -135,7 +139,7 @@ export function ResearchDeliveries({ task, onChanged }: {
               setAction(null);
               setError('');
             }}>
-              {items.map(row => <option key={row.id} value={row.id}>{row.content.title} · {statuses[row.status]}</option>)}
+              {items.map(row => <option key={row.id} value={row.id}>{row.content.title} · {row.branch_name} · {statuses[row.status]}</option>)}
             </select>
           </label>}
           <div>

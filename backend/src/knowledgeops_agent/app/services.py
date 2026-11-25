@@ -66,6 +66,21 @@ class Services:
 
         return BackupRecords()
 
+    @cached_property
+    def vector(self):
+        """pgvector 向量库状态、可插拔嵌入/重排与 RRF 混合检索服务。"""
+        from knowledgeops_agent.retrieval.embeddings import (
+            create_embedding_provider,
+            create_reranker_provider,
+        )
+        from knowledgeops_agent.retrieval.vector import VectorRetrievalService
+
+        return VectorRetrievalService(
+            self.sessions,
+            embedding_provider=create_embedding_provider(self.settings),
+            reranker_provider=create_reranker_provider(self.settings),
+        )
+
     def close(self) -> None:
         """只释放本进程连接池，不停止容器或删除数据。"""
         try:

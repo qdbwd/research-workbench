@@ -38,6 +38,7 @@ export type ResearchMap = {
   revision_id: string;
   number: number;
   nodes: ResearchNode[];
+  node_adoptions?: Record<string, { research_commit_id: string; research_revision_id: string; node_id: string }>;
 };
 
 export type MapComparison = {
@@ -54,4 +55,22 @@ export type AdoptionPreview = {
   after: ResearchNode;
   preview_hash: string;
   evidence: MapEvidence[];
+};
+
+export type CommitAdoptionPreview = Omit<AdoptionPreview, 'before'> & {
+  before: ResearchNode | null;
+  source_commit_id: string;
+  source_commit_message: string;
+  target_branch_id: string;
+  target_branch_name: string;
+  target_revision_number: number;
+  target_parent_title: string | null;
+  omitted_relations: { target_id: string; question: string; description: string }[];
+  reopened_ancestors: { id: string; question: string }[];
+};
+
+export type CommitAdoptionSource = {
+  commitId: string;
+  revisionId: string;
+  node: ResearchNode;
 };

@@ -322,14 +322,14 @@ it('reuses an uncertain request key but creates a fresh key after confirmed succ
 });
 
 it('keeps the original request frozen while changed options remain in the next draft', async () => {
-  const submissions: { auxiliary: boolean; request_key: string }[] = [];
+  const submissions: { knowledge_only: boolean; request_key: string }[] = [];
   configureFetch(
     vi.fn(async (url: string, options?: RequestInit) => {
       if (url.includes('/submission-receipt?')) return Response.json({ state: 'not_accepted' });
       if (options?.method === 'POST') {
         submissions.push(JSON.parse(String(options.body)));
         if (submissions.length === 1) throw new TypeError('连接中断，提交结果未知');
-        return Response.json({ id: 'run-auxiliary' }, { status: 202 });
+        return Response.json({ id: 'run-knowledge-only' }, { status: 202 });
       }
       return Response.json(url.includes('/page') ? { items: [], next_cursor: null } : []);
     }),
@@ -344,27 +344,28 @@ it('keeps the original request frozen while changed options remain in the next d
   );
   await user.click(screen.getByRole('button', { name: '更多设置与材料' }));
   await user.click(screen.getByRole('button', { name: '本次任务设置' }));
-  let option = screen.getByRole('checkbox', { name: '允许辅助模型' });
+  expect(screen.queryByRole('checkbox', { name: '允许辅助模型' })).not.toBeInTheDocument();
+  let option = screen.getByRole('checkbox', { name: '仅使用知识库' });
   expect(option).not.toBeChecked();
   await user.click(screen.getByRole('button', { name: '完成' }));
   await waitFor(() => expect(screen.getByRole('textbox', { name: '发送给研发助手的消息' })).toBeEnabled());
   await user.type(screen.getByRole('textbox', { name: '发送给研发助手的消息' }), '核对材料');
   await sendMessage(user);
   expect(await screen.findByText('上次提交结果待核对')).toBeInTheDocument();
-  expect(submissions[0].auxiliary).toBe(false);
+  expect(submissions[0].knowledge_only).toBe(false);
   await user.click(screen.getByRole('button', { name: '更多设置与材料' }));
   await user.click(screen.getByRole('button', { name: '本次任务设置' }));
-  option = screen.getByRole('checkbox', { name: '允许辅助模型' });
+  option = screen.getByRole('checkbox', { name: '仅使用知识库' });
   await user.click(option);
   await user.click(screen.getByRole('button', { name: '完成' }));
   await user.click(screen.getByRole('button', { name: '核对提交结果' }));
   await user.click(await screen.findByRole('button', { name: '继续原提交' }));
   await waitFor(() => expect(submissions).toHaveLength(2));
-  expect(submissions[1].auxiliary).toBe(false);
+  expect(submissions[1].knowledge_only).toBe(false);
   expect(submissions[1].request_key).toBe(submissions[0].request_key);
   await sendMessage(user);
   await waitFor(() => expect(submissions).toHaveLength(3));
-  expect(submissions[2].auxiliary).toBe(true);
+  expect(submissions[2].knowledge_only).toBe(true);
   expect(submissions[2].request_key).not.toBe(submissions[0].request_key);
 });
 

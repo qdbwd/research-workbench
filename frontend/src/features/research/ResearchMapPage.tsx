@@ -8,52 +8,23 @@ import { BackLink, WorkbenchHeading, WorkbenchPanel } from '../../shared/ui/Work
 import { researchApi, researchPath, revisionSuffix, type ResearchTask, type RevisionSummary } from './api';
 import { nodeStatuses, type AdoptionPreview, type MapComparison, type ResearchMap, type ResearchNode } from './mapApi';
 import { ResearchAdoption } from './ResearchAdoption';
-import { ResearchNodeEditor } from './ResearchNodeEditor';
+import { ResearchMapCanvas } from './ResearchCommitMap';
+import { ResearchNodeEditor, type ResearchNodeDraft } from './ResearchNodeEditor';
 
-const changes: Record<string, string> = {
-  added: '新增', removed: '移除', moved: '移动', conclusion: '结论', status: '状态', evidence: '证据', description: '描述',
-};
-
-function ResearchTree({ nodes, differences, selected, onSelect, parent = null, depth = 0 }: {
-  nodes: ResearchNode[];
-  differences: Map<string, string[]>;
-  selected?: string;
-  onSelect: (id: string) => void;
-  parent?: string | null;
-  depth?: number;
-}) {
-  const children = nodes.filter(node => node.parent_id === parent);
-  if (!children.length) return null;
-  return <ul className={`m-0 grid min-w-0 list-none gap-1.5 ${depth ? 'ml-2.5 border-l border-line pl-2' : 'p-0'}`}>
-    {children.map(node => <li key={node.id} className="grid min-w-0 gap-1.5">
-      <button type="button" aria-pressed={selected === node.id} onClick={() => onSelect(node.id)}
-        className={`grid w-full min-w-0 gap-1.5 rounded-lg border px-3 py-2.5 text-left hover:bg-sidebar ${selected === node.id ? 'border-brand/30 bg-sidebar' : 'border-transparent'}`}>
-        <span className="text-sm font-semibold [overflow-wrap:anywhere]">{node.question}</span>
-        <span className="flex flex-wrap gap-x-2 text-xs text-control">
-          {parent && !node.required && <span>可选探索</span>}
-          <span>{nodeStatuses[node.status]}</span>
-          {differences.get(node.id)?.map(kind => <span key={kind} className="font-medium text-brand">{changes[kind] ?? kind}</span>)}
-        </span>
-      </button>
-      <ResearchTree nodes={nodes} differences={differences} selected={selected}
-        onSelect={onSelect} parent={node.id} depth={depth + 1} />
-    </li>)}
-  </ul>;
-}
-
-function NodeDetail({ node, version, nodes, onSelect }: {
+function NodeDetail({ node, version, nodes, onSelect, metadataOnly = false }: {
   node?: ResearchNode;
   version?: number;
   nodes: ResearchNode[];
   onSelect?: (id: string) => void;
+  metadataOnly?: boolean;
 }) {
   if (!node) return <p className="m-0 text-sm text-control">这个版本没有该主题。</p>;
   return <article className="grid min-w-0 gap-4">
     <header>
-      <p className="mb-1 text-xs text-control">{version != null && `V${version} · `}{nodeStatuses[node.status]}</p>
+      <p className="mb-1 text-xs text-control">{version != null && `V${version} · `}{nodeStatuses[node.status]}{!node.required && ' · 可选探索'}</p>
       <h3 className="m-0 text-lg font-semibold [overflow-wrap:anywhere]">{node.question}</h3>
     </header>
-    {([
+    {!metadataOnly && ([
       ['解决标准', node.criteria], ['结论', node.conclusion], ['判断理由', node.reason], ['详情', node.details],
     ] as const).filter(([, value]) => Boolean(value)).map(([label, value]) => <section key={label}>
       <h4 className="m-0 text-sm font-semibold">{label}</h4>
@@ -113,8 +84,10 @@ function ResearchMapScreen({ taskId, query, setQuery, initialNodeId, embedded = 
   const after = query.get('after') ?? '';
   const fixed = query.get('revision');
   const [refresh, setRefresh] = useState(0);
-  const [selectedId, setSelected] = useState(initialNodeId);
+  const [selectedId, setSelected] = useState(initialNodeId ?? query.get('node') ?? undefined);
   const [edit, setEdit] = useState<{ node: ResearchNode | null; remove?: boolean } | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, ResearchNodeDraft>>({});
+  const [editorNonce, setEditorNonce] = useState(0);
   const [adoption, setAdoption] = useState<AdoptionPreview | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [error, setError] = useState('');
@@ -124,21 +97,40 @@ function ResearchMapScreen({ taskId, query, setQuery, initialNodeId, embedded = 
   const map = useResource<ResearchMap>(comparing ? null : base + '/map' + (
     fixed ? `?revision_id=${encodeURIComponent(fixed)}` : ''
   ), refresh);
-  const branch = task.data?.main_branch_id;
+  const branch = task.data?.write_branch_id ?? task.data?.main_branch_id;
   const versions = useResource<{ items: RevisionSummary[] }>(
     branch ? base + revisionSuffix(branch) + '?limit=100' : null, refresh,
   );
   const diff = useResource<MapComparison>(comparing
     ? `${base}/map/compare?before=${encodeURIComponent(before)}&after=${encodeURIComponent(after)}`
     : null);
-  const differences = new Map(diff.data?.changes.map(row => [row.id, row.types]));
-  const nodes = diff.data ? comparisonTree(diff.data, onlyChanges) : map.data?.nodes ?? [];
+  const working = useResource<{ difference: { map: MapComparison } | null }>(
+    branch && !fixed && !comparing ? `${base}/branches/${encodeURIComponent(branch)}/working-diff` : null, refresh,
+  );
+  const workingMap = working.data?.difference?.map;
+  const activeDiff = diff.data ?? (workingMap?.after.revision_id === map.data?.revision_id ? workingMap : undefined);
+  const differences = new Map(activeDiff?.changes.map(row => [row.id, row.types]));
+  const nodes = activeDiff ? comparisonTree(activeDiff, comparing && onlyChanges) : map.data?.nodes ?? [];
   const selected = nodes.find(node => node.id === selectedId) ?? (
     diff.data ? nodes.find(node => differences.has(node.id)) : null
   ) ?? nodes[0];
   const selectedBefore = diff.data?.before.nodes.find(node => node.id === selected?.id);
   const selectedAfter = diff.data?.after.nodes.find(node => node.id === selected?.id);
+  const adopted = selected ? map.data?.node_adoptions?.[selected.id] : undefined;
   const editable = !fixed && !comparing && task.data?.status === 'open' && task.data.head.id === map.data?.revision_id;
+  const removed = selected ? differences.get(selected.id)?.includes('removed') : false;
+  const draftKey = branch && selected ? `${branch}:${selected.id}` : '';
+  const draft = drafts[draftKey];
+  const inline = editable && !removed;
+
+  function clearDraft() {
+    setDrafts((current) => {
+      const next = { ...current };
+      delete next[draftKey];
+      return next;
+    });
+    setEditorNonce(value => value + 1);
+  }
 
   function chooseVersions(left: string, right: string) {
     setQuery({ before: left, after: right });
@@ -176,7 +168,7 @@ function ResearchMapScreen({ taskId, query, setQuery, initialNodeId, embedded = 
   return <div className="mx-auto max-w-6xl">
     {!embedded && <BackLink to={researchPath(taskId)}>返回研发任务</BackLink>}
     <WorkbenchHeading title="研究地图" eyebrow={task.data?.title ?? '研发工作台'} actions={<>
-      {(comparing || fixed) && <Button type="button" className="button-secondary" onClick={() => setQuery({})}>当前主线</Button>}
+      {(comparing || fixed) && <Button type="button" className="button-secondary" onClick={() => setQuery({})}>当前进展</Button>}
       {!comparing && <Button type="button" className="button-secondary" disabled={!versions.data?.items.length}
         onClick={() => {
           const available = versions.data?.items;
@@ -196,11 +188,12 @@ function ResearchMapScreen({ taskId, query, setQuery, initialNodeId, embedded = 
       <label className="flex items-center gap-2 py-2 text-sm"><input type="checkbox" checked={onlyChanges}
         onChange={event => setOnlyChanges(event.target.checked)} /> 只看差异</label>
     </div>}
-    <ErrorBox message={error || task.error || map.error || diff.error || versions.error} />
-    <div className="grid gap-5 lg:grid-cols-[minmax(16rem,0.7fr)_minmax(0,1.7fr)]">
-      <WorkbenchPanel title={comparing ? '主题差异' : '研究主题'} description={map.data ? `主线 V${map.data.number}` : undefined}>
-        {nodes.length ? <ResearchTree nodes={nodes} differences={differences} selected={selected?.id}
-          onSelect={setSelected} /> : <p className="flex items-center gap-2 text-sm text-control">
+    <ErrorBox message={error || task.error || map.error || diff.error || versions.error || working.error} />
+    <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+      <WorkbenchPanel title={comparing ? '主题差异' : '研究主题'} description={map.data ? `版本 ${map.data.number}` : undefined}>
+        {task.data && !map.loading && !diff.loading && <ResearchMapCanvas nodes={nodes} taskTitle={task.data.title}
+          changes={differences} selectedId={selected?.id} onSelect={setSelected} />}
+        {!nodes.length && <p className="flex items-center gap-2 text-sm text-control">
           <MapIcon size={16} aria-hidden="true" />
           {map.loading || diff.loading ? '正在读取地图…' : comparing ? '所选版本没有地图差异。' : '研究地图还没有主题。'}
         </p>}
@@ -221,22 +214,34 @@ function ResearchMapScreen({ taskId, query, setQuery, initialNodeId, embedded = 
           {task.data?.status === 'open' && selectedBefore?.conclusion && before !== task.data.head.id &&
             <Button type="button" className="button-secondary mt-4" disabled={previewBusy} onClick={() => void preview()}>预览采纳历史结论</Button>}
         </> : <>
-          <NodeDetail node={selected} nodes={nodes} onSelect={setSelected} />
-          {editable && <div className="mt-4 flex gap-2 border-t border-line pt-4">
-            <Button type="button" className="button-secondary" onClick={() => setEdit({ node: selected })}>编辑主题</Button>
-            <Button type="button" className="button-quiet text-danger" onClick={() => setEdit({ node: selected, remove: true })}>移除主题</Button>
+          {removed && <p className="mb-2 text-xs font-medium text-danger">已删除 · 历史详情</p>}
+          <NodeDetail node={selected} nodes={nodes} onSelect={setSelected} metadataOnly={inline} />
+          {adopted && <p className="mt-2 mb-0 text-xs text-control">
+            来源提交 {adopted.research_commit_id.slice(0, 8)} · <Link target="_blank" rel="noreferrer"
+              to={researchPath(taskId) + '/map?' + new URLSearchParams({ revision: adopted.research_revision_id, node: adopted.node_id })}>
+              查看固定来源地图
+            </Link>
+          </p>}
+          {inline && task.data && map.data && <div className="mt-4 grid gap-4 border-t border-line pt-4">
+            <ResearchNodeEditor key={`${draftKey}:${draft?.binding.revision ?? map.data.revision_id}:${editorNonce}`}
+              task={task.data} map={map.data} node={selected} inline draft={draft}
+              onDraft={value => setDrafts(current => ({ ...current, [draftKey]: value }))}
+              onSaved={() => { clearDraft(); afterWrite(); }} onClose={clearDraft}
+              onConflict={() => setRefresh(value => value + 1)} />
+            <Button type="button" className="button-quiet justify-self-start text-danger" onClick={() => setEdit({ node: selected, remove: true })}>移除主题</Button>
           </div>}
         </>}
       </WorkbenchPanel>}
     </div>
     {edit && task.data && map.data && <ResearchNodeEditor task={task.data} map={map.data} node={edit.node}
-      remove={edit.remove} onSaved={afterWrite} onClose={() => setEdit(null)} onConflict={() => setRefresh(value => value + 1)} />}
+      remove={edit.remove} onSaved={() => { if (edit.remove) clearDraft(); afterWrite(); }}
+      onClose={() => setEdit(null)} onConflict={() => setRefresh(value => value + 1)} />}
     {adoption && task.data && <ResearchAdoption task={task.data} preview={adoption}
       onClose={() => setAdoption(null)} onSaved={afterWrite} />}
     {comparing && task.data && after !== task.data.head.id && <p className="mt-4 text-sm text-control">
       对照保留当前所选版本。{' '}
-      {embedded ? <button type="button" className="button-quiet" onClick={() => chooseVersions(before, task.data!.head.id)}>将右侧切换到最新主线</button>
-        : <Link to={`?before=${encodeURIComponent(before)}&after=${encodeURIComponent(task.data.head.id)}`}>将右侧切换到最新主线</Link>}
+      {embedded ? <button type="button" className="button-quiet" onClick={() => chooseVersions(before, task.data!.head.id)}>将右侧切换到最新进展</button>
+        : <Link to={`?before=${encodeURIComponent(before)}&after=${encodeURIComponent(task.data.head.id)}`}>将右侧切换到最新进展</Link>}
     </p>}
   </div>;
 }

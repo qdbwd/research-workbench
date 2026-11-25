@@ -5,7 +5,6 @@ export type ComposerDraft = {
   mode: 'ask' | 'preview' | 'direct';
   knowledgeOnly: boolean;
   delegation: boolean;
-  auxiliary: boolean;
 };
 
 const key = (id: string) => `knowledgeops:composer:${id}`;

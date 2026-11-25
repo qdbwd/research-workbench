@@ -29,6 +29,7 @@ from knowledgeops_agent.app.routes.knowledge import router as knowledge_router
 from knowledgeops_agent.app.routes.learning import learning_router
 from knowledgeops_agent.app.routes.mcp import router as mcp_router
 from knowledgeops_agent.app.routes.memory import router as memory_router
+from knowledgeops_agent.app.routes.retrieval import router as retrieval_router
 from knowledgeops_agent.app.routes.runs import router as runs_router
 from knowledgeops_agent.app.routes.skills import router as skills_router
 from knowledgeops_agent.app.routes.sources import router as sources_router
@@ -253,6 +254,7 @@ def create_app(*, services: Services | None = None, publish_jobs: bool = True) -
                        "data_conflict", "刷新后重试")
 
     app.include_router(system_router)
+    app.include_router(retrieval_router)
     app.include_router(activity_router)
     from knowledgeops_agent.app.routes.research import router as research_router
     from knowledgeops_agent.research.service import ResearchConflict

@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { NavLink, useMatch, useNavigate } from 'react-router-dom';
-import { MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
+import { FolderInput, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import { messageOf, send } from '../../shared/api/api';
 import { useWorkspace } from '../../shared/state/workspace';
-import type { Conversation } from '../../shared/types/types';
+import type { Conversation, ConversationProject } from '../../shared/types/types';
 import { Button } from '../../shared/ui/Button';
 import { Dialog } from '../../shared/ui/Dialog';
 import { ErrorBox } from '../../shared/ui/components';
@@ -12,10 +12,13 @@ import { DeleteConversationDialog } from './DeleteConversationDialog';
 import { ConversationActivity } from '../activity/ApplicationActivity';
 
 /** 桌面右键、键盘菜单键与手机按钮共用重命名/删除菜单；删除沿用原预览和清理流程。 */
-export function ConversationLink({ chat, onOpen, contained = false }: {
+export function ConversationLink({ chat, onOpen, contained = false, projects = [], onMove, onDrag }: {
   chat: Conversation;
   onOpen?: () => void;
   contained?: boolean;
+  projects?: ConversationProject[];
+  onMove?: (chat: Conversation, project: string | null) => Promise<void>;
+  onDrag?: (chat: Conversation | null) => void;
 }) {
   const { refresh } = useWorkspace();
   const navigate = useNavigate();
@@ -25,13 +28,15 @@ export function ConversationLink({ chat, onOpen, contained = false }: {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [moving, setMoving] = useState(false);
+  const [destination, setDestination] = useState('');
   const [title, setTitle] = useState(chat.title);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   function openMenu(x: number, y: number) {
     setMenu({
       x: Math.max(8, Math.min(x, window.innerWidth - 176)),
-      y: Math.max(8, Math.min(y, window.innerHeight - 104)),
+      y: Math.max(8, Math.min(y, window.innerHeight - 146)),
     });
   }
   function closeEditor() {
@@ -89,6 +94,11 @@ export function ConversationLink({ chat, onOpen, contained = false }: {
         onClick={() => { setMenu(null); setTitle(chat.title); setError(''); setEditing(true); }}>
         <Pencil size={15} /> 重命名
       </button>
+      {onMove && (chat.project_id || projects.length > 0) && <button role="menuitem" type="button"
+        className="flex w-full items-center gap-2 rounded px-3 py-2 text-sm hover:bg-canvas"
+        onClick={() => { setMenu(null); setDestination(chat.project_id ?? ''); setError(''); setMoving(true); }}>
+        <FolderInput size={15} /> 移动到项目
+      </button>}
       <button role="menuitem" type="button" className="flex w-full items-center gap-2 rounded px-3 py-2 text-sm text-red-700 hover:bg-red-50"
         onClick={() => { setMenu(null); setDeleting(true); }}>
         <Trash2 size={15} /> 删除会话
@@ -104,6 +114,14 @@ export function ConversationLink({ chat, onOpen, contained = false }: {
           title={chat.title}
           className="min-w-0 flex-1 truncate rounded-md px-2.5 py-2 text-xs text-control hover:no-underline [&.active]:bg-[#dceadf] [&.active]:text-brand"
           onClick={onOpen}
+          draggable={Boolean(onDrag) && !contained}
+          onDragStart={(event) => {
+            if (!onDrag || contained) return;
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('application/x-knowledgeops-conversation', chat.id);
+            onDrag(chat);
+          }}
+          onDragEnd={() => onDrag?.(null)}
           onContextMenu={(event) => {
             event.preventDefault();
             openMenu(event.clientX, event.clientY);
@@ -134,6 +152,28 @@ export function ConversationLink({ chat, onOpen, contained = false }: {
         </button>
       </div>
       {menuContent && (contained ? menuContent : createPortal(menuContent, document.body))}
+      {moving && onMove && (
+        <Dialog title="移动会话" busy={busy} onClose={() => { setMoving(false); queueMicrotask(() => link.current?.focus()); }}>
+          <form onSubmit={async (event) => {
+            event.preventDefault();
+            if (busy) return;
+            setBusy(true);
+            setError('');
+            try { await onMove(chat, destination || null); setMoving(false); }
+            catch (failure) { setError(messageOf(failure)); }
+            finally { setBusy(false); }
+          }}>
+            <label>目标项目
+              <select autoFocus value={destination} onChange={(event) => setDestination(event.target.value)}>
+                <option value="">未分组</option>
+                {projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
+              </select>
+            </label>
+            <ErrorBox message={error} />
+            <div className="mt-4 flex justify-end"><Button disabled={busy || destination === (chat.project_id ?? '')}>移动</Button></div>
+          </form>
+        </Dialog>
+      )}
       {editing && (
         <Dialog title="重命名会话" onClose={closeEditor} busy={busy}>
           <form

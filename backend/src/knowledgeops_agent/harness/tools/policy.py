@@ -33,6 +33,7 @@ _BASELINE_IDS = (
     "builtin:read_source",
     "builtin:read_tool_result",
     "builtin:update_plan",
+    # 历史零版本恢复合同保留已下线的 builtin:call_model，仅用于旧 Run 冻结策略哈希校验，不再装配。
     "builtin:call_model",
     "builtin:prepare_changes",
     "builtin:publish_changes",

@@ -23,12 +23,12 @@ def preview(client, **query):
 
 
 def test_preview_read_is_side_effect_free_and_explains_root_options(client, services):
-    result = preview(client, knowledge_only=True, auxiliary=False, delegation=False)
+    result = preview(client, knowledge_only=True, delegation=False)
     entries = {row["name"]: row for row in result["tools"]}
     assert entries["read_source"]["available"]
     assert entries["read_file"]["available"]
     assert entries["search_web"]["unavailable_reasons"] == ["knowledge_only"]
-    assert entries["call_model"]["unavailable_reasons"] == ["auxiliary_disabled"]
+    assert "call_model" not in entries
     assert "delegation_disabled" in entries["task"]["unavailable_reasons"]
     assert not entries["delegate_research"]["available"]
     assert result["policy_revision"] == 0
@@ -56,9 +56,9 @@ def test_global_disable_explains_skill_dependency_and_role_selection(client, ser
 
 
 @pytest.mark.parametrize(
-    "knowledge_only,auxiliary,delegation", [(False, False, True), (True, True, False)]
+    "knowledge_only,delegation", [(False, True), (True, False)]
 )
-def test_preview_matches_real_root_graph(client, services, knowledge_only, auxiliary, delegation):
+def test_preview_matches_real_root_graph(client, services, knowledge_only, delegation):
     if delegation:
         SubagentRegistry(services.sessions).create(
             name='preview-role', display_name='预览角色', description='显式启用用于核对装配',
@@ -70,7 +70,6 @@ def test_preview_matches_real_root_graph(client, services, knowledge_only, auxil
     )
     module, context, run = setup_run(
         (services.jobs, services.knowledge, services.sources, services.gateway.ledger),
-        auxiliary=auxiliary,
     )
     with services.sessions.begin() as session:
         row = session.get(Run, run["id"])
@@ -81,7 +80,7 @@ def test_preview_matches_real_root_graph(client, services, knowledge_only, auxil
         }
     graph = module.build_agent(context, checkpointer=InMemorySaver())
     result = preview(
-        client, knowledge_only=knowledge_only, auxiliary=auxiliary, delegation=delegation
+        client, knowledge_only=knowledge_only, delegation=delegation
     )
     assert {row["name"] for row in result["tools"] if row["available"]} == set(
         graph.nodes["tools"].bound.tools_by_name

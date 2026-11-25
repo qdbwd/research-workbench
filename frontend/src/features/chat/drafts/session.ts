@@ -45,7 +45,7 @@ export class ComposerSession {
   // 编辑缓冲所基于的正文版本。后台读到新记录不代表用户已看过并基于它编辑。
   private editingRevision = 0;
   private detach = () => {};
-  constructor(private conversationId?: string, private newId?: string) {
+  constructor(private conversationId?: string, private newId?: string, private projectId?: string) {
     if (newId === 'new') this.newId = crypto.randomUUID();
   }
   snapshot = () => this.state;
@@ -82,7 +82,7 @@ export class ComposerSession {
       if (client.contract_version !== 1) throw new Error('浏览器草稿协议不兼容，请刷新应用。');
       const store = new DraftStore(client.namespace);
       const record = await store.open({ conversationId: this.conversationId, newId: this.newId,
-        legacy: readComposerDraft(this.conversationId) });
+        projectId: this.projectId, legacy: readComposerDraft(this.conversationId) });
       if (generation !== this.generation) return;
       this.store = store;
       if (this.conversationId) clearComposerDraft(this.conversationId);

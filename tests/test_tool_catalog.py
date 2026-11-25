@@ -25,7 +25,7 @@ def test_role_options_describe_shared_groups_without_adding_write_tools():
     by_name = {row["name"]: row for row in result["tools"]}
     assert by_name["read_source"].get("id") == "builtin:read_source"
     assert by_name["read_source"].get("group") == "materials_read"
-    assert by_name["call_model"].get("source") == "builtin"
+    assert "call_model" not in by_name
     assert set(by_name) == {
         "search_knowledge",
         "list_knowledge",
@@ -39,7 +39,6 @@ def test_role_options_describe_shared_groups_without_adding_write_tools():
         "update_plan",
         "search_web",
         "read_web",
-        "call_model",
         "history_search",
         "history_read",
         "task_note",
@@ -54,16 +53,17 @@ def test_role_options_describe_shared_groups_without_adding_write_tools():
         "builtin:inspect_material",
         "builtin:read_source",
     ]
+    assert "auxiliary" not in groups
     assert "knowledge_maintenance" not in groups
     assert "delegation" not in groups
 
 
-@pytest.mark.parametrize("knowledge_only,auxiliary", [(False, False), (True, True)])
+@pytest.mark.parametrize("knowledge_only", [False, True])
 def test_effective_catalog_covers_actual_graph_including_middleware(
-    runtime_services, knowledge_only, auxiliary
+    runtime_services, knowledge_only
 ):
     """最终构图必须携带全部真实工具的目录，Schema直接来自原工具，不重写参数。"""
-    module, context, _ = setup_run(runtime_services, auxiliary=auxiliary)
+    module, context, _ = setup_run(runtime_services)
     role(context)
     with context.jobs.sessions.begin() as session:
         row = session.get(Run, context.root_id)
@@ -93,8 +93,6 @@ def test_effective_catalog_covers_actual_graph_including_middleware(
     }
     if not knowledge_only:
         expected |= {"search_web", "read_web"}
-    if auxiliary:
-        expected.add("call_model")
     assert set(described) == set(actual) == expected
     assert described["read_file"]["id"] == "middleware:read_file"
     assert described["task"]["source"] == "middleware"
@@ -105,13 +103,13 @@ def test_effective_catalog_covers_actual_graph_including_middleware(
 
 
 def test_child_directory_keeps_explicit_role_and_root_restrictions(runtime_services):
-    """角色选了网页/辅助工具，也不能越过根任务关闭项；Skill读取仍被正确登记。"""
+    """角色选了网页工具，也不能越过根任务关闭项；Skill读取仍被正确登记。"""
     module, context, _ = setup_run(runtime_services)
     with context.jobs.sessions.begin() as session:
         row = session.get(Run, context.root_id)
         row.input_data = {**row.input_data, "knowledge_only": True}
     configured = role(
-        context, tools=["read_source", "read_web", "call_model"], skills=["evidence-check"]
+        context, tools=["read_source", "read_web"], skills=["evidence-check"]
     )
     module.build_agent(context, checkpointer=InMemorySaver())
     child = context.jobs.start_child(

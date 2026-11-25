@@ -16,15 +16,25 @@ runtime_services = _runtime_services
 RAW = '<｜DSML｜tool_calls><｜DSML｜invoke name="prepare_changes">payload</｜DSML｜invoke></｜DSML｜tool_calls>'
 
 
-def test_unexecuted_protocol_text_is_not_a_final_answer_or_a_billable_repair(runtime_services):
+def test_unexecuted_protocol_text_retries_once_then_fails_cleanly(runtime_services):
     _, context, _ = setup_run(runtime_services)
+    first = FinalAnswerValidation().after_model(
+        {"messages": [AIMessage(RAW)]}, SimpleNamespace(context=context)
+    )
+    assert first["jump_to"] == "model"
+    assert first["protocol_repair_count"] == 1
+    assert first["final_response_feedback"]
     with pytest.raises(RuntimeError, match="结构化工具调用"):
         FinalAnswerValidation().after_model(
-            {"messages": [AIMessage(RAW)]}, SimpleNamespace(context=context)
+            {"messages": [AIMessage(RAW)], "protocol_repair_count": 1},
+            SimpleNamespace(context=context),
         )
     assert context.gateway.ledger.records() == []
     assert context.knowledge.list_drafts(root_id=context.root_id) == []
-    assert any(e["kind"] == "model_protocol_error" for e in context.jobs.events(context.run_id))
+    protocol_events = [
+        e for e in context.jobs.events(context.run_id) if e["kind"] == "model_protocol_error"
+    ]
+    assert [e["data"]["retrying"] for e in protocol_events] == [True, False]
 
 
 @pytest.mark.parametrize("content", [f"```xml\n{RAW}\n```", f"`{RAW}`", "DSML 是一种表示格式。"])
@@ -71,6 +81,6 @@ def test_worker_records_failed_run_and_preserves_raw_provider_response(services,
     assert result["outcome"]["answer"] == ""
     assert "结构化工具调用" in result["stop_reason"]
     records = services.gateway.ledger.records(root_id=run["root_id"])
-    assert len(records) == 1
-    assert records[0]["response"]["content"] == RAW
+    assert len(records) == 2
+    assert all(record["response"]["content"] == RAW for record in records)
     assert not services.knowledge.list_drafts(root_id=run["root_id"])

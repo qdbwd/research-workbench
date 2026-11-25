@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Annotated
 
+from fastapi import APIRouter, HTTPException, Query, Request, Response
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+
+from knowledgeops_agent.app.conversation_projects import ConversationProjects
 from knowledgeops_agent.app.conversations import ConversationBrowser, fingerprint
 from knowledgeops_agent.app.dependencies import reasoning_service, svc
 from knowledgeops_agent.app.schemas import (
     ConversationInput,
     ConversationRenameInput,
+    InputModel,
     MessageInput,
 )
 
@@ -19,6 +23,50 @@ router = APIRouter()
 class ConversationDeletionInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_version: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+ProjectName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+
+
+class ProjectCreate(InputModel):
+    name: ProjectName
+    request_key: str = Field(min_length=1, max_length=200)
+
+
+class ProjectEdit(InputModel):
+    name: ProjectName | None = None
+    pinned: bool | None = None
+
+
+class ProjectMove(InputModel):
+    project_id: str | None = Field(min_length=1, max_length=36)
+    expected_revision: int = Field(ge=0)
+
+
+@router.get("/api/conversation-projects")
+def list_projects(request: Request):
+    return ConversationProjects(svc(request).sessions).list()
+
+
+@router.post("/api/conversation-projects", status_code=201)
+def create_project(body: ProjectCreate, request: Request):
+    return ConversationProjects(svc(request).sessions).create(body.name, body.request_key)
+
+
+@router.patch("/api/conversation-projects/{project_id}")
+def edit_project(project_id: str, body: ProjectEdit, request: Request):
+    return ConversationProjects(svc(request).sessions).edit(project_id, body.model_dump(exclude_none=True))
+
+
+@router.delete("/api/conversation-projects/{project_id}", status_code=204)
+def remove_project(project_id: str, request: Request):
+    ConversationProjects(svc(request).sessions).remove(project_id)
+    return Response(status_code=204)
+
+
+@router.patch("/api/conversations/{conversation_id}/project")
+def move_conversation(conversation_id: str, body: ProjectMove, request: Request):
+    return ConversationProjects(svc(request).sessions).move(conversation_id, body.project_id, body.expected_revision)
 
 
 def _deletion_view(row):
@@ -77,8 +125,9 @@ def conversations(request: Request):
 
 @router.get("/api/conversations/page")
 def conversation_page(request: Request, q: str = Query(default="", max_length=200),
-                      cursor: str | None = Query(default=None, max_length=1024), limit: int = Query(default=20, ge=1, le=100)):
-    return ConversationBrowser(svc(request).sessions).page(query=q, cursor=cursor, limit=limit)
+                      cursor: str | None = Query(default=None, max_length=1024), limit: int = Query(default=20, ge=1, le=100),
+                      project: str | None = Query(default=None, max_length=36)):
+    return ConversationBrowser(svc(request).sessions).page(query=q, cursor=cursor, limit=limit, project=project)
 
 
 @router.get("/api/conversations/creation-receipt")
@@ -97,7 +146,8 @@ def client_state(request: Request):
 def create_conversation(body: ConversationInput, request: Request):
     dependencies = svc(request)
     return dependencies.jobs.create_conversation(body.title, request_key=body.request_key,
-                                                 trial_case=body.trial_case, sources=dependencies.sources)
+                                                 trial_case=body.trial_case, sources=dependencies.sources,
+                                                 project_id=body.project_id)
 
 
 @router.get("/api/research-trial")
@@ -105,6 +155,16 @@ def research_trial_catalog():
     from knowledgeops_agent.research.trial import trial_catalog
 
     return trial_catalog()
+
+
+@router.get("/api/research-trial/completed")
+def research_trial_completed():
+    from knowledgeops_agent.research.trial import completed_trial
+
+    case = completed_trial()
+    if case is None:
+        raise HTTPException(404, "已完成案例暂不可用。")
+    return case
 
 
 @router.get("/api/conversations/{conversation_id}/trial")
@@ -168,7 +228,6 @@ def send_message(conversation_id: str, body: MessageInput, request: Request):
         publication_mode=body.publication_mode,
         knowledge_only=body.knowledge_only,
         delegation=body.delegation,
-        auxiliary=body.auxiliary,
         reasoning=reasoning_service(request).freeze(
             body.reasoning_effort or defaults["reasoning_effort"]
         ),

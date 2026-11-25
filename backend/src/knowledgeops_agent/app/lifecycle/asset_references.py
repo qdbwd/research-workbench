@@ -31,7 +31,7 @@ _FIELDS = {"evidence_id": "evidence", "source_id": "sources", "source_version_id
            "summary_artifact_id": "material", "changeset_id": "changesets", "draft_id": "changesets",
            "knowledge_version_id": "knowledge-versions", "base_version_id": "knowledge-versions",
            "restore_version_id": "knowledge-versions", "result_version_id": "knowledge-versions",
-           "document_id": "knowledge", "research_revision_id": "research-revisions"}
+           "document_id": "knowledge", "research_revision_id": "research-revisions", "research_commit_id": "research-commits"}
 _CATALOGS = {"artifact_ids", "source_ids", "evidence_ids", "allowed_evidence_ids", "validated_evidence_ids",
              "source_catalog", "evidence_catalog", "material_catalog"}
 
@@ -142,6 +142,7 @@ def _targets(session, value):
         (("changes", "changesets"), db.ChangeSet, "draft:"),
         (("material",), db.RunArtifact, "material:"),
         (("research-revisions",), db.ResearchRevision, "research_revision:"),
+        (("research-commits",), db.ResearchCommit, "research_commit:"),
     ):
         ids = set().union(*(found.get(alias, set()) for alias in aliases))
         if ids:

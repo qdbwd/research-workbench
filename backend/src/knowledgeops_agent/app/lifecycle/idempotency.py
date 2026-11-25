@@ -5,6 +5,7 @@ import json
 
 
 def normalized_inputs(value: dict) -> dict:
+    # 保持历史已归档 Run 的 input_fingerprint 兼容（原规范化包含 auxiliary=False）。
     result = {"auxiliary": False, **value}
     result.pop("runtime_settings", None)
     result.pop("trial_case", None)

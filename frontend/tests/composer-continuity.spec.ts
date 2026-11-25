@@ -16,7 +16,7 @@ test('a real browser profile restores a new draft after closing and restarting t
     await input(page).fill('关闭浏览器后仍要保留这段思路');
     await page.getByRole('button', { name: '更多设置与材料', exact: true }).click();
     await page.getByRole('button', { name: '本次任务设置' }).click();
-    await page.getByRole('checkbox', { name: '允许辅助模型' }).check();
+    await page.getByRole('checkbox', { name: '仅使用知识库' }).check();
     await page.getByRole('button', { name: '完成', exact: true }).click();
     await expect(saved(page)).toBeVisible();
     const identity = new URL(page.url()).searchParams.get('draft');
@@ -29,7 +29,7 @@ test('a real browser profile restores a new draft after closing and restarting t
     expect(new URL(page.url()).searchParams.get('draft')).toBe(identity);
     await page.getByRole('button', { name: '更多设置与材料', exact: true }).click();
     await page.getByRole('button', { name: '本次任务设置' }).click();
-    await expect(page.getByRole('checkbox', { name: '允许辅助模型' })).toBeChecked();
+    await expect(page.getByRole('checkbox', { name: '仅使用知识库' })).toBeChecked();
     await page.getByRole('button', { name: '完成', exact: true }).click();
     await page.screenshot({ path: info.outputPath('restored-draft.png') });
     await page.getByRole('button', { name: '放弃草稿', exact: true }).click();

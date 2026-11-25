@@ -1,0 +1,305 @@
+{
+  "schema_version": 1,
+  "key": "operations-pilot-v1",
+  "title": "研发运维问答助手能否进入内部试点",
+  "capture": {
+    "method": "deterministic_model_real_runner",
+    "answer_run": "7740872b-ddc1-4d78-86f7-435445b45c74",
+    "research_run": "6535b739-d2c9-43a3-8918-b26c93f782aa"
+  },
+  "answer": {
+    "question": "按最新规程，紧急变更需要谁批准？结合值班操作手册说明上线后先看什么。",
+    "text": "生产紧急变更须由当班负责人事前批准。[生产紧急变更规程](/api/evidence/b6f6091b-33e4-481a-afc6-752654334c2d)\n\n变更后核对错误率、请求延迟和核心业务探针。[值班操作手册](/api/evidence/f211ea2f-6b42-4e6c-ae40-e2f86f009445)",
+    "evidence": [
+      {
+        "id": "b6f6091b-33e4-481a-afc6-752654334c2d",
+        "text": "# 生产紧急变更规程\n## 审批\n生产紧急变更必须由当班负责人事前批准。\n联系不上当班负责人时，转交备班负责人审批；没有确认则保持原状态。\n## 范围\n仅适用于生产环境；测试环境按自己的测试变更流程处理。\n",
+        "title": "生产紧急变更规程",
+        "version": 2,
+        "start": 0,
+        "end": 103,
+        "kind": "knowledge"
+      },
+      {
+        "id": "f211ea2f-6b42-4e6c-ae40-e2f86f009445",
+        "text": "# 值班操作手册\n## 变更前\n开始操作前记录回滚点，核对监控看板能够正常读取。\n## 变更后\n核对错误率、请求延迟和核心业务探针，并记录核对时间。\n健康检查持续异常时，按已记录的回滚点恢复并通知当班负责人。\n",
+        "title": "值班操作手册",
+        "start": 0,
+        "end": 105,
+        "kind": "material"
+      }
+    ]
+  },
+  "task": {
+    "status": "completed",
+    "brief": {
+      "goal": "研发运维问答助手能否进入内部试点",
+      "scope": "用现行规程、值班手册和三条失败记录，核对上线前问答的证据路径。",
+      "blockers": "",
+      "constraints": "",
+      "next_action": "",
+      "key_decisions": "",
+      "acceptance_criteria": "逐条定位失败阶段，复查对应实验回执，并给出能否试点及开放条件。"
+    }
+  },
+  "comparison": {
+    "common_commit_id": "895f3558-5421-4eb5-8595-971adc470177",
+    "before": {
+      "id": "63f627d7-314b-4a78-918a-f5c763d0cb2a",
+      "message": "保留排查前的固定状态",
+      "branch": "保留原排序"
+    },
+    "after": {
+      "id": "9609c382-5659-4d83-9c43-8cca7ae64747",
+      "message": "固定实验结果与已验收的试点建议",
+      "branch": "main",
+      "snapshot_hash": "de769e7150f53d870e76d3002ab7394cab3b40c14091b3e0dfdf457946690c49"
+    },
+    "asset_kinds": [
+      "experiments",
+      "deliveries"
+    ],
+    "map": {
+      "before": {
+        "revision_id": "345fcdae-a2a1-4491-8276-28a2b952295e",
+        "number": 1,
+        "node_adoptions": {},
+        "nodes": []
+      },
+      "after": {
+        "revision_id": "57aea500-f488-482c-8a01-dc6c7c79ac6b",
+        "number": 7,
+        "node_adoptions": {},
+        "nodes": [
+          {
+            "id": "745e166b-4e72-4b3a-bf75-1a56fcdc6eac",
+            "reason": "旧版案例的候选中没有现行规程；截断案例可通过排序改善上下文覆盖；误用案例已提供正确证据，但回答仍错误。",
+            "status": "resolved",
+            "details": "",
+            "related": [],
+            "criteria": "分别核对正确片段是否进入最终上下文及原回答是否正确。",
+            "question": "三条试点问答分别在哪一步丢失或误用了现行审批证据？",
+            "required": true,
+            "parent_id": null,
+            "conclusion": "暂缓开放试点。先阻止旧规程进入候选，再验证上下文保留和审批表述，留出题回归通过后由值班团队验收。",
+            "evidence_ids": [
+              "dc4a19ee-407d-43b2-b450-4ec7e834d7da",
+              "b9ccab5b-e1d3-4760-935b-f1575394c150"
+            ],
+            "evidence": [
+              {
+                "id": "dc4a19ee-407d-43b2-b450-4ec7e834d7da",
+                "start": 0,
+                "end": 1746,
+                "quote": "{\n  \"context_limit\": 1,\n  \"documents\": {\n    \"change-policy-v1\": \"Historical rule: the operator can start a production emergency change and the on-call lead signs afterwards.\",\n    \"change-policy-v2\": \"Production emergen",
+                "url": null,
+                "available": true,
+                "kind": "material",
+                "title": "试点问答失败记录的实验输入",
+                "source_version_id": "220ddb25-3d40-47db-8f4a-f3ce729b61ea",
+                "source_id": "ef3ee3ba-fbc3-4c7c-b1e5-62046b7cf3a7",
+                "page": null
+              },
+              {
+                "id": "b9ccab5b-e1d3-4760-935b-f1575394c150",
+                "kind": "experiment",
+                "title": "三条试点问答分别在哪一步丢失或误用了现行审批证据？",
+                "start": 0,
+                "end": 1594,
+                "quote": "只有上游漏选且正确片段已在候选集中时，该重排验证才支持改进。回答误用已提供证据的情形，需单独检查生成约束、证据对齐与输出评估。\n\n此处比较固定夹具和确定性排序，未重新生成回答，也未测量线上问答准确率。\n\n{\n  \"algorithm\": \"query_token_overlap\",\n  \"cases\": [\n    {\n      \"fault\": \"retrieval_or_context_selection\",\n      \"gol",
+                "offset_unit": "characters",
+                "available": true,
+                "url": null
+              }
+            ]
+          }
+        ]
+      },
+      "changes": [
+        {
+          "id": "745e166b-4e72-4b3a-bf75-1a56fcdc6eac",
+          "types": [
+            "added"
+          ]
+        }
+      ]
+    }
+  },
+  "experiment": {
+    "id": "4a5721bc-5c1b-407c-9873-b9359cb75790",
+    "branch_id": "2ef5903c-b71b-4fcf-b37d-1fd9c6f6e369",
+    "research_revision_id": "099e3acc-279a-4f91-bb1c-5d6c32e11c94",
+    "specification": {
+      "kind": "reranker-check-v1",
+      "image": "ghcr.io/astral-sh/uv@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58",
+      "input": {
+        "cases": [
+          {
+            "id": "old-version",
+            "gold_id": "change-policy-v2",
+            "question": "Can a production emergency change start and receive approval afterwards?",
+            "candidate_ids": [
+              "change-policy-v1"
+            ],
+            "expected_answer": "No. The on-call lead must approve in advance.",
+            "observed_answer": "Proceed and request a signature afterwards.",
+            "observed_context": [
+              "change-policy-v1"
+            ]
+          },
+          {
+            "id": "missing-from-context",
+            "gold_id": "change-policy-v2",
+            "question": "Who gives advance approval for an emergency change?",
+            "candidate_ids": [
+              "change-runbook-v1",
+              "change-policy-v2"
+            ],
+            "expected_answer": "The on-call lead approves in advance.",
+            "observed_answer": "Proceed after recording the rollback point.",
+            "observed_context": [
+              "change-runbook-v1"
+            ]
+          },
+          {
+            "id": "visible-misused",
+            "gold_id": "change-policy-v2",
+            "question": "Who approves if the on-call lead is unavailable?",
+            "candidate_ids": [
+              "change-policy-v2"
+            ],
+            "expected_answer": "The backup lead approves.",
+            "observed_answer": "The requester may approve.",
+            "observed_context": [
+              "change-policy-v2"
+            ]
+          }
+        ],
+        "documents": {
+          "change-policy-v1": "Historical rule: the operator can start a production emergency change and the on-call lead signs afterwards.",
+          "change-policy-v2": "Production emergency changes need advance approval from the on-call lead. If the on-call lead is unavailable, the backup lead approves. With no approval, hold the current state.",
+          "change-runbook-v1": "Record a rollback point and check the monitoring dashboard before operating. After the change check error rate, latency, and business probes."
+        },
+        "context_limit": 1
+      },
+      "script": "\"\"\"对固定问题重放候选排序，独立检查最终上下文与保存的回答。\"\"\"\n\nimport json\nimport re\nimport sys\n\n\ndef terms(value):\n    return set(re.findall(r\"[a-z0-9_]+\", value.casefold()))\n\n\ndef analyze(packet):\n    documents = packet[\"documents\"]\n    limit = packet[\"context_limit\"]\n    cases = []\n    for case in packet[\"cases\"]:\n        candidates = case[\"candidate_ids\"]\n        observed = case[\"observed_context\"]\n        gold = case[\"gold_id\"]\n        query_terms = terms(case[\"question\"])\n        # 只改变排序。候选集合、截断长度和原回答保持固定，避免把排序归因给生成。\n        alternate = sorted(candidates, key=lambda identity: -len(query_terms & terms(documents[identity])))[:limit]\n        answered_correctly = case[\"observed_answer\"].strip().casefold() == case[\"expected_answer\"].strip().casefold()\n        if gold not in observed:\n            fault = \"retrieval_or_context_selection\"\n        elif not answered_correctly:\n            fault = \"answer_misuse\"\n        else:\n            fault = \"none_observed\"\n        cases.append({\n            \"id\": case[\"id\"],\n            \"fault\": fault,\n            \"gold_id\": gold,\n            \"gold_in_candidates\": gold in candidates,\n            \"observed_context_ids\": observed,\n            \"observed_context_has_gold\": gold in observed,\n            \"reranked_context_ids\": alternate,\n            \"reranked_context_has_gold\": gold in alternate,\n            \"observed_answer_correct\": answered_correctly,\n        })\n    return {\n        \"schema_version\": 1,\n        \"algorithm\": \"query_token_overlap\",\n        \"context_limit\": limit,\n        \"cases\": cases,\n        \"conclusion\": \"只有上游漏选且正确片段已在候选集中时，该重排验证才支持改进。\"\n        \"回答误用已提供证据的情形，需单独检查生成约束、证据对齐与输出评估。\",\n        \"limitation\": \"此处比较固定夹具和确定性排序，未重新生成回答，也未测量线上问答准确率。\",\n    }\n\n\nif __name__ == \"__main__\":\n    json.dump(analyze(json.load(sys.stdin)), sys.stdout, sort_keys=True)\n    sys.stdout.write(\"\\n\")\n",
+      "question": "三条试点问答分别在哪一步丢失或误用了现行审批证据？",
+      "hypothesis": "如果正确片段已在候选中，重排或可补足上下文。若片段已进入上下文而回答仍误用，则另查生成。",
+      "evidence_ids": [
+        "dc4a19ee-407d-43b2-b450-4ec7e834d7da"
+      ],
+      "input_sha256": "1d1c025cb0fc2cce2592f8cc4a7523cacbfee5cf42ab3dc3493ce8b46449a85e",
+      "script_sha256": "9be7b2f74d8f1b7c76fdd4fadd2a1a101a76bbd9c98411bd7b0af9c8baa4d37a",
+      "timeout_seconds": 15
+    },
+    "status": "completed",
+    "receipt": {
+      "image": "ghcr.io/astral-sh/uv@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58",
+      "output": {
+        "cases": [
+          {
+            "id": "old-version",
+            "fault": "retrieval_or_context_selection",
+            "gold_id": "change-policy-v2",
+            "gold_in_candidates": false,
+            "observed_context_ids": [
+              "change-policy-v1"
+            ],
+            "reranked_context_ids": [
+              "change-policy-v1"
+            ],
+            "observed_answer_correct": false,
+            "observed_context_has_gold": false,
+            "reranked_context_has_gold": false
+          },
+          {
+            "id": "missing-from-context",
+            "fault": "retrieval_or_context_selection",
+            "gold_id": "change-policy-v2",
+            "gold_in_candidates": true,
+            "observed_context_ids": [
+              "change-runbook-v1"
+            ],
+            "reranked_context_ids": [
+              "change-policy-v2"
+            ],
+            "observed_answer_correct": false,
+            "observed_context_has_gold": false,
+            "reranked_context_has_gold": true
+          },
+          {
+            "id": "visible-misused",
+            "fault": "answer_misuse",
+            "gold_id": "change-policy-v2",
+            "gold_in_candidates": true,
+            "observed_context_ids": [
+              "change-policy-v2"
+            ],
+            "reranked_context_ids": [
+              "change-policy-v2"
+            ],
+            "observed_answer_correct": false,
+            "observed_context_has_gold": true,
+            "reranked_context_has_gold": true
+          }
+        ],
+        "algorithm": "query_token_overlap",
+        "conclusion": "只有上游漏选且正确片段已在候选集中时，该重排验证才支持改进。回答误用已提供证据的情形，需单独检查生成约束、证据对齐与输出评估。",
+        "limitation": "此处比较固定夹具和确定性排序，未重新生成回答，也未测量线上问答准确率。",
+        "context_limit": 1,
+        "schema_version": 1
+      },
+      "status": "completed",
+      "exit_code": 0,
+      "attempt_id": "4a5721bc-5c1b-407c-9873-b9359cb75790",
+      "input_sha256": "1d1c025cb0fc2cce2592f8cc4a7523cacbfee5cf42ab3dc3493ce8b46449a85e",
+      "script_sha256": "9be7b2f74d8f1b7c76fdd4fadd2a1a101a76bbd9c98411bd7b0af9c8baa4d37a",
+      "request_sha256": "3bb838dd29521f67c81a93dae5f08036aa40e672218f706a97fc92626c9262d7"
+    },
+    "reason": null,
+    "evidence_id": "b9ccab5b-e1d3-4760-935b-f1575394c150",
+    "reproduced_from": null,
+    "evidence": [
+      {
+        "evidence_id": "dc4a19ee-407d-43b2-b450-4ec7e834d7da"
+      }
+    ],
+    "created_at": "2026-11-24T16:14:00.799408+00:00"
+  },
+  "report": {
+    "id": "67da1870-e887-4371-8e2e-c31b063360f1",
+    "branch_id": "2ef5903c-b71b-4fcf-b37d-1fd9c6f6e369",
+    "research_revision_id": "57aea500-f488-482c-8a01-dc6c7c79ac6b",
+    "content": {
+      "title": "运维问答助手内部试点建议",
+      "diagnosis": "旧版案例的候选中没有现行规程；截断案例可通过排序改善上下文覆盖；误用案例已提供正确证据，但回答仍错误。",
+      "materials": [
+        {
+          "title": "试点问答失败记录的实验输入",
+          "source_id": "ef3ee3ba-fbc3-4c7c-b1e5-62046b7cf3a7",
+          "source_version_id": "220ddb25-3d40-47db-8f4a-f3ce729b61ea"
+        }
+      ],
+      "limitations": "实验以试点失败记录的英文对应摘录重放固定候选；仅改变排序，没有重新生成答案，也没有评估线上准确率。",
+      "evidence_ids": [
+        "dc4a19ee-407d-43b2-b450-4ec7e834d7da",
+        "b9ccab5b-e1d3-4760-935b-f1575394c150"
+      ],
+      "recommendations": "暂缓开放试点。先阻止旧规程进入候选，再验证上下文保留和审批表述，留出题回归通过后由值班团队验收。",
+      "source_version_ids": [
+        "220ddb25-3d40-47db-8f4a-f3ce729b61ea"
+      ]
+    },
+    "status": "accepted",
+    "review_reason": "已核对三个失败样本、固定回执和试点前置条件。",
+    "evidence": [
+      {
+        "evidence_id": "dc4a19ee-407d-43b2-b450-4ec7e834d7da"
+      },
+      {
+        "evidence_id": "b9ccab5b-e1d3-4760-935b-f1575394c150"
+      }
+    ],
+    "created_at": "2026-11-24T16:14:04.795774+00:00"
+  }
+}

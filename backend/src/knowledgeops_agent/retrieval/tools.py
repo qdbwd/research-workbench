@@ -15,11 +15,13 @@ _READ_LIMIT = 4
 def search_references(
     query: str, runtime: ToolRuntime[RunContext], scope: ReferenceScope = "all",
 ) -> dict:
-    """资料问答的首选入口。默认联合查询已发布知识和已导入材料，返回已读证据。
+    """资料问答的首选入口。默认联合检索已发布知识和已导入材料，返回已读证据。
 
-    用户限定只查知识或只查原始材料时分别用 scope=knowledge 或 material。
-    当前会话选定的材料范围和本次授权由程序核验。回答时紧邻具体论断使用
-    返回的完整 citation；evidence 为空时可尝试更具体的关键词或说明资料不足。
+    后台支持关键词（BM25）与语义向量（pgvector，启用并构建索引时自动生效）的 RRF 混合检索
+    及可选重排，可直接用自然语言问句、同义改写或跨语言表述查询。定位相关内容时应优先调用
+    本工具，再按需补读上下文，避免先逐篇通读全部材料。用户限定只查知识或只查原始材料时
+    分别用 scope=knowledge 或 material。当前会话选定的材料范围和本次授权由程序核验。
+    回答时紧邻具体论断使用返回的完整 citation；evidence 为空时可换表述/关键词重试或说明资料不足。
     """
     context = runtime.context
     root = context.jobs.guard(context.run_id, worker_id=context.worker_id)
@@ -40,7 +42,7 @@ def search_references(
     source_ids = root["input"].get("source_ids") or None
     candidates = find_references(
         context.knowledge, context.sources, query, root_id=context.root_id, scope=scope,
-        source_ids=source_ids, limit=_CANDIDATES,
+        source_ids=source_ids, limit=_CANDIDATES, vector=context.vector,
     )
     context.jobs.append_event(context.run_id, "reference_search", {
         "tool_call_id": runtime.tool_call_id,

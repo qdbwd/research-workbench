@@ -29,6 +29,7 @@ class KnowledgeOpsState(AgentState):
     promoted_tools: Annotated[dict, merge_promotions]
     final_response_feedback: NotRequired[list[str]]
     answer_repair_count: NotRequired[int]
+    protocol_repair_count: NotRequired[int]
     guidance_seen_sequence: NotRequired[int]
     decision_authority_epoch: NotRequired[int]
     model_step_key: NotRequired[str]
@@ -57,6 +58,7 @@ class RunContext:
     workspace_root: Path | None = None
     workspace_execute_timeout: int = 60
     workspace_output_limit_bytes: int = 10485760
+    vector: Any = None
 
     def __post_init__(self):
         from knowledgeops_agent.learning.budget import reserve_model

@@ -9,6 +9,7 @@ import { researchApi, researchPath, revisionSuffix, type ResearchTask } from './
 
 type Attempt = {
   id: string;
+  branch_id: string;
   status: string;
   question: string;
   hypothesis: string;
@@ -125,7 +126,7 @@ function ExperimentsScreen({ taskId }: { taskId: string }) {
           <p className="m-0 text-sm">{selected.hypothesis}</p>
           {selected.reason && <p className="m-0 text-sm text-control">{selected.reason}</p>}
           <div className="flex flex-wrap gap-3 text-sm">
-            {task.data && <Link to={researchPath(taskId) + revisionSuffix(task.data.main_branch_id) + '/' + selected.source_revision_id}>
+            {task.data && <Link to={researchPath(taskId) + revisionSuffix(selected.branch_id) + '/' + selected.source_revision_id}>
               固定研究版本
             </Link>}
             {selected.evidence_id && <Link to={researchPath(taskId) + '/evidence/' + selected.evidence_id}>查看实验回执和全部指标</Link>}

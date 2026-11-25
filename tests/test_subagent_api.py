@@ -28,7 +28,8 @@ def test_subagent_options_and_legacy_history_are_read_only(client, services):
     assert builtin["name"] == "researcher" and builtin["builtin"] is True
     options = client.get("/api/subagents/options").json()
     tool_names = {row["name"] for row in options["tools"]}
-    assert {"read_source", "call_model", "search_web"} <= tool_names
+    assert {"read_source", "search_web"} <= tool_names
+    assert "call_model" not in tool_names
     assert not {"publish_changes", "delegate_research", "capture_conversation"} & tool_names
     assert "evidence-check" in {row["name"] for row in options["skills"]}
     assert all(row["description"] for row in [*options["tools"], *options["skills"]])

@@ -1,9 +1,11 @@
 """用户建立正式提交，分支从固定提交继承。自动修订仍是工作进展。"""
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
+from sqlalchemy.orm import aliased
 
 from knowledgeops_agent.app.conversations import fingerprint
 from knowledgeops_agent.app.lifecycle.asset_references import replace_asset_references
+from knowledgeops_agent.app.runs.children import HUMAN_WAIT, OPEN
 from knowledgeops_agent.app.runs.control import lock_control
 from knowledgeops_agent.persistence.models import (
     KnowledgeDocument,
@@ -14,16 +16,21 @@ from knowledgeops_agent.persistence.models import (
     ResearchExperiment,
     ResearchRevision,
     ResearchTask,
+    Run,
     new_id,
+    utcnow,
 )
+from knowledgeops_agent.research import autonomy, maps
 from knowledgeops_agent.research import experiments as experiment_service
-from knowledgeops_agent.research import maps
 from knowledgeops_agent.research.service import (
     ResearchConflict,
     _append,
+    _conversation,
     _read_receipt,
     _save_receipt,
+    require_writable_branch,
     revision_view,
+    task_view,
 )
 
 
@@ -59,6 +66,7 @@ def _branch_view(session, branch):
     return {
         "id": branch.id, "name": branch.name, "fork_commit_id": branch.fork_commit_id,
         "latest_commit_id": latest.id if latest else None,
+        "archived_at": branch.archived_at.isoformat() if branch.archived_at else None,
         "head": revision_view(session.get(ResearchRevision, branch.head_revision_id)),
     }
 
@@ -68,7 +76,95 @@ def branches(sessions, task_id):
         task = _task(session, task_id)
         rows = session.scalars(select(ResearchBranch).where(ResearchBranch.task_id == task.id)
                                .order_by((ResearchBranch.id != task.main_branch_id), ResearchBranch.name, ResearchBranch.id))
-        return {"main_branch_id": task.main_branch_id, "items": [_branch_view(session, row) for row in rows]}
+        return {"main_branch_id": task.main_branch_id, "control_version": task.control_version,
+                "items": [_branch_view(session, row) for row in rows]}
+
+
+def _branch_runs(task_id, branch_id=None):
+    root = aliased(Run)
+    binding = root.input_data["research"]
+    query = select(Run.id).join(root, Run.root_id == root.id).where(binding["task_id"].as_string() == task_id)
+    if branch_id is not None:
+        query = query.where(binding["branch_id"].as_string() == branch_id)
+    return query
+
+
+def _unsettled(session, task_id, branch_id=None):
+    return session.scalar(_branch_runs(task_id, branch_id).where(
+        or_(Run.status.in_(OPEN), and_(Run.status == "interrupted", Run.outcome["kind"].astext.in_(HUMAN_WAIT))),
+    ).limit(1))
+
+
+def archive(sessions, task_id, branch_id, body):
+    key = "research:archive-branch:" + fingerprint([task_id, branch_id, body.operation_id])
+    request_hash = fingerprint(body.expected_revision_id)
+    with sessions.begin() as session:
+        lock_control(session)
+        prior = _read_receipt(session, key, request_hash)
+        if prior is not None:
+            return prior
+        task = _task(session, task_id)
+        branch = _branch(session, task, branch_id)
+        if branch.head_revision_id != body.expected_revision_id:
+            raise ResearchConflict("branch_conflict", "该分支进展已变化，请重新核对后归档。", task=task, branch=branch)
+        if task.writing_branch_id == branch.id:
+            raise ResearchConflict("branch_in_use", "该分支用于后续会话写入，请先切换写入分支。")
+        if branch.pending_delivery_id or _unsettled(session, task_id, branch.id) or experiment_service.blockers(session, branch.id):
+            raise ResearchConflict("branch_busy", "该分支仍有运行、实验或成果在收尾，请处理后再归档。")
+        if branch.archived_at is None:
+            branch.archived_at = utcnow()
+            experiment_service.cancel_branch(session, branch.id, "研发分支已归档。")
+            autonomy.invalidate(session, task.id, "研发分支已归档。", branch_id=branch.id)
+        return _save_receipt(session, key, request_hash, _branch_view(session, branch))
+
+
+def unarchive(sessions, task_id, branch_id, body):
+    """解除分支归档：仅清空 archived_at，不复活旧授权/旧实验，也不自动切换写入分支。"""
+    key = "research:unarchive-branch:" + fingerprint([task_id, branch_id, body.operation_id])
+    request_hash = fingerprint(body.expected_revision_id)
+    with sessions.begin() as session:
+        lock_control(session)
+        prior = _read_receipt(session, key, request_hash)
+        if prior is not None:
+            return prior
+        task = _task(session, task_id)
+        branch = _branch(session, task, branch_id)
+        if branch.head_revision_id != body.expected_revision_id:
+            raise ResearchConflict("branch_conflict", "该分支进展已变化，请重新核对后恢复。", task=task, branch=branch)
+        if branch.archived_at is not None:
+            branch.archived_at = None
+        return _save_receipt(session, key, request_hash, _branch_view(session, branch))
+
+
+def restart(sessions, task_id, branch_id, body):
+    key = "research:restart-branch:" + fingerprint([task_id, branch_id, body.operation_id])
+    request_hash = fingerprint(body.expected_control_version)
+    with sessions.begin() as session:
+        lock_control(session)
+        prior = _read_receipt(session, key, request_hash)
+        if prior is not None:
+            return prior
+        task = _task(session, task_id)
+        branch = _branch(session, task, branch_id)
+        require_writable_branch(branch)
+        if task.control_version != body.expected_control_version:
+            raise ResearchConflict("control_conflict", "任务状态已变化，请重新核对后开始。", task=task, branch=branch)
+        if task.status not in {"closed", "completed"} or not task.home_conversation_id:
+            raise ResearchConflict("task_unavailable", "请从保有原会话的已取消或已验收任务开始新一轮。")
+        _conversation(session, task.home_conversation_id)
+        head = session.get(ResearchRevision, branch.head_revision_id)
+        if (not branch.fork_commit_id or branch.id == task.writing_branch_id or head.origin != "fork"
+                or session.scalar(_branch_runs(task.id, branch.id).limit(1))):
+            raise ResearchConflict("branch_not_new", "请从要继承的固定提交创建一个新分支。")
+        if _unsettled(session, task.id):
+            raise ResearchConflict("branch_busy", "上一轮运行仍在收尾，请等待停止后再开始。")
+        # 重开将改变任务的工作范围，旧分支仍存的许可也不得跨控制版本续用。
+        autonomy.invalidate(session, task.id, "研发已从固定提交开始新一轮。")
+        task.status = "open"
+        task.control_version += 1
+        task.write_branch_id = branch.id
+        task.write_version += 1
+        return _save_receipt(session, key, request_hash, task_view(task, head, branch))
 
 
 def _asset_snapshot(session, task, branch, revision):
@@ -137,6 +233,7 @@ def preview(sessions, task_id, branch_id):
         lock_control(session)
         task = _task(session, task_id)
         branch = _branch(session, task, branch_id)
+        require_writable_branch(branch)
         _, parent, revision, assets, digest = _preview(session, task, branch)
         return {"parent_commit_id": parent, "preview_hash": fingerprint([digest, task.control_version]),
                 "snapshot": _snapshot_view(session, revision, assets)}
@@ -152,6 +249,7 @@ def save(sessions, task_id, branch_id, body):
             return prior
         task = _task(session, task_id)
         branch = _branch(session, task, branch_id)
+        require_writable_branch(branch)
         last, parent, revision, assets, digest = _preview(session, task, branch)
         if body.preview_hash != fingerprint([digest, task.control_version]):
             raise ResearchConflict("commit_conflict", "研究进展或资产已变化，请重新预览。", task=task, branch=branch)

@@ -13,6 +13,7 @@ test('autonomous research starts only after confirming the brief and cumulative 
   await page.getByRole('button', { name: '自主推进', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '自主推进' });
   await expect(dialog.getByText('核对内部问答证据缺失位置')).toBeVisible();
+  await dialog.getByText(/查看或调整安全上限/).click();
   await dialog.getByRole('spinbutton', { name: '模型请求' }).fill('3');
   await dialog.getByRole('spinbutton', { name: '活跃执行秒数' }).fill('60');
   expect(await (await page.request.get(route)).json()).toBeNull();
@@ -73,17 +74,44 @@ test('research map compares fixed versions and adopts one conclusion into a new 
   await add.getByLabel('变更理由').fill('记录首个待核对假设');
   await add.getByRole('button', { name: '保存主题' }).click();
   await expect(page.getByRole('heading', { name: '正确片段是否被截断？' })).toBeVisible();
+  await page.getByRole('button', { name: '新增主题', exact: true }).click();
+  await add.getByLabel('具体问题').fill('核对原始试点材料');
+  await add.getByLabel('解决标准').fill('检查手册适用范围');
+  await add.getByLabel('变更理由').fill('增加并行的资料核对');
+  await add.getByRole('button', { name: '保存主题' }).click();
+  await expect(add).toHaveCount(0);
+  const canvas = page.getByRole('region', { name: '研发地图', exact: true });
+  await expect(canvas.getByText('查清正确候选丢在哪一环', { exact: true })).toBeVisible();
+  await canvas.getByRole('button', { name: '正确片段是否被截断？', exact: true }).press('Enter');
   const original = await (await page.request.get(root)).json();
-  await page.getByRole('button', { name: '编辑主题', exact: true }).click();
-  const edit = page.getByRole('dialog', { name: '编辑研究主题' });
+  const edit = page.getByRole('form', { name: '编辑研究主题' });
+  await expect(edit).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   await edit.getByRole('textbox', { name: '结论', exact: true }).fill('也可能是模型误用。');
   await edit.getByLabel('变更理由').fill('故障有两种可能');
+  await canvas.getByRole('button', { name: '核对原始试点材料' }).click();
+  await expect(edit.getByLabel('具体问题')).toHaveValue('核对原始试点材料');
+  await canvas.getByRole('button', { name: '正确片段是否被截断？', exact: true }).click();
+  await expect(edit.getByRole('textbox', { name: '结论', exact: true })).toHaveValue('也可能是模型误用。');
   await edit.getByRole('button', { name: '保存主题' }).click();
-  await expect(page.getByText('也可能是模型误用。', { exact: true })).toBeVisible();
+  await expect.poll(async () => (await (await page.request.get(root)).json()).revision_id).not.toBe(original.revision_id);
   const changed = await (await page.request.get(root)).json();
+  const focusId = original.nodes.find((node: { question: string }) => node.question === '正确片段是否被截断？').id;
+  expect(changed.nodes.find((node: { id: string }) => node.id === focusId).conclusion).toBe('也可能是模型误用。');
+  await expect(edit.getByRole('textbox', { name: '结论', exact: true })).toHaveValue('也可能是模型误用。');
+  await page.screenshot({ path: '../artifacts/verification/research-map-inline-desktop.png', fullPage: true });
+  const desktop = page.viewportSize()!;
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+  const reasonBox = (await edit.getByLabel('变更理由').boundingBox())!;
+  const saveBox = (await edit.getByRole('button', { name: '保存主题' }).boundingBox())!;
+  expect(saveBox.y).toBeGreaterThanOrEqual(reasonBox.y + reasonBox.height);
+  await page.screenshot({ path: '../artifacts/verification/research-map-inline-narrow.png', fullPage: true });
+  await page.setViewportSize(desktop);
   await page.getByRole('button', { name: '版本对比', exact: true }).click();
   await expect(page.getByLabel('起始版本')).toHaveValue(original.revision_id);
   await expect(page.getByLabel('对照版本')).toHaveValue(changed.revision_id);
+  await expect(page.getByRole('form', { name: '编辑研究主题' })).toHaveCount(0);
   await page.getByRole('button', { name: '预览采纳历史结论' }).click();
   const adoption = page.getByRole('dialog', { name: '采纳历史结论' });
   await expect(adoption.getByText('初步假设是截断。', { exact: true })).toBeVisible();
@@ -93,7 +121,8 @@ test('research map compares fixed versions and adopts one conclusion into a new 
   await expect(page.getByLabel('对照版本')).toHaveValue(changed.revision_id);
   const latest = await (await page.request.get(root)).json();
   expect(latest.revision_id).not.toEqual(changed.revision_id);
-  expect(latest.nodes[0]).toMatchObject({ conclusion: '初步假设是截断。', status: 'needs_review' });
+  expect(latest.nodes.find((node: { id: string }) => node.id === focusId))
+    .toMatchObject({ conclusion: '初步假设是截断。', status: 'needs_review' });
 });
 
 test('research focus can pin product design and preserves its fixed revision', async ({ page }) => {

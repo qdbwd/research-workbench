@@ -18,8 +18,21 @@ def search_references(
     scope: ReferenceScope = "all",
     source_ids: list[str] | None = None,
     limit: int = 10,
+    vector=None,
+    use_rerank: bool | None = None,
 ) -> list[dict]:
-    """两类索引分值尺度不同，按每路名次交错；统一候选仍没有引用权限。"""
+    """两类索引分值尺度不同，按每路名次交错；若注入向量服务且已启用则走混合 RRF + 可选重排。"""
+    if vector is not None:
+        return vector.search_references(
+            knowledge,
+            sources,
+            query,
+            root_id=root_id,
+            scope=scope,
+            source_ids=source_ids,
+            limit=limit,
+            use_rerank=use_rerank,
+        )
     if scope not in {"all", "knowledge", "material"}:
         raise ValueError("未知的资料检索范围")
     if limit <= 0:

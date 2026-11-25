@@ -187,3 +187,45 @@ def test_paused_exhausted_autonomy_can_continue_in_manual_research(client, servi
     assert exhausted["status"] == "exhausted" and exhausted["usage"]["model_requests"] == 1
     assert services.jobs.get_run(old_id)["status"] == "cancelled"
     assert submit(client, chat, "manual-without-permit")["input"]["research"].get("permit_id") is None
+
+
+def test_autonomy_resume_after_protocol_failure_schedules_clean_run(client, services):
+    """协议泄漏失败后手动恢复不应重放已污染的旧检查点，而应在同一 Permit 下排新续跑。"""
+    from knowledgeops_agent.harness.models.validation import PROTOCOL_FAILURE
+
+    _, task = create_task(client)
+    base = f"/api/research-tasks/{task['id']}"
+    granted = authorize(client, task, model_requests=5).json()
+    failed_id = granted["permit"]["run_id"]
+    permit_id = granted["permit"]["id"]
+
+    assert services.jobs.claim("dsml-fail-worker", run_id=failed_id, generation=1)
+    reserve_model(services.jobs, "dsml-req-1", failed_id, failed_id)
+    services.jobs.finish(
+        failed_id,
+        "dsml-fail-worker",
+        status="failed",
+        outcome={"kind": "partial", "answer": ""},
+        reason=PROTOCOL_FAILURE,
+    )
+
+    recovering = client.get(base + "/autonomy").json()
+    assert recovering["status"] == "recovery_required"
+    assert recovering["usage"]["model_requests"] == 1
+
+    current = client.get(base).json()
+    resumed = client.post(base + "/autonomy", json={
+        "operation_id": "resume-after-dsml",
+        "expected_control_version": current["control_version"],
+        "expected_revision_id": current["head"]["id"],
+        "action": "resume",
+    })
+    assert resumed.status_code == 200, resumed.text
+    resumed_permit = resumed.json()["permit"]
+    assert resumed_permit["id"] == permit_id
+    assert resumed_permit["status"] == "active"
+    assert resumed_permit["usage"]["model_requests"] == 1
+    # 必须是干净的新 Run，而不是重放已污染的 failed_id
+    assert resumed_permit["run_id"] != failed_id
+    assert services.jobs.get_run(failed_id)["status"] == "failed"
+    assert services.jobs.get_run(resumed_permit["run_id"])["status"] == "queued"

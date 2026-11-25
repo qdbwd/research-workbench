@@ -18,7 +18,6 @@ REASONS = {
     "main_only": "只提供给主Agent，子角色不能写入或递归委派",
     "legacy_only": "仅用于恢复历史任务，新任务使用task委派",
     "knowledge_only": "仅知识库模式不允许联网或外部MCP",
-    "auxiliary_disabled": "本次任务未开启辅助模型",
     "research_mode_required": "仅用于已绑定研发任务的主运行",
     "research_autonomy_required": "需要已确认的自主研发授权",
     "research_review_only": "当前研发仅供核对已有成果",
@@ -39,7 +38,6 @@ def effective_catalog(
     *,
     role_id: str | None = None,
     knowledge_only: bool = False,
-    auxiliary: bool = False,
     delegation: bool = True,
     workspace_enabled: bool = False,
 ) -> dict:
@@ -47,7 +45,7 @@ def effective_catalog(
     policy = ToolPolicyService(sessions).get()
     role = SubagentRegistry(sessions).get(role_id) if role_id else None
     has_subagents = bool(SubagentRegistry(sessions).snapshot()) if role is None else False
-    root = {"knowledge_only": knowledge_only, "auxiliary": auxiliary, "delegation": delegation}
+    root = {"knowledge_only": knowledge_only, "delegation": delegation}
     is_root = role is None
     selected = role_tool_names(role) if role else None
     available_skills = {row["resource"].split("/")[2] for row in load_skills(policy)}

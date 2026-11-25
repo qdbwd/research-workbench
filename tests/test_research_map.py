@@ -25,6 +25,111 @@ def update_node(client, task, nonce, node):
     })
 
 
+def test_adopt_new_node_from_fixed_commit_into_explicit_branch(client, services):
+    from knowledgeops_agent.persistence.models import AssetReference, utcnow
+
+    conversation = client.post("/api/conversations", json={"trial_case": "operations-pilot-v1"}).json()
+    chat = conversation["id"]
+    task = client.post(f"/api/conversations/{chat}/research-task", json={
+        "operation_id": "pilot", "goal": "评估运维问答助手的内部试点",
+    }).json()
+    root = f"/api/research-tasks/{task['id']}"
+    main = f"{root}/branches/{task['main_branch_id']}"
+
+    def commit(key):
+        preview = client.get(main + "/commit-preview").json()
+        response = client.post(main + "/commits", json={
+            "operation_id": key, "message": key, "preview_hash": preview["preview_hash"],
+        })
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    run = submit(client, chat)
+    with services.sessions.begin() as session:
+        session.add(KnowledgeDocument(id="pilot-evidence-doc", trial_conversation_id=chat))
+        session.flush()
+        session.add(KnowledgeVersion(
+            id="pilot-evidence-version", document_id="pilot-evidence-doc", number=1, title="最终上下文摘录",
+            category="工程", body="窗口截断移除了现行手册。", action="create", root_id=run["id"],
+        ))
+    read = services.knowledge.read_document("pilot-evidence-doc", version_id="pilot-evidence-version", root_id=run["id"])
+    latest = client.get(root).json()
+    parent_save = update_node(client, latest, "parent", {
+        "question": "材料是否支持进入试点？", "criteria": "核对可用材料",
+        "status": "resolved", "conclusion": "已确认材料范围。", "reason": "核对试点材料", "evidence_ids": [read["id"]],
+    })
+    assert parent_save.status_code == 200, parent_save.text
+    parent = parent_save.json()["map"]["nodes"][0]
+    baseline = commit("试点基线")
+    fork = client.post(root + "/branches", json={
+        "operation_id": "fork", "name": "候选排序实验", "source_commit_id": baseline["id"],
+    }).json()
+    latest = parent_save.json()["task"]
+    result = update_node(client, latest, "new-point", {
+        "question": "现行手册在哪一步丢失？", "criteria": "核对最终上下文",
+        "parent_id": parent["id"], "status": "resolved", "conclusion": "在上下文窗口被截断。",
+        "reason": "最终上下文摘录确认", "evidence_ids": [read["id"]],
+        "related": [{"target_id": parent["id"], "description": "辅助解释手册覆盖范围"}],
+    })
+    assert result.status_code == 200, result.text
+    source = commit("固定截断诊断")
+    node = next(row for row in source["snapshot"]["map"]["nodes"] if row["question"] == "现行手册在哪一步丢失？")
+    params = {
+        "source_commit_id": source["id"], "node_id": node["id"], "target_branch_id": fork["id"],
+        "expected_revision_id": fork["head"]["id"], "expected_control_version": task["control_version"],
+        "target_parent_id": parent["id"],
+    }
+    preview_route = root + "/map/commit-adoption-preview"
+    adopt_route = root + "/map/commit-adopt"
+    assert client.post(preview_route, json={**params, "target_parent_id": "unrelated-parent"}).status_code == 409
+    preview = client.post(preview_route, json=params)
+    assert preview.status_code == 200, preview.text
+    plan = preview.json()
+    assert plan["before"] is None
+    assert plan["after"]["status"] == "needs_review"
+    assert plan["after"]["parent_id"] == parent["id"]
+    assert plan["after"]["related"] == []
+    assert plan["evidence"][0]["id"] == read["id"]
+    assert plan["reopened_ancestors"] == [{"id": parent["id"], "question": parent["question"]}]
+
+    # 预览后目标简报变化也会阻止写入。
+    fork_path = f"{root}/branches/{fork['id']}"
+    changed = client.post(fork_path + "/revisions", json={
+        "operation_id": "advance-target", "expected_revision_id": fork["head"]["id"],
+        "expected_control_version": task["control_version"], "changes": {"brief": {"next_action": "补齐范围"}},
+        "reason": "先校验另一个条件",
+    })
+    assert changed.status_code == 201, changed.text
+    command = {**params, "operation_id": "adopt", "preview_hash": plan["preview_hash"], "reason": "补上确认过的诊断"}
+    assert client.post(adopt_route, json=command).status_code == 409
+    target = next(row for row in client.get(root + "/branches").json()["items"] if row["id"] == fork["id"])
+    command["expected_revision_id"] = target["head"]["id"]
+    preview = client.post(preview_route, json={**params, "expected_revision_id": target["head"]["id"]})
+    assert preview.status_code == 200, preview.text
+    command["preview_hash"] = preview.json()["preview_hash"]
+    with services.sessions.begin() as session:
+        session.get(KnowledgeDocument, "pilot-evidence-doc").deleted_at = utcnow()
+    revoked = client.post(adopt_route, json=command)
+    assert revoked.status_code == 409 and revoked.json()["code"] == "adoption_evidence_unavailable"
+    with services.sessions.begin() as session:
+        session.get(KnowledgeDocument, "pilot-evidence-doc").deleted_at = None
+    applied = client.post(adopt_route, json=command)
+    assert applied.status_code == 200, applied.text
+    assert client.post(adopt_route, json=command).json() == applied.json()
+    [selected] = [row for row in applied.json()["map"]["nodes"] if row["id"] == node["id"]]
+    assert selected["evidence"][0]["id"] == read["id"]
+    assert selected["status"] == "needs_review"
+    revision = applied.json()["map"]["revision_id"]
+    fixed = client.get(fork_path + "/revisions/" + revision).json()
+    assert fixed["state"]["adopted_from"] == {
+        "research_revision_id": source["revision_id"], "research_commit_id": source["id"], "node_id": node["id"],
+    }
+    with services.sessions() as session:
+        assert session.get(AssetReference, ("research_revision", revision, f"research_commit:{source['id']}"))
+    assert client.get(main + "/commits/" + source["id"]).json() == source
+    assert client.get(root).json()["write_branch_id"] == task["main_branch_id"]
+
+
 def test_history_preserves_evidence_and_adopts_only_confirmed_conclusion(client, services):
     chat, task = create_task(client)
     run = submit(client, chat)

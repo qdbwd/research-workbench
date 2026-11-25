@@ -1,0 +1,37 @@
+{
+  "context_limit": 1,
+  "documents": {
+    "change-policy-v1": "Historical rule: the operator can start a production emergency change and the on-call lead signs afterwards.",
+    "change-policy-v2": "Production emergency changes need advance approval from the on-call lead. If the on-call lead is unavailable, the backup lead approves. With no approval, hold the current state.",
+    "change-runbook-v1": "Record a rollback point and check the monitoring dashboard before operating. After the change check error rate, latency, and business probes."
+  },
+  "cases": [
+    {
+      "id": "old-version",
+      "question": "Can a production emergency change start and receive approval afterwards?",
+      "gold_id": "change-policy-v2",
+      "candidate_ids": ["change-policy-v1"],
+      "observed_context": ["change-policy-v1"],
+      "observed_answer": "Proceed and request a signature afterwards.",
+      "expected_answer": "No. The on-call lead must approve in advance."
+    },
+    {
+      "id": "missing-from-context",
+      "question": "Who gives advance approval for an emergency change?",
+      "gold_id": "change-policy-v2",
+      "candidate_ids": ["change-runbook-v1", "change-policy-v2"],
+      "observed_context": ["change-runbook-v1"],
+      "observed_answer": "Proceed after recording the rollback point.",
+      "expected_answer": "The on-call lead approves in advance."
+    },
+    {
+      "id": "visible-misused",
+      "question": "Who approves if the on-call lead is unavailable?",
+      "gold_id": "change-policy-v2",
+      "candidate_ids": ["change-policy-v2"],
+      "observed_context": ["change-policy-v2"],
+      "observed_answer": "The requester may approve.",
+      "expected_answer": "The backup lead approves."
+    }
+  ]
+}

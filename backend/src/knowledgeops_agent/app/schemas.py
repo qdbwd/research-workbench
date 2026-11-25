@@ -18,6 +18,7 @@ class ConversationInput(InputModel):
     title: str = Field(default="新对话", max_length=300)
     request_key: str | None = Field(default=None, min_length=1, max_length=200)
     trial_case: str | None = Field(default=None, min_length=1, max_length=80)
+    project_id: str | None = Field(default=None, min_length=1, max_length=36)
 
 
 class ConversationRenameInput(InputModel):
@@ -87,7 +88,6 @@ class MessageInput(InputModel):
     publication_mode: Literal["ask", "preview", "direct"] = "ask"
     knowledge_only: bool = False
     delegation: bool = True
-    auxiliary: bool = Field(default=False, strict=True)
     reasoning_effort: str | None = Field(default=None, min_length=1, max_length=32)
     source_ids: list[str] = Field(default_factory=list, max_length=30)
     budgets: Budgets = Field(default_factory=Budgets)

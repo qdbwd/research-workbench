@@ -39,7 +39,7 @@ DISPLAY_NAMES = {
     'task_note': '维护任务要点', 'memory_search': '检索长期记忆',
     'memory_read': '读取长期记忆', 'read_learning_draft': '读取学习草稿',
     'wait_learning_input': '等待学习反馈', 'learning_feedback': '请求学习审读',
-    'propose_learning_framework': '提出学习框架', 'call_model': '调用辅助模型',
+    'propose_learning_framework': '提出学习框架',
     'prepare_changes': '准备知识草稿', 'publish_changes': '发布知识变更',
     'capture_conversation': '保存讨论材料', 'list_changesets': '列出知识草稿',
     'read_changeset': '读取知识草稿', 'revise_changeset': '修订知识草稿',
@@ -64,10 +64,10 @@ class ToolDefinition:
     description: str
     group: str
     source: Literal["builtin", "middleware"] = "builtin"
-    effect: Literal["read", "write", "run", "model", "delegate"] = "read"
+    effect: Literal["read", "write", "run", "delegate"] = "read"
     subagent_selectable: bool = True
     main_only: bool = False
-    condition: Literal["always", "auxiliary", "web", "delegation", "skills", "workspace", "research"] = "always"
+    condition: Literal["always", "web", "delegation", "skills", "workspace", "research"] = "always"
     legacy_only: bool = False
 
     def view(self) -> dict:
@@ -90,7 +90,7 @@ STATIC_TOOLS = (
           ("wait_async_tasks", "等待子结果并释放执行槽"),
       )),
     ToolDefinition("search_knowledge", "检索项目知识库", "knowledge_read"),
-    ToolDefinition("search_references", "联合检索已发布知识与可用材料并读取证据", "knowledge_read",
+    ToolDefinition("search_references", "联合检索已发布知识与可用材料并读取证据（支持关键词与语义向量混合检索）", "knowledge_read",
                    subagent_selectable=False, main_only=True),
     ToolDefinition("list_knowledge", "列出知识文档", "knowledge_read"),
     ToolDefinition("knowledge_history", "查看文档历史版本", "knowledge_read"),
@@ -149,13 +149,6 @@ STATIC_TOOLS = (
         effect="run",
         subagent_selectable=False,
         main_only=True,
-    ),
-    ToolDefinition(
-        "call_model",
-        "独立处理材料，仍须根任务显式启用辅助模型",
-        "auxiliary",
-        effect="model",
-        condition="auxiliary",
     ),
     ToolDefinition(
         "prepare_changes",
@@ -297,7 +290,6 @@ GROUP_LABELS = {
     "task_continuity": "任务连续性",
     "long_term_memory": "长期记忆读取",
     "learning": "学习协作",
-    "auxiliary": "辅助模型",
     "knowledge_maintenance": "知识维护",
     "delegation": "子任务委派",
     "web": "网页获取",
@@ -356,8 +348,6 @@ def local_tool_reasons(
         reasons.append("main_only")
     if item["legacy_only"] and not legacy_snapshot:
         reasons.append("legacy_only")
-    if item["condition"] == "auxiliary" and root_input.get("auxiliary", False) is not True:
-        reasons.append("auxiliary_disabled")
     if item["condition"] == "research" and not root_input.get("research"):
         reasons.append("research_mode_required")
     if item["name"] == "continue_research" and not root_input.get("research", {}).get("permit_id"):
@@ -387,7 +377,7 @@ def local_tool_names(
     """合并原有任务选项和角色上限，保持未配置/空许可的区别。
 
     None表示没有配置角色，继续兼容既有主图或历史子图；空序列表示角色没有
-    普通工具。始终先执行根约束，角色白名单不能重新启用联网或辅助模型。
+    普通工具。始终先执行根约束，角色白名单不能重新启用联网。
     """
     return [
         item.name

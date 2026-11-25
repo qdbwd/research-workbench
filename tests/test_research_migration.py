@@ -1,4 +1,4 @@
-"""从 0045 继续升级到 0052，保留旧聊天、研发身份和版本归属。"""
+"""升级既有研发数据，保留旧聊天、研发身份和版本归属。"""
 
 import os
 from datetime import UTC, datetime
@@ -136,6 +136,15 @@ def test_migration_preserves_history_and_guards_version_ownership():
             command.upgrade(config, "0052")
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0052"
             assert connection.scalar(text("SELECT count(*) FROM research_experiments")) == 0
+            command.upgrade(config, "0057")
+            command.upgrade(config, "0058")
+            assert connection.execute(text(
+                "SELECT main_branch_id, write_branch_id, write_version FROM research_tasks WHERE id = 'old-task'",
+            )).one() == ("old-branch", None, 1)
+            command.upgrade(config, "0059")
+            assert connection.execute(text(
+                "SELECT archived_at FROM research_branches WHERE id = 'old-branch'",
+            )).one() == (None,)
             assert [connection.execute(table.select()).all() for table in (conversations, runs, messages)] == before
 
         scoped = create_engine(engine.url, connect_args={"options": f"-csearch_path={schema}"})
@@ -150,6 +159,7 @@ def test_migration_preserves_history_and_guards_version_ownership():
             assert jobs.claim("ordinary-worker", run_id=ordinary["id"], generation=ordinary["generation"])
             assert jobs.finish(ordinary["id"], "ordinary-worker", outcome={"answer": "普通答复"})["status"] == "completed"
             assert service.get("old-task")["head"]["state"]["brief"]["goal"] == "已有目标"
+            assert service.get("old-task")["write_branch_id"] == "old-branch"
             first = service.create("legacy-chat", "activate", "旧会话启用研发", "第一份")
             second = service.create("another-chat", "activate", "另一会话启用研发", "第二份")
             assert first["head"]["state"]["brief"]["scope"] == ""
@@ -157,6 +167,10 @@ def test_migration_preserves_history_and_guards_version_ownership():
             for statement, params in [
                 (
                     "UPDATE research_tasks SET main_branch_id=:branch WHERE id=:id",
+                    {"branch": second["main_branch_id"], "id": first["id"]},
+                ),
+                (
+                    "UPDATE research_tasks SET write_branch_id=:branch WHERE id=:id",
                     {"branch": second["main_branch_id"], "id": first["id"]},
                 ),
                 (

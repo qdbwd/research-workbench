@@ -69,7 +69,7 @@ def test_nonempty_upgrade_keeps_legacy_run_snapshot_and_disabled_tool():
             )
             connection.execute(
                 text(
-                    "UPDATE tool_policies SET content=jsonb_set(content, '{enabled,builtin:call_model}', 'false') WHERE id='default'"
+                    "UPDATE tool_policies SET content=jsonb_set(content, '{enabled,builtin:search_web}', 'false') WHERE id='default'"
                 )
             )
             policy_before = connection.execute(
@@ -97,8 +97,10 @@ def test_nonempty_upgrade_keeps_legacy_run_snapshot_and_disabled_tool():
             assert all(
                 policy_after["enabled"][key] == value
                 for key, value in policy_before["enabled"].items()
+                if key != "builtin:call_model"
             )
-            assert not policy_after["enabled"]["builtin:call_model"]
+            assert not policy_after["enabled"]["builtin:search_web"]
+            assert "builtin:call_model" not in policy_after["enabled"]
             assert (
                 connection.execute(
                     text(

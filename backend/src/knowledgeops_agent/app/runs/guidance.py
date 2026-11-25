@@ -313,6 +313,7 @@ class GuidanceMiddleware(AgentMiddleware):
                     "guidance_seen_sequence": max(row["sequence"] for row in applied),
                     "final_response_feedback": [],
                     "answer_repair_count": 0,
+                    "protocol_repair_count": 0,
                 }
             )
         return update

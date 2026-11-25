@@ -29,8 +29,6 @@ type Props = {
   setKnowledgeOnly: (value: boolean) => void;
   delegation: boolean;
   setDelegation: (value: boolean) => void;
-  auxiliary: boolean;
-  setAuxiliary: (value: boolean) => void;
   materials: Source[];
   selected: string[];
   setSelected: (value: string[]) => void;
@@ -179,17 +177,6 @@ export function ComposerControls(props: Props) {
                     onChange={(e) => props.setDelegation(e.target.checked)}
                   />
                   允许子Agent分工
-                </label>
-                <label
-                  className="check m-0 flex-row items-center gap-2 font-normal"
-                  title="按需增加模型请求，共享本任务预算"
-                >
-                  <input
-                    type="checkbox"
-                    checked={props.auxiliary}
-                    onChange={(e) => props.setAuxiliary(e.target.checked)}
-                  />
-                  允许辅助模型
                 </label>
                 {props.conversationId && (
                   <Link to={`/tools?conversation_id=${props.conversationId}#execution-rules`}>

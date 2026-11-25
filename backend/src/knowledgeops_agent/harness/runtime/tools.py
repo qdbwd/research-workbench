@@ -1,4 +1,4 @@
-"""通用运行工具：读取长结果、更新计划及显式启用的辅助调用和委派。"""
+"""通用运行工具：读取长结果、更新计划及委派。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ from langchain.tools import ToolRuntime, tool
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
-from knowledgeops_agent.harness.models.auxiliary import MaterialReference, call_auxiliary
 from knowledgeops_agent.harness.runtime.state import RunContext
 
 
@@ -25,21 +24,6 @@ def read_tool_result(artifact_id: str, runtime: ToolRuntime[RunContext], start: 
         if identity:
             result["research_evidence_id"] = identity
     return result
-
-
-@tool
-def call_model(
-    prompt: str,
-    runtime: ToolRuntime[RunContext],
-    material_refs: list[MaterialReference] | None = None,
-) -> dict:
-    """按指定prompt做一次独立无工具模型调用，不自动继承主历史；需要集中处理/核对材料时使用。
-
-    material_refs以kind/id引用固定source_version、source_segment、knowledge_version、draft_revision或artifact；
-    草稿必须有revision，可用start/end选择字符范围。只读原文，不接受文件路径或URL。
-    返回状态、完整产物引用及预览，消耗当前根任务模型预算；短答可以由主Agent直接完成。
-    """
-    return call_auxiliary(runtime.context, prompt, material_refs or [], runtime.tool_call_id or "")
 
 
 @tool

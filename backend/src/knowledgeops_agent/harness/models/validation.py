@@ -76,8 +76,13 @@ def leaked_tool_protocol(message) -> bool:
     )
 
 
+MAX_PROTOCOL_REPAIRS = 1
+PROTOCOL_REPAIR_FEEDBACK = (
+    "你刚才在正文中输出了未执行的工具调用标记，程序未执行该操作。"
+    "请改用标准结构化工具调用重新发起，直接按工具定义传入平铺参数，不要嵌套额外包装对象，也不要在正文中输出 DSML 标记。"
+)
 PROTOCOL_FAILURE = (
-    "模型未返回有效的结构化工具调用，而在正文中输出调用标记；操作未执行，进度已保留。"
+    "模型连续未返回有效的结构化工具调用，而在正文中输出调用标记；操作未执行，前序进度与已读证据已保留，可稍后恢复继续。"
 )
 OUTPUT_LIMIT_FAILURE = (
     "模型达到输出上限，回复未完整生成；当前响应不作完成依据，也不继续执行其中的工具指令。"
@@ -132,12 +137,30 @@ class FinalAnswerValidation(AgentMiddleware):
             )
             raise InvalidModelOutput(OUTPUT_LIMIT_FAILURE)
         if last.tool_calls:
-            return None
+            # 纠偏重试后若模型已恢复发出有效结构化工具调用，及时清空旧纠偏提示，
+            # 避免后续轮次继续收到过期的协议异常反馈。
+            return {"final_response_feedback": []} if state.get("final_response_feedback") else None
         if leaked_tool_protocol(last):
-            # 不从正文恢复工具调用，不触发额外收费重试，也不伪装成成功回复。
+            # 不从正文恢复工具调用，也不伪装成成功回复；但针对供应商偶发 DSML 泄漏，
+            # 在既有预算上限内允许最多原地纠偏重试 1 次（保留前序全部上下文与已读证据）。
+            repairs = state.get("protocol_repair_count", 0)
+            retrying = repairs < MAX_PROTOCOL_REPAIRS
             context.jobs.append_event(
-                context.run_id, "model_protocol_error", {"kind": "unexecuted_tool_markup"}
+                context.run_id,
+                "model_protocol_error",
+                {
+                    "kind": "unexecuted_tool_markup",
+                    "repair_number": repairs + 1 if retrying else repairs,
+                    "max_repairs": MAX_PROTOCOL_REPAIRS,
+                    "retrying": retrying,
+                },
             )
+            if retrying:
+                return {
+                    "final_response_feedback": [PROTOCOL_REPAIR_FEEDBACK],
+                    "protocol_repair_count": repairs + 1,
+                    "jump_to": "model",
+                }
             raise InvalidModelOutput(PROTOCOL_FAILURE)
         limit = current_length_limit(context)
         problems = []

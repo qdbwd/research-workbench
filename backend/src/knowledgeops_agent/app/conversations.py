@@ -94,11 +94,11 @@ class ConversationBrowser:
     def __init__(self, sessions):
         self.sessions = sessions
 
-    def page(self, *, query: str = "", cursor: str | None = None, limit: int = 20) -> dict:
+    def page(self, *, query: str = "", cursor: str | None = None, limit: int = 20, project: str | None = None) -> dict:
         query = query.strip()
         if not 1 <= limit <= 100 or len(query) > 200:
             raise ValueError("invalid conversation page parameters")
-        scope = fingerprint(["directory-v1", query, limit])
+        scope = fingerprint(["directory-v1", query, limit] + ([project] if project is not None else []))
         with self.sessions() as session:
             session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
             revision = session.scalar(select(ConversationIndexState.revision).where(ConversationIndexState.id == 1)) or 0
@@ -106,6 +106,8 @@ class ConversationBrowser:
             criteria = [Conversation.deletion_state == "active", select(ChatMessage.id).where(
                 ChatMessage.conversation_id == Conversation.id, ChatMessage.role == "user",
             ).exists()]
+            if project is not None:
+                criteria.append(Conversation.project_id == (None if project == "unfiled" else project))
             pattern = _literal_pattern(query)
             if query:
                 criteria.append(Conversation.title.ilike(pattern, escape="\\") | select(ChatMessage.id).where(
@@ -124,6 +126,7 @@ class ConversationBrowser:
                 .order_by(Conversation.activity_at.desc().nullslast(), Conversation.created_at.desc(), Conversation.id.desc())
                 .offset(start).limit(size)).all()
             return {"items": [{"id": row.id, "title": row.title, "selected_learning_task_id": row.selected_learning_task_id,
+                              "project_id": row.project_id, "project_revision": row.project_revision,
                               "activity_at": row.activity_at.isoformat() if row.activity_at else None,
                               "match_message_id": message_id if query else None, "excerpt": excerpt or ""}
                              for row, message_id, excerpt in rows],

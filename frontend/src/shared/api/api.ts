@@ -27,6 +27,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
       body.action,
     );
   }
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
@@ -113,8 +114,8 @@ export function usePagedResource<T extends { id: string }>(path: string | null, 
       api<CollectionPage<T>>(path, { signal: controller.signal })
         .then((page) => {
           if (generation.current === current && !controller.signal.aborted) {
-            setResource({ path, data: page.items });
-            setNext(page.next_cursor);
+            setResource({ path, data: Array.isArray(page?.items) ? page.items : [] });
+            setNext(page?.next_cursor ?? null);
           }
         })
         .catch((failure: Error) => {
@@ -143,11 +144,12 @@ export function usePagedResource<T extends { id: string }>(path: string | null, 
         { signal: controller.signal },
       );
       if (generation.current === current && !controller.signal.aborted) {
+        const items = Array.isArray(page?.items) ? page.items : [];
         setResource((previous) => ({ path,
-          data: Array.from(new Map([...(previous.path === path ? previous.data : []), ...page.items]
+          data: Array.from(new Map([...(previous.path === path ? previous.data : []), ...items]
             .map((item) => [item.id, item])).values()),
         }));
-        setNext(page.next_cursor);
+        setNext(page?.next_cursor ?? null);
       }
     } catch (failure) {
       if (!controller.signal.aborted && generation.current === current) {

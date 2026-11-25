@@ -27,7 +27,9 @@ const MarkdownAnchor: NonNullable<Components['a']> = ({ href, children }) => {
   const citation = href?.match(/^\/api\/evidence\/([\w-]+)$/);
   if (citation) {
     const id = citation[1];
-    if (embeddedEvidence) return <a href={`#evidence-${id}`}>{children}</a>;
+    if (embeddedEvidence) return <a className="chat-citation" href={`#evidence-${id}`}>
+      <FileText size={14} aria-hidden="true" />{children}
+    </a>;
     if (onOpenEvidence) {
       return <a className="chat-citation" href={`/evidence/${id}`} onClick={(event) => {
         if (event.button !== 0 || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;

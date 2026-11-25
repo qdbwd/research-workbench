@@ -13,7 +13,7 @@ from copy import deepcopy
 from datetime import timedelta
 from pathlib import Path
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 
 from knowledgeops_agent.harness.skills.imports import inspect_package, package_digest
 from knowledgeops_agent.harness.skills.packages import SkillPackageError, package_catalog
@@ -70,7 +70,8 @@ class SkillManagement:
             detail = package_detail(self.root, name, resource=resource)
             return detail if resource is not None else self._present(detail, state, read_policy(session))
 
-    def stage(self, files, *, name=None, description=None, expected_revision=0, _bootstrap_id=None) -> dict:
+    def stage(self, files, *, name=None, description=None, expected_revision=0, _bootstrap_id=None,
+              _method_review=None) -> dict:
         inspected = inspect_package(files, name=name, description=description)
         with self.sessions.begin() as session:
             lock_configuration(session)
@@ -91,19 +92,44 @@ class SkillManagement:
             if previous is not None and not previous.removed and previous.revision == expected_revision:
                 actual = package_digest(self.storage.read_files(self.storage.package(previous.name)))
                 parameters.update(current_hash=actual, local_changes=actual != previous.content_hash)
-            operation = ExtensionOperation(
+            existing = None
+            if _method_review is not None:
+                self._current(session, inspected.name, expected_revision, content_hash=_method_review["base_hash"])
+                if inspected.digest != _method_review["candidate_hash"] or not inspected.compatible or inspected.missing:
+                    raise ValueError("方法提案与已核对的技能包不匹配。")
+                parameters["method_review"] = _method_review
+                existing = session.scalar(select(ExtensionOperation).where(
+                    ExtensionOperation.kind == "skill_import",
+                    ExtensionOperation.parameters["method_review"]["review_hash"].astext == _method_review["review_hash"],
+                    ExtensionOperation.status != "expired",
+                    or_(ExtensionOperation.status.in_(["succeeded", "cancelled"]),
+                        ExtensionOperation.expires_at > utcnow()),
+                ).order_by(ExtensionOperation.created_at.desc()).limit(1))
+            operation = existing or ExtensionOperation(
                 id=new_id(), kind="skill_import", target=inspected.name, status="uploading",
                 expected_revision=expected_revision,
                 parameters=parameters, result={}, expires_at=utcnow() + timedelta(days=1),
             )
-            session.add(operation)
-            session.flush()
+            if existing is None:
+                session.add(operation)
             identity = operation.id
         # 先持久登记归属，进程在写上传文件时退出也能按到期时间回收。
         with self.sessions.begin() as session:
             lock_configuration(session)
             operation = self._get_operation(session, identity)
-            self.storage.write_candidate(operation.id, inspected)
+            if operation.status != "uploading":
+                return self._operation_view(operation)
+            stage = self.storage.operation_path("staging", identity)
+            if _method_review is not None and stage.exists():
+                # 事务中断后的已写候选可重用，部分写入按原来的归属路径回收。
+                try:
+                    intact = self._matches(stage / "candidate", inspected.digest)
+                except (OSError, SkillPackageError):
+                    intact = False
+                if not intact:
+                    self.storage.remove_owned(stage)
+            if _method_review is None or not stage.exists():
+                self.storage.write_candidate(operation.id, inspected)
             operation.status = "ready"
             return self._operation_view(operation, inspected)
 
@@ -147,13 +173,18 @@ class SkillManagement:
             return {"path": path, "content": result.file_data["content"], "next_offset": result.next_offset,
                     "total_lines": result.total_lines, "execution_tested": False}
 
-    def discard(self, identity: str) -> dict:
+    def discard(self, identity: str, *, review_hash: str | None = None) -> dict:
         with self.sessions.begin() as session:
             lock_configuration(session)
             self._recover_in(session)
             operation = self._get_operation(session, identity)
+            self._verify_review(operation, review_hash)
+            if review_hash is not None and operation.status == "cancelled":
+                return self._operation_view(operation)
             if operation.kind != "skill_import" or operation.status == "succeeded":
                 raise ValueError("已提交的包请通过移除入口管理")
+            if review_hash is not None and operation.status not in {"ready", "failed"}:
+                raise ValueError("当前提案无法驳回，请重新准备。")
             self.storage.remove_owned(self.storage.operation_path("staging", identity))
             operation.status, operation.updated_at = "cancelled", utcnow()
             return self._operation_view(operation)
@@ -164,6 +195,12 @@ class SkillManagement:
         if operation is None or operation.kind not in {"skill_import", "skill_remove"}:
             raise KeyError("技能操作不存在")
         return operation
+
+    @staticmethod
+    def _verify_review(operation, review_hash):
+        expected = operation.parameters.get("method_review", {}).get("review_hash")
+        if expected != review_hash:
+            raise ValueError("请从方法提案审阅入口确认当前差异。")
 
     def _current(self, session, name: str, expected: int, *, content_hash=None) -> tuple[SkillPackageState | None, Path]:
         row = session.get(SkillPackageState, name)
@@ -182,12 +219,13 @@ class SkillManagement:
                 raise ValueError("本地文件在上次检查后已更改，请重新检查并确认")
         return row, current
 
-    def commit(self, identity: str) -> dict:
+    def commit(self, identity: str, *, review_hash: str | None = None) -> dict:
         try:
             with self.sessions.begin() as session:
                 lock_configuration(session)
                 self._recover_in(session)
                 operation = self._get_operation(session, identity)
+                self._verify_review(operation, review_hash)
                 if operation.status == "succeeded":
                     return deepcopy(operation.result["package"])
                 if operation.status not in {"ready", "failed"} or (
@@ -409,6 +447,7 @@ class SkillManagement:
             ids = list(session.scalars(select(ExtensionOperation.id).where(
                 ExtensionOperation.kind.in_(["skill_import", "skill_remove"]),
                 ExtensionOperation.status.in_(["succeeded", "cancelled", "expired"]),
+                ExtensionOperation.parameters["method_review"]["review_hash"].astext.is_(None),
                 ExtensionOperation.updated_at < utcnow() - timedelta(days=retention_days),
             ).limit(20)))
             if ids:

@@ -27,6 +27,7 @@ from knowledgeops_agent.research.service import (
     _append,
     _read_receipt,
     _save_receipt,
+    require_writable_branch,
 )
 
 IN_FLIGHT = ("dispatched", "running", "cancel_requested", "unknown")
@@ -76,6 +77,7 @@ _EXPIRED_APPROVAL = "研究版本已变化，原提案已关闭。可按当前�
 def view(row, *, include_dataset=False, approval_expired=False):
     spec = row.specification
     return {
+        "branch_id": row.branch_id,
         "id": row.id, "status": "cancelled" if approval_expired else row.status,
         "reason": _EXPIRED_APPROVAL if approval_expired else row.reason, "evidence_id": row.evidence_id,
         "source_revision_id": row.source_revision_id, "reproduced_from": row.reproduced_from,
@@ -102,8 +104,10 @@ def list_attempts(sessions, task_id):
 
 def get_attempt(sessions, task_id, attempt_id):
     with sessions() as session:
-        task, branch = for_task(session, task_id)
-        row = _visible(session, branch, attempt_id)
+        row = session.get(ResearchExperiment, attempt_id)
+        if row is None:
+            raise KeyError("没有找到该研发实验。")
+        task, branch = for_task(session, task_id, row.branch_id)
         return view(row, include_dataset=True, approval_expired=_approval_expired(task, branch, row))
 
 
@@ -124,7 +128,9 @@ def propose(jobs, run_id, worker_id, call_id, question, hypothesis, dataset, evi
             raise PermissionError("只有当前研发主运行可以提出实验。")
         if not _exchange(session):
             raise ValueError("当前部署没有配置独立实验执行器。")
-        _, branch = for_task(session, binding["task_id"])
+        from knowledgeops_agent.research.execution import active_binding
+
+        branch = active_binding(session, binding)
         pinned = _revision_refs(session, branch.head_revision_id)
         for identifier in evidence_ids:
             evidence.scope_checked(session, identifier, branch, pinned)
@@ -150,7 +156,7 @@ def _same_scope(task, branch, row):
     return (
         task.deleted_at is None and task.status == "open" and task.home_conversation_id is not None
         and task.control_version == row.source_control_version and branch.head_revision_id == row.source_revision_id
-        and not branch.pending_delivery_id
+        and not branch.pending_delivery_id and branch.archived_at is None
     )
 
 
@@ -198,6 +204,7 @@ def act(sessions, task_id, attempt_id, body, *, jobs):
             return prior
         task, branch = for_task(session, task_id)
         row = _visible(session, branch, attempt_id)
+        require_writable_branch(branch)
         if (task.control_version, branch.head_revision_id) != (body.expected_control_version, body.expected_revision_id):
             raise ResearchConflict("experiment_conflict", "任务或研究版本已变化，请重新核对。", task=task, branch=branch)
         if body.action == "approve":

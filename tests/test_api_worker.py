@@ -426,31 +426,14 @@ def test_user_archive_and_restore_are_reviewed_versioned_changes(client, service
     assert knowledge.get_document(doc_id, version_id=version_id)["version"] == 1
 
 
-@pytest.mark.parametrize("choice", [None, False, True])
-def test_auxiliary_http_choice_is_durable_and_defaults_off(client, services, choice):
-    conversation = client.post("/api/conversations", json={}).json()
-    body = {"content": "核对材料", "request_key": str(uuid4())}
-    if choice is not None:
-        body["auxiliary"] = choice
-    url = f"/api/conversations/{conversation['id']}/messages"
-    response = client.post(url, json=body)
-    assert response.status_code == 202
-    run = response.json()
-    assert run["input"]["auxiliary"] is (choice is True)
-    assert client.get(f"/api/runs/{run['id']}").json()["input"]["auxiliary"] is (choice is True)
-    assert client.post(url, json=body).json()["id"] == run["id"]
-    body["auxiliary"] = choice is not True
-    assert client.post(url, json=body).status_code == 409
-    assert services.gateway.ledger.records() == []
-
-
 def test_legacy_auxiliary_default_retry_does_not_rewrite_history(client, services):
+    """已下线的 auxiliary=False 历史任务，旧客户端重放仍可匹配且不改写历史输入。"""
     from knowledgeops_agent.persistence.models import Run
 
     conversation, run, body = enqueue(client)
     with services.sessions.begin() as session:
         row = session.get(Run, run["id"])
-        legacy_input = {key: value for key, value in row.input_data.items() if key != "auxiliary"}
+        legacy_input = {**row.input_data, "auxiliary": False}
         row.input_data = legacy_input
     url = f"/api/conversations/{conversation['id']}/messages"
     replay = client.post(url, json=body)
@@ -458,6 +441,6 @@ def test_legacy_auxiliary_default_retry_does_not_rewrite_history(client, service
     assert replay.json()["id"] == run["id"]
     assert replay.json()["input"] == legacy_input
     assert services.jobs.get_run(run["id"])["input"] == legacy_input
-    body["auxiliary"] = True
-    assert client.post(url, json=body).status_code == 409
+    assert client.post(url, json={**body, "knowledge_only": True}).status_code == 409
+    assert client.post(url, json={**body, "auxiliary": True}).status_code == 422
     assert services.gateway.ledger.records() == []

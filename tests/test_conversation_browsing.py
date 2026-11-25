@@ -209,4 +209,4 @@ def test_legacy_and_expired_receipts_do_not_refreeze_or_reaccept(client, service
         run.lifecycle_state, run.task, run.input_data = "expired", "", {}
     retry = client.post(base, json=payload)
     assert retry.status_code == 202 and retry.json()["id"] == accepted["id"]
-    assert client.post(base, json={**payload, "auxiliary": True}).status_code == 409
+    assert client.post(base, json={**payload, "knowledge_only": True}).status_code == 409

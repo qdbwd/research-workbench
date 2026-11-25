@@ -191,7 +191,7 @@ export function RoleFields({
       )}
       <p className="muted text-muted small text-xs">
         工具组和单独选择的工具合并，Skills
-        需另行选择。核心系统规则始终生效；联网与辅助模型还受主任务开关限制。
+        需另行选择。核心系统规则始终生效；联网还受主任务开关限制。
       </p>
     </>
   );

@@ -8,7 +8,10 @@ from pydantic import Field
 from knowledgeops_agent.app.dependencies import svc
 from knowledgeops_agent.research import autonomy, commits, deliveries, experiments, maps
 from knowledgeops_agent.research.contracts import (
+    AdoptFromResearchCommit,
     AdoptResearchConclusion,
+    ArchiveResearchBranch,
+    CommitAdoptionPreview,
     ControlAutonomy,
     ControlResearch,
     EditResearchMap,
@@ -21,10 +24,11 @@ from knowledgeops_agent.research.contracts import (
     OperationId,
     ResearchCommand,
     ReviewDelivery,
-    SaveResearchCommit,
     ReviseResearch,
+    SaveResearchCommit,
     SetResearchFocus,
     StartResearch,
+    SwitchResearchWriteBranch,
 )
 from knowledgeops_agent.research.service import ResearchService
 
@@ -78,6 +82,11 @@ def research_task(task_id: str, request: Request):
     return service(request).get(task_id)
 
 
+@router.post("/api/research-tasks/{task_id}/write-branch")
+def switch_write_branch(task_id: str, body: SwitchResearchWriteBranch, request: Request):
+    return service(request).switch_write_branch(task_id, body)
+
+
 @router.get("/api/research-tasks/{task_id}/autonomy")
 def research_autonomy(task_id: str, request: Request):
     from knowledgeops_agent.persistence.models import ResearchTask
@@ -86,7 +95,7 @@ def research_autonomy(task_id: str, request: Request):
         task = session.get(ResearchTask, task_id)
         if task is None or task.deleted_at is not None:
             raise KeyError("没有找到该研发任务。")
-        return autonomy.view(autonomy.latest(session, task_id))
+        return autonomy.view(autonomy.latest(session, task_id, task.writing_branch_id))
 
 
 @router.post("/api/research-tasks/{task_id}/autonomy")
@@ -130,6 +139,16 @@ def preview_adoption(task_id: str, body: MapAdoptionPreview, request: Request):
 @router.post("/api/research-tasks/{task_id}/map/adopt")
 def adopt_conclusion(task_id: str, body: AdoptResearchConclusion, request: Request):
     return maps.adopt(svc(request).sessions, task_id, body)
+
+
+@router.post("/api/research-tasks/{task_id}/map/commit-adoption-preview")
+def preview_commit_adoption(task_id: str, body: CommitAdoptionPreview, request: Request):
+    return maps.preview(svc(request).sessions, task_id, body, from_commit=True)
+
+
+@router.post("/api/research-tasks/{task_id}/map/commit-adopt")
+def adopt_from_commit(task_id: str, body: AdoptFromResearchCommit, request: Request):
+    return maps.adopt(svc(request).sessions, task_id, body, from_commit=True)
 
 
 @router.get("/api/research-tasks/{task_id}/deliveries")
@@ -188,6 +207,20 @@ def research_branches(task_id: str, request: Request):
 def fork_research_commit(task_id: str, body: ForkResearchCommit, request: Request):
     return commits.fork(svc(request).sessions, task_id, body)
 
+
+@router.post("/api/research-tasks/{task_id}/branches/{branch_id}/archive")
+def archive_research_branch(task_id: str, branch_id: str, body: ArchiveResearchBranch, request: Request):
+    return commits.archive(svc(request).sessions, task_id, branch_id, body)
+
+
+@router.post("/api/research-tasks/{task_id}/branches/{branch_id}/unarchive")
+def unarchive_research_branch(task_id: str, branch_id: str, body: ArchiveResearchBranch, request: Request):
+    return commits.unarchive(svc(request).sessions, task_id, branch_id, body)
+
+
+@router.post("/api/research-tasks/{task_id}/branches/{branch_id}/restart")
+def restart_research_branch(task_id: str, branch_id: str, body: ResearchCommand, request: Request):
+    return commits.restart(svc(request).sessions, task_id, branch_id, body)
 
 @router.get("/api/research-tasks/{task_id}/branches/{branch_id}/commit-preview")
 def preview_research_commit(task_id: str, branch_id: str, request: Request):

@@ -71,6 +71,17 @@ class ForkResearchCommit(Input):
     name: Annotated[str, Field(min_length=1, max_length=100)]
 
 
+class SwitchResearchWriteBranch(Input):
+    operation_id: OperationId
+    branch_id: Identity
+    expected_write_version: Annotated[int, Field(strict=True, ge=1)]
+
+
+class ArchiveResearchBranch(Input):
+    operation_id: OperationId
+    expected_revision_id: Identity
+
+
 class ResearchBudget(Input):
     """授权表单必须明确提供每项上限，不从部署设置隐式补足。"""
 
@@ -195,14 +206,29 @@ class EditResearchMap(ResearchCommand):
     operation: MapOperation
 
 
-class MapAdoptionPreview(Input):
-    source_revision_id: Identity
+class NodeAdoptionTarget(Input):
     node_id: Identity
     expected_revision_id: Identity
     expected_control_version: Annotated[int, Field(strict=True, ge=1)]
 
 
+class MapAdoptionPreview(NodeAdoptionTarget):
+    source_revision_id: Identity
+
+
 class AdoptResearchConclusion(MapAdoptionPreview):
     operation_id: OperationId
     preview_hash: Annotated[str, Field(pattern="^[0-9a-f]{64}$")]
+    reason: Annotated[str, Field(min_length=1, max_length=1000)]
+
+
+class CommitAdoptionPreview(NodeAdoptionTarget):
+    source_commit_id: Identity
+    target_branch_id: Identity
+    target_parent_id: Identity | None
+
+
+class AdoptFromResearchCommit(CommitAdoptionPreview):
+    operation_id: OperationId
+    preview_hash: Annotated[str, Field(pattern="^[a-f0-9]{64}$")]
     reason: Annotated[str, Field(min_length=1, max_length=1000)]

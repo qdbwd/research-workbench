@@ -1,5 +1,7 @@
 // 与 HTTP 合同对应的业务类型；运行状态与业务结果分别表示，避免“结束=成功”。
-export type Conversation = { id: string; title: string; selected_learning_task_id?: string | null };
+export type Conversation = { id: string; title: string; selected_learning_task_id?: string | null;
+  project_id?: string | null; project_revision?: number };
+export type ConversationProject = { id: string; name: string; pinned: boolean };
 export type Message = {
   id: string;
   run_id: string;
@@ -36,8 +38,8 @@ export type Run = {
     publication_mode: 'ask' | 'preview' | 'direct';
     knowledge_only: boolean;
     delegation: boolean;
-    auxiliary?: boolean;
     source_ids: string[];
+    research?: { branch_id: string; branch_name?: string; task_id: string };
   };
   budgets: Budgets;
   model_usage?: Usage;

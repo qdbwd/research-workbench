@@ -1,4 +1,4 @@
-"""固定研究地图、同主线版本对比及经用户确认的历史结论采纳。"""
+"""固定研究地图、版本对比及经用户确认的节点采纳。"""
 
 from copy import deepcopy
 
@@ -10,11 +10,13 @@ from knowledgeops_agent.app.conversations import fingerprint
 from knowledgeops_agent.app.runs.control import lock_control
 from knowledgeops_agent.persistence.models import (
     Evidence,
+    KnowledgeDocument,
     ResearchBranch,
     ResearchMap,
     ResearchRevision,
     Run,
     RunArtifact,
+    Source,
     new_id,
 )
 from knowledgeops_agent.research import evidence
@@ -24,6 +26,7 @@ from knowledgeops_agent.research.service import (
     _append,
     _read_receipt,
     _save_receipt,
+    require_writable_branch,
     task_view,
 )
 
@@ -51,6 +54,7 @@ def _map_view(session, revision, nodes=None):
     by_id = {item["id"]: item for item in evidence.views(session, identifiers, task_id=branch.task_id)}
     return {
         "revision_id": revision.id, "number": revision.number,
+        "node_adoptions": revision.state.get("node_adoptions", {}),
         "nodes": [_node_view(node, by_id) for node in
                   sorted(nodes.values(), key=lambda node: (node["question"], node["id"]))],
     }
@@ -65,7 +69,10 @@ def _fixed(session, branch, revision_id):
 
 def get(sessions, task_id, revision_id=None):
     with sessions() as session:
-        _, branch = for_task(session, task_id)
+        revision = session.get(ResearchRevision, revision_id) if revision_id else None
+        if revision_id and revision is None:
+            raise KeyError("没有找到该研发的固定研究版本。")
+        _, branch = for_task(session, task_id, revision.branch_id if revision else None)
         return _map_view(session, _fixed(session, branch, revision_id or branch.head_revision_id))
 
 
@@ -96,16 +103,19 @@ def evidence_catalog(sessions, task_id, offset, limit):
 def read_excerpt(sessions, task_id, identifier):
     with sessions() as session:
         _, branch = for_task(session, task_id)
-        pinned = session.scalar(select(ResearchRevision.id).where(
-            ResearchRevision.branch_id == branch.id,
+        pinned = session.scalar(select(ResearchRevision.id).join(
+            ResearchBranch, ResearchBranch.id == ResearchRevision.branch_id,
+        ).where(
+            ResearchBranch.task_id == task_id,
             ResearchRevision.state["provenance_refs"].contains([{"artifact_id": identifier}]),
         ).limit(1))
         return evidence.excerpt_content(session, identifier, branch, [identifier] if pinned else [])
 
 
 def _check_head(task, branch, body):
+    require_writable_branch(branch)
     if (task.control_version, branch.head_revision_id) != (body.expected_control_version, body.expected_revision_id):
-        raise ResearchConflict("map_conflict", "主线或任务状态已更新，请核对最新版。", task=task, branch=branch)
+        raise ResearchConflict("map_conflict", "目标分支或任务状态已更新，请核对最新版。", task=task, branch=branch)
     if task.status != "open" or branch.pending_delivery_id:
         raise ResearchConflict("map_unavailable", "当前研发状态暂不能修改研究地图。")
 
@@ -140,7 +150,7 @@ def _validate(nodes, edited_id):
                 missing.append(parent)
 
 
-def _write(session, task, branch, head, nodes, reason, *, actor, origin, source_revision_id=None):
+def _write(session, task, branch, head, nodes, reason, *, actor, origin, adoption=None):
     content = {"schema_version": 1, "nodes": nodes}
     identity = fingerprint(content)
     session.execute(insert(ResearchMap).values(id=identity, content=content).on_conflict_do_nothing())
@@ -151,10 +161,17 @@ def _write(session, task, branch, head, nodes, reason, *, actor, origin, source_
             *preserved, *({"kind": "map_evidence", **evidence.projection(session, identifier)} for identifier in references),
         ],
     }
-    if source_revision_id:
-        state["adopted_from"] = {"research_revision_id": source_revision_id}
+    records = {key: entry for key, entry in state.get("node_adoptions", {}).items() if key in nodes}
+    if adoption:
+        state["adopted_from"] = adoption
+        if adoption.get("node_id"):
+            records[adoption["node_id"]] = adoption
+    if records or "node_adoptions" in state:
+        state["node_adoptions"] = records
     new = _append(session, branch, state, parent=head, reason=reason, origin=origin, actor=actor)
-    return {"task": task_view(task, new), "map": _map_view(session, new, nodes)}
+    writing = branch if task.writing_branch_id == branch.id else session.get(ResearchBranch, task.writing_branch_id)
+    current = new if writing.id == branch.id else session.get(ResearchRevision, writing.head_revision_id)
+    return {"task": task_view(task, current, writing), "map": _map_view(session, new, nodes)}
 
 
 def apply(session, task, branch, operation, reason, *, actor):
@@ -209,7 +226,10 @@ def _differences(before, after):
 
 def compare(sessions, task_id, before, after):
     with sessions() as session:
-        _, branch = for_task(session, task_id)
+        revision = session.get(ResearchRevision, before)
+        if revision is None:
+            raise KeyError("没有找到该研发的固定研究版本。")
+        _, branch = for_task(session, task_id, revision.branch_id)
         older = _map_view(session, _fixed(session, branch, before))
         newer = _map_view(session, _fixed(session, branch, after))
         return diff_maps(older, newer)
@@ -223,52 +243,91 @@ def diff_maps(older, newer):
     return {"before": older, "after": newer, "changes": changes}
 
 
-def _adoption(session, task, branch, body):
+def _adoption(session, task, branch, body, *, from_commit):
     _check_head(task, branch, body)
-    source = _fixed(session, branch, body.source_revision_id)
+    commit = None
+    if from_commit:
+        from knowledgeops_agent.research.commits import _commit
+
+        commit = _commit(session, task, body.source_commit_id)
+        source = session.get(ResearchRevision, commit.revision_id)
+    else:
+        source = _fixed(session, branch, body.source_revision_id)
     target = _fixed(session, branch, branch.head_revision_id)
     if target.id == source.id:
-        raise ValueError("请选择当前主线以外的历史版本。")
-    nodes = deepcopy(load(session, target))
-    old = load(session, source).get(body.node_id)
+        raise ValueError("请选择目标分支当前进展以外的固定版本。")
+    target_nodes = load(session, target)
+    nodes = deepcopy(target_nodes)
+    source_nodes = load(session, source)
+    old = source_nodes.get(body.node_id)
     current = nodes.get(body.node_id)
-    if not old or not current:
-        raise ValueError("当前主线和历史版本都必须包含该主题。")
-    if not old["conclusion"]:
+    if not old or (current is None and commit is None):
+        raise ValueError("所选版本未包含可采纳的主题。")
+    if current is not None and not old["conclusion"]:
         raise ValueError("历史节点没有可以采纳的结论。")
+    if current is None:
+        if body.target_parent_id is not None and body.target_parent_id not in nodes:
+            raise ValueError("请在目标分支选择有效的上级主题。")
+        restored = {**old, "parent_id": body.target_parent_id, "related": [], "status": "needs_review"}
+    else:
+        restored = {**current, **{key: old[key] for key in ("conclusion", "reason", "evidence_ids")},
+                    "status": "needs_review"}
+    reviewed = []
     for identifier in old["evidence_ids"]:
-        evidence.scope_checked(session, identifier, branch, old["evidence_ids"])
-    restored = {**current, **{key: old[key] for key in ("conclusion", "reason", "evidence_ids")},
-                "status": "needs_review"}
+        detail = evidence.scope_checked(session, identifier, branch, old["evidence_ids"])
+        if commit:
+            owner = None
+            if detail.get("source_id"):
+                owner = session.get(Source, detail["source_id"])
+            elif detail.get("document_id"):
+                owner = session.get(KnowledgeDocument, detail["document_id"])
+            if owner is not None and owner.deleted_at is not None:
+                raise ResearchConflict("adoption_evidence_unavailable", "固定证据已撤回，无法采纳到新进展。")
+        reviewed.append(detail)
     nodes[body.node_id] = restored
     _validate(nodes, body.node_id)
-    return nodes, {
+    digest = [source.id, target.id, task.control_version, restored]
+    proposal = {
         "source_revision_id": source.id, "target_revision_id": target.id, "node_id": body.node_id,
-        "before": current, "after": restored, "preview_hash": fingerprint([source.id, target.id, task.control_version, restored]),
-        "evidence": evidence.views(session, restored["evidence_ids"], task_id=task.id),
+        "before": current, "after": restored, "evidence": reviewed,
     }
+    origin = {"research_revision_id": source.id}
+    if commit:
+        reopened = [{"id": key, "question": child["question"]} for key, child in nodes.items()
+                    if key != body.node_id and child["status"] != target_nodes[key]["status"]]
+        digest.extend((commit.id, branch.id, reopened))
+        origin.update(research_commit_id=commit.id, node_id=body.node_id)
+        proposal.update(
+            source_commit_id=commit.id, source_commit_message=commit.message,
+            target_branch_id=branch.id, target_branch_name=branch.name, target_revision_number=target.number,
+            target_parent_title=nodes.get(restored["parent_id"], {}).get("question"),
+            reopened_ancestors=reopened,
+            omitted_relations=[{**relation, "question": source_nodes[relation["target_id"]]["question"]}
+                               for relation in old["related"]] if current is None else [],
+        )
+    return nodes, {**proposal, "preview_hash": fingerprint(digest)}, origin
 
 
-def preview(sessions, task_id, body):
+def preview(sessions, task_id, body, *, from_commit=False):
     with sessions() as session:
-        task, branch = for_task(session, task_id)
-        _, proposal = _adoption(session, task, branch, body)
+        task, branch = for_task(session, task_id, body.target_branch_id if from_commit else None)
+        _, proposal, _ = _adoption(session, task, branch, body, from_commit=from_commit)
         return proposal
 
 
-def adopt(sessions, task_id, body):
-    key = "research:adopt:" + fingerprint([task_id, body.operation_id])
+def adopt(sessions, task_id, body, *, from_commit=False):
+    key = ("research:commit-adopt:" if from_commit else "research:adopt:") + fingerprint([task_id, body.operation_id])
     request_hash = fingerprint(body.model_dump(exclude={"operation_id"}))
     with sessions.begin() as session:
         lock_control(session)
         prior = _read_receipt(session, key, request_hash)
         if prior is not None:
             return prior
-        task, branch = for_task(session, task_id)
-        nodes, proposal = _adoption(session, task, branch, body)
+        task, branch = for_task(session, task_id, body.target_branch_id if from_commit else None)
+        nodes, proposal, origin = _adoption(session, task, branch, body, from_commit=from_commit)
         if proposal["preview_hash"] != body.preview_hash:
             raise ResearchConflict("adoption_conflict", "预览已变化，请复核后再次确认。")
         head = _fixed(session, branch, branch.head_revision_id)
         result = _write(session, task, branch, head, nodes, body.reason, actor="user", origin="map_adopt",
-                        source_revision_id=body.source_revision_id)
+                        adoption=origin)
         return _save_receipt(session, key, request_hash, result)

@@ -772,6 +772,25 @@ class ModelLedger:
         }
 
 
+def _reasoning_chunk_text(chunk: Any) -> str:
+    """提取流式分片中的供应商思考片段（仅用于实时可观测进度，不进入业务正文）。"""
+    extra = getattr(chunk, "additional_kwargs", None) or {}
+    for key in ("reasoning_content", "reasoning"):
+        value = extra.get(key)
+        if isinstance(value, str) and value:
+            return value
+    content = getattr(chunk, "content", None)
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") in {"reasoning", "thinking"}:
+                text = block.get("reasoning") or block.get("thinking") or block.get("text")
+                if isinstance(text, str) and text:
+                    parts.append(text)
+        return "".join(parts)
+    return ""
+
+
 class ModelGateway:
     """包围真实客户端的同步入口；客户端替身只用于离线测试。
 
@@ -819,6 +838,7 @@ class ModelGateway:
         tools: Sequence[Any] = (),
         stream: bool = False,
         on_chunk: Callable[[str], None] | None = None,
+        on_reasoning: Callable[[str], None] | None = None,
         call_id: str | None = None,
         **kwargs: Any,
     ) -> AIMessage:
@@ -876,11 +896,16 @@ class ModelGateway:
         try:
             client = self.client.bind_tools(list(tools)) if tools else self.client
             if stream:
-                # 首个有文本或工具参数的块才算首响应，不把空 metadata 块当 token。
+                # 首个有文本、思考片段或工具参数的块才算首响应，不把空 metadata 块当 token。
                 for chunk in client.stream(list(messages), **kwargs):
-                    if first_token_ms is None and (chunk.content or chunk.tool_call_chunks):
+                    reasoning = _reasoning_chunk_text(chunk)
+                    if first_token_ms is None and (
+                        chunk.content or reasoning or chunk.tool_call_chunks
+                    ):
                         first_token_ms = (monotonic() - started) * 1000
                     combined = chunk if combined is None else combined + chunk
+                    if on_reasoning is not None and reasoning:
+                        on_reasoning(self._redact(reasoning))
                     if on_chunk is not None and isinstance(chunk.content, str) and chunk.content:
                         on_chunk(self._redact(chunk.content))
                 if combined is None:

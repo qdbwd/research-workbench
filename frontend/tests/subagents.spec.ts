@@ -117,15 +117,14 @@ test('subagent configuration persists revisions, conflict recovery and deleted h
     JSON.stringify({ created, competitor, conflict, revisions, pageErrors }, null, 2),
   );
 });
-test('chat defaults auxiliary off and persists the user-controlled delegation choice without executing a model', async ({
+test('chat omits retired auxiliary toggle and persists the user-controlled delegation choice without executing a model', async ({
   page,
 }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '更多设置与材料' }).click();
   await page.getByRole('button', { name: '本次任务设置' }).click();
-  const auxiliary = page.getByRole('checkbox', { name: '允许辅助模型', exact: true });
+  await expect(page.getByRole('checkbox', { name: '允许辅助模型', exact: true })).toHaveCount(0);
   const delegation = page.getByRole('checkbox', { name: '允许子Agent分工', exact: true });
-  await expect(auxiliary).not.toBeChecked();
   await delegation.uncheck();
   await page.getByRole('button', { name: '完成', exact: true }).click();
   await page.getByLabel('发送给研发助手的消息').fill('浏览器排队夹具：不执行模型。');
@@ -137,18 +136,20 @@ test('chat defaults auxiliary off and persists the user-controlled delegation ch
   await page.getByRole('button', { name: '发送', exact: true }).click();
   const first = await (await queuedResponse).json();
   expect(first.status).toBe('queued');
-  expect(first.input).toMatchObject({ auxiliary: false, delegation: false });
+  expect(first.input).toMatchObject({ delegation: false });
+  expect(first.input).not.toHaveProperty('auxiliary');
   await page.reload();
   await page.getByRole('button', { name: '更多设置与材料' }).click();
   await page.getByRole('button', { name: '本次任务设置' }).click();
-  await expect(page.getByRole('checkbox', { name: '允许辅助模型', exact: true })).not.toBeChecked();
+  await expect(page.getByRole('checkbox', { name: '允许辅助模型', exact: true })).toHaveCount(0);
   await expect(page.locator('.message.user')).toHaveCount(1);
   const settings = await (await page.request.get('/api/settings')).json();
   expect(settings.model_calls_enabled).toBe(false);
   const saved = await (await page.request.get(`/api/runs/${first.id}`)).json();
   expect(saved.status).toBe('queued');
   expect(saved.tool_calls).toBe(0);
-  expect(saved.input).toMatchObject({ auxiliary: false, delegation: false });
+  expect(saved.input).toMatchObject({ delegation: false });
+  expect(saved.input).not.toHaveProperty('auxiliary');
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: '取消排队', exact: true }).click();
   await expect(page.getByText('已取消', { exact: true })).toBeVisible();

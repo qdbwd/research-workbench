@@ -1,6 +1,7 @@
 """技能文件包管理入口；上传仅处理字节，确认与权限开关相互独立。"""
 
 import asyncio
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
@@ -18,6 +19,7 @@ from knowledgeops_agent.harness.skills.packages import (
     MAX_FILE_BYTES,
     SkillPackageError,
 )
+from knowledgeops_agent.research import method_proposals
 
 router = APIRouter()
 
@@ -35,6 +37,17 @@ class SkillRead(BaseModel):
     model_config = ConfigDict(extra="forbid")
     path: str = Field(default="SKILL.md", max_length=512)
     offset: int = Field(default=0, ge=0)
+
+
+class MethodProposalSource(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    report_id: str = Field(min_length=1, max_length=36)
+
+
+class MethodProposalReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["publish", "reject"]
+    review_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 @router.post("/api/skills/imports", status_code=201)
@@ -109,6 +122,21 @@ def commit_import(identity: str, request: Request):
 @router.delete("/api/skills/imports/{identity}")
 def discard_import(identity: str, request: Request):
     return manager(request).discard(identity)
+
+
+@router.get("/api/skills/proposals")
+def list_method_proposals(request: Request):
+    return method_proposals.list_proposals(manager(request))
+
+
+@router.post("/api/skills/proposals", status_code=201)
+def prepare_method_proposal(body: MethodProposalSource, request: Request):
+    return method_proposals.prepare(manager(request), body.report_id)
+
+
+@router.post("/api/skills/proposals/{identity}/review")
+def review_method_proposal(identity: str, body: MethodProposalReview, request: Request):
+    return method_proposals.review(manager(request), identity, body.action, body.review_hash)
 
 
 @router.get("/api/skills")

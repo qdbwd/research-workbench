@@ -249,7 +249,8 @@ def main():
                 run = jobs.get_run(run_id)
                 if not run["input"].get("research"):
                     raise ValueError("offline experiment requires a research run")
-                provider = ResearchExperimentProvider(sources.get_source(source_id), attempt=attempt)
+                provider = ResearchExperimentProvider(sources.get_source(source_id), attempt=attempt,
+                                                      pilot=run["input"].get("trial_case") == "operations-pilot-v1")
                 services.gateway.client, services.gateway.enabled = provider, True
                 try:
                     result = execute_run(run_id, run["generation"], services=services,

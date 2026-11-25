@@ -3,8 +3,11 @@ import { Link } from 'react-router-dom';
 import { ExternalLink } from 'lucide-react';
 import { useResource } from '../../shared/api/api';
 import { WorkbenchPanel } from '../../shared/ui/Workbench';
+import type { Run } from '../../shared/types/types';
+import { LiveRunPanel } from '../runs/LiveRunPanel';
 import { EmbeddedResearchMap } from './ResearchMapPage';
 import { RevisionHistory } from './ResearchPage';
+import { ResearchCommits } from './ResearchCommits';
 import { ResearchControls } from './ResearchControls';
 import { researchApi, researchPath, researchPhases, researchStatuses, revisionSuffix, type ResearchTask } from './api';
 import type { ResearchMap } from './mapApi';
@@ -13,9 +16,22 @@ const sections = [
   ['brief', '简报'], ['map', '研发地图'], ['history', '分支与提交'],
 ] as const;
 
-export function ResearchChatPane({ task, onChanged }: { task: ResearchTask; onChanged: (task: ResearchTask) => void }) {
+export function ResearchChatPane({
+  task,
+  onChanged,
+  activeRun,
+  onRunChanged,
+  onOpenChat,
+}: {
+  task: ResearchTask;
+  onChanged: (task: ResearchTask) => void;
+  activeRun?: Run | null;
+  onRunChanged?: () => void;
+  onOpenChat?: () => void;
+}) {
   const [section, setSection] = useState<(typeof sections)[number][0]>('brief');
   const [mapFocus, setMapFocus] = useState<string>();
+  const [showRevisions, setShowRevisions] = useState(false);
   const map = useResource<ResearchMap>(section === 'brief'
     ? `${researchApi(task.id)}/map?revision_id=${encodeURIComponent(task.head.id)}` : null);
   const { brief, phase } = task.head.state;
@@ -40,6 +56,9 @@ export function ResearchChatPane({ task, onChanged }: { task: ResearchTask; onCh
       {sections.map(([id, label]) => <button type="button" className="research-pane-section rounded-lg px-3 py-1.5 text-sm"
         aria-pressed={section === id} key={id} onClick={() => { setMapFocus(undefined); setSection(id); }}>{label}</button>)}
     </nav>
+    {activeRun && onRunChanged && (
+      <LiveRunPanel key={`research-live-${activeRun.id}`} initial={activeRun} onChanged={onRunChanged} onOpenChat={onOpenChat} />
+    )}
     {section === 'brief' && <WorkbenchPanel title="研发简报">
       <dl className="m-0 grid gap-4">
         {fields.map(([label, value]) => <div key={label} className="grid gap-1 sm:grid-cols-[7rem_minmax(0,1fr)]">
@@ -57,6 +76,13 @@ export function ResearchChatPane({ task, onChanged }: { task: ResearchTask; onCh
       </div>
     </WorkbenchPanel>}
     {section === 'map' && <EmbeddedResearchMap taskId={task.id} initialNodeId={mapFocus} />}
-    {section === 'history' && <RevisionHistory task={task} endpoint={researchApi(task.id) + revisionSuffix(task.main_branch_id)} />}
+    {section === 'history' && <div className="grid gap-4">
+      <ResearchCommits task={task} onChanged={onChanged} />
+      <div>
+        <button type="button" className="button button-secondary text-sm" aria-expanded={showRevisions}
+          onClick={() => setShowRevisions((value) => !value)}>自动修订记录</button>
+        {showRevisions && <div className="mt-2"><RevisionHistory key={task.head.branch_id} task={task} endpoint={researchApi(task.id) + revisionSuffix(task.write_branch_id ?? task.main_branch_id)} /></div>}
+      </div>
+    </div>}
   </div>;
 }

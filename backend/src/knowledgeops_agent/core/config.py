@@ -65,6 +65,22 @@ class Settings(BaseSettings):
     agent_model: str = "deepseek-flash"
     model_provider: Literal["deepseek", "openai-compatible"] = "deepseek"
     model_timeout_seconds: float = Field(default=45, gt=0, le=180)
+    # 向量嵌入与可选重排配置；默认全部关闭，未配置时零外网请求、纯 BM25 运行。
+    embedding_provider: Literal["disabled", "tei", "openai_compatible"] = "disabled"
+    embedding_base_url: str = Field(default="", repr=False)
+    embedding_api_key: SecretStr = SecretStr("")
+    embedding_model: str = ""
+    embedding_dimensions: int | None = Field(default=None, ge=1, le=8192)
+    embedding_query_prefix: str = ""
+    embedding_document_prefix: str = ""
+    embedding_normalize: bool = True
+    embedding_batch_size: int = Field(default=16, ge=1, le=256)
+    embedding_timeout_seconds: float = Field(default=10.0, gt=0, le=120)
+    reranker_provider: Literal["disabled", "tei", "openai_compatible"] = "disabled"
+    reranker_base_url: str = Field(default="", repr=False)
+    reranker_api_key: SecretStr = SecretStr("")
+    reranker_model: str = ""
+    reranker_timeout_seconds: float = Field(default=10.0, gt=0, le=120)
     api_allowed_hosts: str = "localhost,127.0.0.1,::1"
     # 与 Uvicorn/Celery 共同支持的级别保持一致，避免仅 API 读取了应用日志配置。
     app_log_level: Literal["critical", "error", "warning", "info", "debug"] = "info"

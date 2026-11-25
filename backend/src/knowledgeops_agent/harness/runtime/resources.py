@@ -119,7 +119,6 @@ class ResourceService:
                     raise ResourceUnavailable(str(error)) from error
                 from knowledgeops_agent.harness.context.management import SUMMARY_PROMPT
                 from knowledgeops_agent.harness.mcp.registry import active_connections
-                from knowledgeops_agent.harness.models.auxiliary import ISOLATED_INSTRUCTION
                 from knowledgeops_agent.harness.runtime.agent import SYSTEM_PROMPT
                 from knowledgeops_agent.harness.subagents.registry import active_definitions
                 from knowledgeops_agent.harness.tools.configuration import lock_configuration
@@ -173,7 +172,6 @@ class ResourceService:
                         "system": SYSTEM_PROMPT,
                         "intent": INTENT_PROMPT,
                         "summary": SUMMARY_PROMPT,
-                        "auxiliary": ISOLATED_INSTRUCTION,
                         "learning": package_resource("prompts/learning-modes.md").read_text(
                             encoding="utf-8"
                         ),

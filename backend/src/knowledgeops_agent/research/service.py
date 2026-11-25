@@ -1,6 +1,6 @@
 """研究状态的持久化边界。真人变更与回执同事务，不触发执行。"""
 
-from sqlalchemy import select, tuple_, update
+from sqlalchemy import func, select, tuple_, update
 
 from knowledgeops_agent.app.conversations import fingerprint, touch_messages
 from knowledgeops_agent.app.lifecycle.asset_references import (
@@ -31,6 +31,7 @@ from knowledgeops_agent.research.contracts import (
     ReviseResearch,
     SetResearchFocus,
     StartResearch,
+    SwitchResearchWriteBranch,
 )
 from knowledgeops_agent.sources.ownership import claim_source, scope_predicate
 
@@ -56,6 +57,11 @@ class ResearchConflict(Exception):
             }
 
 
+def require_writable_branch(branch):
+    if branch.archived_at is not None:
+        raise ResearchConflict("branch_archived", "该研发分支已归档，可查看历史或从固定提交创建新分支。")
+
+
 def revision_view(row):
     return {
         "id": row.id,
@@ -72,7 +78,7 @@ def revision_view(row):
     }
 
 
-def task_view(task, head):
+def task_view(task, head, branch):
     return {
         "id": task.id,
         "title": task.title,
@@ -80,6 +86,9 @@ def task_view(task, head):
         "created_at": task.created_at.isoformat(),
         "home_conversation_id": task.home_conversation_id,
         "main_branch_id": task.main_branch_id,
+        "write_branch_id": task.writing_branch_id,
+        "write_branch_name": branch.name,
+        "write_version": task.write_version,
         "control_version": task.control_version,
         "head": revision_view(head),
     }
@@ -118,10 +127,10 @@ def _save_receipt(session, key, request_hash, result):
 def _current_tasks():
     # 同一条查询读取控制版本和 head，避免在两次读取之间拼出跨版本状态。
     return (
-        select(ResearchTask, ResearchRevision)
+        select(ResearchTask, ResearchRevision, ResearchBranch)
         .join(
             ResearchBranch,
-            ResearchBranch.id == ResearchTask.main_branch_id,
+            ResearchBranch.id == func.coalesce(ResearchTask.write_branch_id, ResearchTask.main_branch_id),
         )
         .join(ResearchRevision, ResearchRevision.id == ResearchBranch.head_revision_id)
         .where(ResearchTask.deleted_at.is_(None))
@@ -193,7 +202,7 @@ def _new_task(session, conversation_id, title, brief, material_refs=()):
         },
         parent=None, reason="用户在会话中启用研发", origin="activation",
     )
-    return task_view(task, head)
+    return task_view(task, head, branch)
 
 
 def _record_goal_message(session, conversation, task, goal):
@@ -293,6 +302,33 @@ class ResearchService:
             receipt = session.get(OperationReceipt, "research:start:" + fingerprint([conversation_id, operation_id]))
             return {"state": "accepted", "task": receipt.result} if receipt else {"state": "not_accepted"}
 
+    def switch_write_branch(self, task_id: str, body: SwitchResearchWriteBranch):
+        key = "research:write-branch:" + fingerprint([task_id, body.operation_id])
+        request_hash = fingerprint(body.model_dump(exclude={"operation_id"}))
+        with self.sessions.begin() as session:
+            lock_control(session)
+            task = session.get(ResearchTask, task_id, with_for_update=True)
+            if task is None or task.deleted_at is not None:
+                raise KeyError("没有找到该研发任务。")
+            prior = _read_receipt(session, key, request_hash)
+            if prior is not None:
+                return prior
+            if task.write_version != body.expected_write_version:
+                raise ResearchConflict("write_branch_conflict", "写入分支已变化，请重新核对后选择。")
+            branch = session.get(ResearchBranch, body.branch_id)
+            if branch is None or branch.task_id != task.id:
+                raise KeyError("没有找到该任务的研发分支。")
+            require_writable_branch(branch)
+            if task.status != "open" or not task.home_conversation_id:
+                raise ResearchConflict("task_unavailable", "请在绑定会话且进行中的研发任务切换写入分支。")
+            _conversation(session, task.home_conversation_id)
+            if branch.id != task.writing_branch_id:
+                task.write_branch_id = None if branch.id == task.main_branch_id else branch.id
+                task.write_version += 1
+                # 已受理的 Run 继续使用自己的分支、版本和控制版本。
+            head = session.get(ResearchRevision, branch.head_revision_id)
+            return _save_receipt(session, key, request_hash, task_view(task, head, branch))
+
     def control(self, task_id: str, body: ControlResearch):
         key = "research:control:" + fingerprint([task_id, body.operation_id])
         request_hash = fingerprint(body.model_dump(exclude={"operation_id"}))
@@ -304,7 +340,7 @@ class ResearchService:
             prior = _read_receipt(session, key, request_hash)
             if prior is not None:
                 return prior
-            branch = session.get(ResearchBranch, task.main_branch_id)
+            branch = session.get(ResearchBranch, task.writing_branch_id)
             if task.control_version != body.expected_control_version:
                 raise ResearchConflict("control_conflict", "任务状态已更新，请确认后重试。", task=task, branch=branch)
             previous, target = _CONTROL_TRANSITIONS[body.action]
@@ -316,7 +352,7 @@ class ResearchService:
 
             apply_control(session, self.jobs or RunService(self.sessions), task, branch, body.action)
             head = session.get(ResearchRevision, branch.head_revision_id)
-            return _save_receipt(session, key, request_hash, task_view(task, head))
+            return _save_receipt(session, key, request_hash, task_view(task, head, branch))
 
     def delete(self, task_id: str, body: ResearchCommand):
         """撤除任务入口和资产保留根，保留回执和被其他内容引用的固定版本。"""
@@ -332,7 +368,7 @@ class ResearchService:
                 raise KeyError("没有找到该研发任务。")
             if task.deleted_at is None:
                 if task.control_version != body.expected_control_version:
-                    branch = session.get(ResearchBranch, task.main_branch_id)
+                    branch = session.get(ResearchBranch, task.writing_branch_id)
                     raise ResearchConflict("control_conflict", "任务状态已更新，请复核后删除。", task=task, branch=branch)
                 task.deleted_at = utcnow()
                 task.status = "closed"
@@ -340,7 +376,7 @@ class ResearchService:
                 task.control_version += 1
                 from knowledgeops_agent.research.execution import apply_control
 
-                branch = session.get(ResearchBranch, task.main_branch_id)
+                branch = session.get(ResearchBranch, task.writing_branch_id)
                 apply_control(session, self.jobs or RunService(self.sessions), task, branch, "cancel")
             return _save_receipt(session, key, request_hash, {"id": task.id, "deleted": True})
 
@@ -358,7 +394,7 @@ class ResearchService:
             prior = _read_receipt(session, key, request_hash)
             if prior is not None:
                 return prior
-            branch = session.get(ResearchBranch, task.main_branch_id)
+            branch = session.get(ResearchBranch, task.writing_branch_id)
             if body.expected_control_version != task.control_version:
                 raise ResearchConflict("control_conflict", "任务状态已变化，请核对最新版。", task=task, branch=branch)
             if body.expected_revision_id != branch.head_revision_id:
@@ -377,7 +413,7 @@ class ResearchService:
             }
             if state != head.state:
                 head = _append(session, branch, state, parent=head, reason=body.reason, origin="focus_edit")
-            return _save_receipt(session, key, request_hash, task_view(task, head))
+            return _save_receipt(session, key, request_hash, task_view(task, head, branch))
 
     def get(self, task_id):
         with self.sessions() as session:
@@ -509,6 +545,7 @@ class ResearchService:
             prior = _read_receipt(session, key, request_hash)
             if prior is not None:
                 return prior
+            require_writable_branch(branch)
             if task.control_version != body.expected_control_version:
                 raise ResearchConflict(
                     "control_conflict",
@@ -532,7 +569,7 @@ class ResearchService:
                 from knowledgeops_agent.research.autonomy import SCOPE_KEYS, invalidate
 
                 if any(brief[key] != head.state["brief"].get(key, "") for key in SCOPE_KEYS):
-                    invalidate(session, task.id, "研究范围已更新，请核对新版后重新授权。")
+                    invalidate(session, task.id, "研究范围已更新，请核对新版后重新授权。", branch_id=branch.id)
                 head = _append(
                     session,
                     branch,
@@ -541,4 +578,6 @@ class ResearchService:
                     reason=body.reason,
                     origin="brief_edit",
                 )
-            return _save_receipt(session, key, request_hash, task_view(task, head))
+            selected = session.get(ResearchBranch, task.writing_branch_id)
+            current = head if selected.id == branch.id else session.get(ResearchRevision, selected.head_revision_id)
+            return _save_receipt(session, key, request_hash, task_view(task, current, selected))

@@ -60,7 +60,7 @@ def test_configured_role_uses_frozen_tools_skills_and_replays_child(runtime_serv
         row.input_data = {**row.input_data, "knowledge_only": True}
     configured = role(
         context,
-        tools=["read_source", "read_web", "call_model"],
+        tools=["read_source", "read_web"],
         skills=["evidence-check"],
     )
     root = context.jobs.get_run(context.root_id)

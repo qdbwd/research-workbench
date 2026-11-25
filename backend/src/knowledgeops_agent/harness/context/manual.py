@@ -67,7 +67,7 @@ def enqueue(jobs, gateway, conversation_id, request_key):
                   conversation_id=conversation_id, conversation_sequence=None,
                   request_key=request_key, kind="context_compaction", task="主动压缩会话上下文",
                   input_data={**runtime_inputs(session, conversation), "publication_mode": "preview",
-                              "knowledge_only": False, "delegation": False, "auxiliary": False, "source_ids": []},
+                              "knowledge_only": False, "delegation": False, "source_ids": []},
                   budgets=Budgets(model_requests=8, tool_calls=1, searches=0).model_dump(), created_at=jobs.now())
         session.add(run)
         session.flush()

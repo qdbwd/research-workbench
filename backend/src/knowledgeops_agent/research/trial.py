@@ -37,6 +37,18 @@ def trial_catalog(key: str = CASE) -> dict:
     }
 
 
+@cache
+def completed_trial() -> dict | None:
+    """只读随版本发布的模拟案例，独立于任何会话和运行库。"""
+    path = bundled_resource(f"config/research-trial/{CASE}.completed.json")
+    if not path.is_file():
+        return None
+    case = json.loads(path.read_text(encoding="utf-8"))
+    if case["schema_version"] != 1 or case["key"] != CASE:
+        raise ValueError("已完成案例与当前版本不匹配。")
+    return case
+
+
 def run_trial_owner(session, root_id: str | None) -> str | None:
     if root_id is None:
         return None

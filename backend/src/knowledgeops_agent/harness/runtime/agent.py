@@ -44,7 +44,6 @@ from knowledgeops_agent.harness.runtime.state import (
     RunContext,
 )
 from knowledgeops_agent.harness.runtime.tools import (
-    call_model,
     delegate_research,
     read_tool_result,
     update_plan,
@@ -249,7 +248,6 @@ LOCAL_TOOLS = {
         read_research_map,
         update_research_map,
         ask_clarification,
-        call_model,
         prepare_changes,
         publish_changes,
         capture_conversation,

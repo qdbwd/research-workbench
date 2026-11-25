@@ -12,7 +12,7 @@ test('starts a trial from the empty chat and opens real cross-lane citations', a
     if (request.method() === 'POST') writes.push(new URL(request.url()).pathname);
   });
   const trial = page.getByRole('region', { name: '研发试用' });
-  await expect(trial.getByRole('button')).toHaveCount(3);
+  await expect(trial.getByRole('button', { name: /试用带引用的问答|诊断一条错误回答|评估能否进入内部试点/ })).toHaveCount(3);
   await trial.getByRole('button', { name: '试用带引用的问答' }).click();
   await expect(trial.getByText('生产紧急变更规程')).toBeVisible();
   await expect(trial.getByText('试点问答失败记录')).toBeVisible();

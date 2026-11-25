@@ -17,11 +17,12 @@ client = research_client
 services = research_services
 
 
-@pytest.mark.parametrize(("action", "delivery_status", "task_status"), [
-    ("accept", "accepted", "completed"),
-    ("request_changes", "changes_requested", "open"),
+@pytest.mark.parametrize(("action", "delivery_status", "task_status", "switch_branch"), [
+    ("accept", "accepted", "completed", False),
+    ("request_changes", "changes_requested", "open", False),
+    ("accept", "accepted", "open", True),
 ])
-def test_review_fixed_delivery_and_stop_autonomy(client, services, action, delivery_status, task_status):
+def test_review_fixed_delivery_and_stop_autonomy(client, services, action, delivery_status, task_status, switch_branch):
     chat, task = create_task(client)
     base = f"/api/research-tasks/{task['id']}"
     policy = ToolPolicyService(services.sessions)
@@ -47,6 +48,21 @@ def test_review_fixed_delivery_and_stop_autonomy(client, services, action, deliv
     grant = authorize(client, task)
     assert grant.status_code == 200, grant.text
     root_id = grant.json()["permit"]["run_id"]
+    if switch_branch:
+        main = f"{base}/branches/{task['main_branch_id']}"
+        preview = client.get(main + "/commit-preview").json()
+        commit = client.post(main + "/commits", json={
+            "operation_id": "commit", "message": "固定对照起点", "preview_hash": preview["preview_hash"],
+        })
+        assert commit.status_code == 201, commit.text
+        fork = client.post(base + "/branches", json={
+            "operation_id": "fork", "name": "新方向", "source_commit_id": commit.json()["id"],
+        })
+        assert fork.status_code == 201, fork.text
+        selected = client.post(base + "/write-branch", json={
+            "operation_id": "select", "branch_id": fork.json()["id"], "expected_write_version": 1,
+        })
+        assert selected.status_code == 200, selected.text
     finished = execute_run(root_id, 1, services=services, checkpointer=InMemorySaver())
     assert finished["status"] == "completed", finished
     assert finished["outcome"]["kind"] == "research_delivery"
@@ -56,11 +72,20 @@ def test_review_fixed_delivery_and_stop_autonomy(client, services, action, deliv
     [delivery] = client.get(base + "/deliveries").json()["items"]
     current = client.get(base).json()
     assert delivery["status"] == "submitted"
-    assert delivery["source_revision_id"] == current["head"]["id"]
-    assert current["status"] == "awaiting_acceptance"
+    if switch_branch:
+        assert current["status"] == "open"
+        assert current["write_branch_id"] == fork.json()["id"]
+        assert current["head"]["id"] == fork.json()["head"]["id"]
+        assert delivery["branch_id"] == task["main_branch_id"]
+    else:
+        assert delivery["source_revision_id"] == current["head"]["id"]
+        assert current["status"] == "awaiting_acceptance"
     permit = client.get(base + "/autonomy").json()
-    assert permit["status"] == "revoked"
-    assert permit["run_id"] == root_id
+    if switch_branch:
+        assert permit is None
+    else:
+        assert permit["status"] == "revoked"
+        assert permit["run_id"] == root_id
 
     body = {
         "operation_id": "review",
@@ -80,3 +105,41 @@ def test_review_fixed_delivery_and_stop_autonomy(client, services, action, deliv
     assert reviewed.json()["delivery"]["content"] == delivery["content"]
     assert client.get(base + "/autonomy").json() == permit
     assert services.jobs.claim("no-new-research") is None
+
+    if task_status == "completed":
+        main = f"{base}/branches/{task['main_branch_id']}"
+        preview = client.get(main + "/commit-preview").json()
+        fixed = client.post(main + "/commits", json={
+            "operation_id": "fixed-accepted", "message": "固定已验收成果", "preview_hash": preview["preview_hash"],
+        })
+        assert fixed.status_code == 201, fixed.text
+        branch = client.post(base + "/branches", json={
+            "operation_id": "fork-accepted", "source_commit_id": fixed.json()["id"], "name": "试点开放条件复核",
+        })
+        assert branch.status_code == 201, branch.text
+        branch_id = branch.json()["id"]
+        restart = f"{base}/branches/{branch_id}/restart"
+        expected = reviewed.json()["task"]["control_version"]
+        stale = client.post(restart, json={"operation_id": "stale", "expected_control_version": expected - 1})
+        assert stale.status_code == 409 and stale.json()["code"] == "control_conflict"
+        operation = {"operation_id": "restart", "expected_control_version": expected}
+        started = client.post(restart, json=operation)
+        assert started.status_code == 200, started.text
+        assert started.json()["id"] == task["id"]
+        assert started.json()["status"] == "open"
+        assert started.json()["write_branch_id"] == branch_id
+        assert started.json()["head"]["state"] == fixed.json()["snapshot"]["revision"]["state"]
+        assert client.post(restart, json=operation).json() == started.json()
+        assert client.get(main + "/commits/" + fixed.json()["id"]).json() == fixed.json()
+        assert client.get(base + "/autonomy").json() is None
+        with services.sessions() as session:
+            from knowledgeops_agent.persistence.models import ResearchPermit
+
+            assert session.get(ResearchPermit, permit["id"]).status == "revoked"
+        assert services.jobs.claim("no-implicit-restart") is None
+        sent = client.post(f"/api/conversations/{chat}/messages", json={
+            "request_key": "fresh", "content": "从固定证据继续研究。",
+        })
+        assert sent.status_code == 202, sent.text
+        assert sent.json()["input"]["research"]["branch_id"] == branch_id
+        assert not sent.json()["input"]["research"].get("permit_id")

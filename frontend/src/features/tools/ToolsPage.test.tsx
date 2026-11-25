@@ -96,6 +96,8 @@ function serve(conflict = false) {
               : ['全局已关闭'],
           })),
         });
+      if (path === '/api/conversation-projects') return Response.json({ items: [] });
+      if (path.startsWith('/api/conversations/page')) return Response.json({ items: [], next_cursor: null });
       return Response.json([]);
     }),
   );

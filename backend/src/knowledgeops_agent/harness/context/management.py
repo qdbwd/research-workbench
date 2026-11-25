@@ -187,7 +187,7 @@ class ContextMiddleware(AgentMiddleware):
 
     模型工作视图可压缩，State中的原始消息不删除。成功调用后通过Command
     保存压缩锚点，后续模型沿用视图；失败不提交损坏摘要。网关再次最终检查，
-    其他调用（解释/子任务/辅助模型）也无法绕过相同容量护栏。
+    其他调用（解释/子任务）也无法绕过相同容量护栏。
     """
 
     def after_agent(self, state, runtime):

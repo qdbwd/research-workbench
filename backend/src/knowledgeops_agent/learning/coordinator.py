@@ -147,7 +147,6 @@ def advance(session, conversation_id: str):
                 "publication_mode": "ask",
                 "knowledge_only": False,
                 "delegation": True,
-                "auxiliary": False,
                 "source_ids": [],
                 "learning_requirements_revision": task.requirements_revision,
             },

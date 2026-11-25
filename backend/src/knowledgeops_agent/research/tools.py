@@ -126,7 +126,7 @@ def update_research_map(
         if unsettled_children(session, root.id):
             raise ValueError("请先接收子任务结果，再更新它们所依据的研究版本。")
         result = apply(session, task, branch, operation, reason, actor="assistant")
-        head_id = result["task"]["head"]["id"]
+        head_id = result["map"]["revision_id"]
         root.input_data = {**root.input_data, "research": {**binding, "research_revision_id": head_id}}
         replace_asset_references(session, "run_input", root.id, reference_value(session, root))
         return _save_receipt(session, key, request_hash, {"revision_id": head_id, "updated": True})
@@ -144,8 +144,10 @@ def submit_research_delivery(
 ) -> dict:
     """固定提交本轮研发成果，请用户验收。必须单独调用。
 
-    包含诊断、建议和适用限制，列出已经核对过的证据 ID 与关联材料版本。交付触发收尾并停止
-    自主推进；只在约定成果准备好时使用，不适用于阶段性进展或普通答复。
+    直接传平铺参数（title、diagnosis、recommendations、limitations、source_version_ids、evidence_ids），
+    切勿外包一层 delivery 嵌套对象。diagnosis 与 recommendations 保持精炼结构化（建议各在千字内），
+    详细推导留在研究地图中，并列出已核对过的证据 ID 与关联材料版本。交付触发收尾并停止自主推进；
+    只在约定成果准备好时使用，不适用于阶段性进展或普通答复。
     """
     from knowledgeops_agent.research.deliveries import submit
 

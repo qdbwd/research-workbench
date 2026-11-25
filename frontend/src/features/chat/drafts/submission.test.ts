@@ -43,7 +43,7 @@ it('recovers creation identity after reload, and only explicit continuation send
   expect(reopened.conversationId).toBe('same-created-chat');
   expect(reopened.pending?.state).toBe('not_accepted');
   expect(http.post).toHaveBeenCalledTimes(1);
-  await store.save(row.scope, row.revision, { ...row.data, content: '修改后的草稿', auxiliary: true }, 'one');
+  await store.save(row.scope, row.revision, { ...row.data, content: '修改后的草稿', knowledgeOnly: true }, 'one');
   const accepted = await dispatchSubmission(store, row.scope, false, http);
   expect(http.post.mock.calls[1][0]).toBe('/api/conversations/same-created-chat/messages');
   expect(http.post.mock.calls[1][1]).toEqual(row.pending?.body);

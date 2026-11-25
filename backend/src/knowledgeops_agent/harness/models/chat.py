@@ -42,14 +42,29 @@ class LedgerChatModel(BaseChatModel):
         if context.resources is not None:
             # 上下文压缩本身可能耗时；真正发送前再次检查期间发生的工具撤回。
             tools = filter_tools(context, tools)
-        # 保存的是用户可见输出片段，不假装能读取供应商隐藏的推理。
+        # 分别推送用户可见正文片段与供应商公开思考片段；思考片段仅作实时进度展示，
+        # 绝不写入 chat_messages、记忆或后续 Prompt。
         pieces: list[str] = []
+        reasoning_pieces: list[str] = []
 
         def on_chunk(content: str) -> None:
+            if reasoning_pieces:
+                context.jobs.append_event(
+                    context.run_id, "reasoning_delta", {"text": "".join(reasoning_pieces)}
+                )
+                reasoning_pieces.clear()
             pieces.append(content)
             if sum(map(len, pieces)) >= 120:
                 context.jobs.append_event(context.run_id, "model_delta", {"text": "".join(pieces)})
                 pieces.clear()
+
+        def on_reasoning(content: str) -> None:
+            reasoning_pieces.append(content)
+            if sum(map(len, reasoning_pieces)) >= 120:
+                context.jobs.append_event(
+                    context.run_id, "reasoning_delta", {"text": "".join(reasoning_pieces)}
+                )
+                reasoning_pieces.clear()
 
         context.jobs.append_event(context.run_id, "model_started", {})
         from knowledgeops_agent.harness.models.reasoning import run_reasoning_parameters
@@ -71,9 +86,14 @@ class LedgerChatModel(BaseChatModel):
             tools=tools,
             stream=True,
             on_chunk=on_chunk,
+            on_reasoning=on_reasoning,
             call_id=call_id,
             **kwargs,
         )
+        if reasoning_pieces:
+            context.jobs.append_event(
+                context.run_id, "reasoning_delta", {"text": "".join(reasoning_pieces)}
+            )
         if pieces:
             context.jobs.append_event(context.run_id, "model_delta", {"text": "".join(pieces)})
         context.jobs.append_event(

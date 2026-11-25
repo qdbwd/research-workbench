@@ -4,6 +4,7 @@ current_version_id 只是当前指针；历史回答、引用和操作回执始�
 正文、索引、关系和回执由 KnowledgeService 在同一个事务里提交。
 """
 
+import math
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -25,6 +26,52 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
+from sqlalchemy.types import UserDefinedType
+
+
+def format_pgvector(values: list[float] | tuple[float, ...]) -> str:
+    """将浮点向量格式化为 pgvector 文本字面量，拒绝 NaN/Inf 或空向量。"""
+    if not values:
+        raise ValueError("embedding vector must not be empty")
+    formatted: list[str] = []
+    for v in values:
+        fv = float(v)
+        if not math.isfinite(fv):
+            raise ValueError("embedding vector must contain only finite floats")
+        formatted.append(f"{fv:.8g}")
+    return "[" + ",".join(formatted) + "]"
+
+
+class PgVector(UserDefinedType):
+    """pgvector 的轻量 SQLAlchemy 适配器，不锁死维度以支持多模型平滑切换。"""
+
+    cache_ok = True
+
+    def __init__(self, dimensions: int | None = None):
+        self.dimensions = dimensions
+
+    def get_col_spec(self, **kw) -> str:
+        return f"public.vector({int(self.dimensions)})" if self.dimensions else "public.vector"
+
+    def bind_processor(self, dialect):
+        def process(value):
+            if value is None or isinstance(value, str):
+                return value
+            return format_pgvector(value)
+
+        return process
+
+    def result_processor(self, dialect, coltype):
+        def process(value):
+            if value is None or isinstance(value, list):
+                return value
+            stripped = str(value).strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                inner = stripped[1:-1].strip()
+                return [float(part) for part in inner.split(",")] if inner else []
+            return value
+
+        return process
 
 
 def new_id() -> str:
@@ -307,7 +354,7 @@ class ChangeSet(Base):
 
 
 class ChangeSetRevision(Base):
-    """正文修订快照不可变，供历史审查和辅助模型固定材料引用。"""
+    """正文修订快照不可变，供历史审查和固定材料引用。"""
 
     __tablename__ = "changeset_revisions"
     changeset_id: Mapped[str] = mapped_column(ForeignKey("changesets.id"), primary_key=True)
@@ -340,12 +387,24 @@ class PublishReceipt(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class ConversationProject(Base):
+    """个人会话目录中的分组。"""
+
+    __tablename__ = "conversation_projects"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(100))
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Conversation(Base):
     """用户可见会话；不把模型内部工具历史直接当作用户聊天。"""
 
     __tablename__ = "conversations"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     title: Mapped[str] = mapped_column(String(300), default="新对话")
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("conversation_projects.id"), index=True)
+    project_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     creation_key: Mapped[str | None] = mapped_column(String(200), unique=True)
     creation_fingerprint: Mapped[str | None] = mapped_column(String(64))
     trial_case: Mapped[str | None] = mapped_column(String(80))
@@ -379,7 +438,7 @@ class ResearchMethodBundle(Base):
 
 
 class ResearchTask(Base):
-    """第一阶段仅保存任务身份与授权控制版本；会话可解除绑定。"""
+    """任务身份、默认分支及会话后续写入分支。"""
 
     __tablename__ = "research_tasks"
     __table_args__ = (
@@ -387,7 +446,12 @@ class ResearchTask(Base):
             ["main_branch_id", "id"], ["research_branches.id", "research_branches.task_id"],
             name="fk_research_task_main_branch", use_alter=True, deferrable=True, initially="DEFERRED",
         ),
+        ForeignKeyConstraint(
+            ["write_branch_id", "id"], ["research_branches.id", "research_branches.task_id"],
+            name="fk_research_task_write_branch", use_alter=True,
+        ),
         CheckConstraint("control_version >= 1", name="ck_research_task_control_version"),
+        CheckConstraint("write_version >= 1", name="ck_research_task_write_version"),
         CheckConstraint(
             "status IN ('open','paused','awaiting_acceptance','completed','closed')",
             name="ck_research_task_status",
@@ -399,10 +463,16 @@ class ResearchTask(Base):
         ForeignKey("conversations.id", ondelete="SET NULL"), unique=True,
     )
     main_branch_id: Mapped[str] = mapped_column(String(36))
+    write_branch_id: Mapped[str | None] = mapped_column(String(36))
+    write_version: Mapped[int] = mapped_column(Integer, server_default="1")
     status: Mapped[str] = mapped_column(String(24))
     control_version: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    @property
+    def writing_branch_id(self) -> str:
+        return self.write_branch_id or self.main_branch_id
 
 
 class ResearchBranch(Base):
@@ -426,6 +496,7 @@ class ResearchBranch(Base):
     fork_commit_id: Mapped[str | None] = mapped_column(
         ForeignKey("research_commits.id", use_alter=True, name="fk_research_branch_fork_commit"),
     )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ResearchRevision(Base):
@@ -1586,3 +1657,97 @@ class MaintenanceState(Base):
     claim_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     next_scan_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class EmbeddingProfile(Base):
+    """派生向量索引的模型配置档案；支持多模型并存、零停机回填与平滑切换。"""
+
+    __tablename__ = "embedding_profiles"
+    __table_args__ = (
+        CheckConstraint("status IN ('building','ready','stale')", name="ck_embedding_profile_status"),
+        CheckConstraint("dimensions > 0", name="ck_embedding_profile_dimensions"),
+    )
+    profile_id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(32))
+    model: Mapped[str] = mapped_column(String(160))
+    dimensions: Mapped[int] = mapped_column(Integer)
+    query_prefix: Mapped[str] = mapped_column(Text, default="", server_default="")
+    document_prefix: Mapped[str] = mapped_column(Text, default="", server_default="")
+    normalize: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    contextual: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    status: Mapped[str] = mapped_column(String(24), default="building", server_default="building")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RagSettings(Base):
+    """RAG 运行时开关配置（单行指针 + 乐观并发修订）；凭据与端点仍仅由环境变量注入。"""
+
+    __tablename__ = "rag_settings"
+    __table_args__ = (
+        CheckConstraint("rrf_k >= 1 AND rrf_k <= 1000", name="ck_rag_settings_rrf_k"),
+        CheckConstraint("rerank_top_k >= 1 AND rerank_top_k <= 100", name="ck_rag_settings_rerank_top_k"),
+    )
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default="default")
+    hybrid_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    rerank_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    contextual_embedding_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true")
+    )
+    rrf_k: Mapped[int] = mapped_column(Integer, default=60, server_default="60")
+    rerank_top_k: Mapped[int] = mapped_column(Integer, default=20, server_default="20")
+    active_profile_id: Mapped[str | None] = mapped_column(
+        String(160), ForeignKey("embedding_profiles.profile_id", ondelete="SET NULL"), nullable=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class KnowledgeChunkEmbedding(Base):
+    """知识正文片段的派生向量投影；随 BM25 片段级联删除，绝不作为正文真相源。"""
+
+    __tablename__ = "knowledge_chunk_embeddings"
+    document_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    chunk_index: Mapped[int] = mapped_column(Integer, primary_key=True)
+    profile_id: Mapped[str] = mapped_column(
+        String(160), ForeignKey("embedding_profiles.profile_id", ondelete="CASCADE"), primary_key=True
+    )
+    version_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("knowledge_versions.id", ondelete="CASCADE"), index=True
+    )
+    embedding: Mapped[list[float]] = mapped_column(PgVector())
+    dimensions: Mapped[int] = mapped_column(Integer)
+    content_sha256: Mapped[str] = mapped_column(String(64))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["document_id", "chunk_index"],
+            ["knowledge_search_chunks.document_id", "knowledge_search_chunks.chunk_index"],
+            ondelete="CASCADE",
+            name="fk_knowledge_chunk_embeddings_chunk",
+        ),
+        Index("ix_knowledge_chunk_embeddings_profile_version", "profile_id", "version_id"),
+    )
+
+
+class SourceChunkEmbedding(Base):
+    """外部材料片段的派生向量投影；随材料 BM25 片段级联删除，绝不扩大读取权限。"""
+
+    __tablename__ = "source_chunk_embeddings"
+    segment_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    chunk_index: Mapped[int] = mapped_column(Integer, primary_key=True)
+    profile_id: Mapped[str] = mapped_column(
+        String(160), ForeignKey("embedding_profiles.profile_id", ondelete="CASCADE"), primary_key=True
+    )
+    embedding: Mapped[list[float]] = mapped_column(PgVector())
+    dimensions: Mapped[int] = mapped_column(Integer)
+    content_sha256: Mapped[str] = mapped_column(String(64))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["segment_id", "chunk_index"],
+            ["source_search_chunks.segment_id", "source_search_chunks.chunk_index"],
+            ondelete="CASCADE",
+            name="fk_source_chunk_embeddings_chunk",
+        ),
+        Index("ix_source_chunk_embeddings_profile_segment", "profile_id", "segment_id"),
+    )

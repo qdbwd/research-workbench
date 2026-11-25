@@ -15,7 +15,7 @@ from knowledgeops_agent.research import methods
 
 def admit(session, conversation_id: str):
     """调用者已持有运行控制锁，与消息、Run 和 outbox 一并提交。"""
-    from knowledgeops_agent.research.service import _append
+    from knowledgeops_agent.research.service import _append, require_writable_branch
 
     task = session.scalar(select(ResearchTask).where(
         ResearchTask.home_conversation_id == conversation_id,
@@ -24,7 +24,8 @@ def admit(session, conversation_id: str):
     ))
     if task is None:
         return None
-    branch = session.get(ResearchBranch, task.main_branch_id)
+    branch = session.get(ResearchBranch, task.writing_branch_id)
+    require_writable_branch(branch)
     if branch.pending_delivery_id:
         from knowledgeops_agent.research.service import ResearchConflict
 
@@ -43,6 +44,7 @@ def admit(session, conversation_id: str):
     binding = {
         "task_id": task.id,
         "branch_id": branch.id,
+        "branch_name": branch.name,
         "research_revision_id": revision.id,
         "control_version": task.control_version,
     }
@@ -62,7 +64,7 @@ def active_binding(session, binding):
     expected = {"paused", "awaiting_acceptance", "completed"} if binding.get("review_only") else {"open"}
     if (
         task.status not in expected or task.control_version != binding["control_version"]
-        or branch is None or branch.task_id != task.id
+        or branch is None or branch.task_id != task.id or branch.archived_at is not None
         or branch.head_revision_id != binding["research_revision_id"]
     ):
         raise RunStopped("研发状态或研究简报已变化，请在新版本下继续。")
@@ -84,14 +86,16 @@ def apply_control(session, jobs, task, branch, action):
     """在研究状态和回执的事务内使用原 Run 控制，避免跨事务留下半暂停。"""
     from knowledgeops_agent.research.autonomy import apply_control as control_permit
 
-    permit = control_permit(session, task, action)
-    withdrawn = None
+    permits = control_permit(session, task, action)
+    withdrawn = []
     if action in {"pause", "cancel"}:
         from knowledgeops_agent.research.experiments import cancel_branch
 
-        cancel_branch(session, branch.id, "任务已暂停或结束，撤回实验授权。")
-        if branch.pending_delivery_id:
-            withdrawn = session.get(ResearchDelivery, branch.pending_delivery_id)
+        for research_branch in session.scalars(select(ResearchBranch).where(ResearchBranch.task_id == task.id)):
+            cancel_branch(session, research_branch.id, "任务已暂停或结束，撤回实验授权。")
+            if research_branch.pending_delivery_id:
+                withdrawn.append(session.get(ResearchDelivery, research_branch.pending_delivery_id))
+    withdrawn_runs = {delivery.submit_run_id for delivery in withdrawn}
     runs = session.scalars(select(Run).where(
         Run.parent_id.is_(None),
         Run.lifecycle_state == "active",
@@ -100,7 +104,7 @@ def apply_control(session, jobs, task, branch, action):
     ).order_by(Run.id)).all()
     for run in runs:
         # 已提交成果的图只需要停止。让它进入可恢复暂停会卡住自己的收尾屏障。
-        if action == "cancel" or (withdrawn and withdrawn.submit_run_id == run.id):
+        if action == "cancel" or run.id in withdrawn_runs:
             jobs.cancel(run.id, session=session)
         elif action == "pause":
             if run.status != "interrupted":
@@ -111,8 +115,10 @@ def apply_control(session, jobs, task, branch, action):
             if run.status != "paused":
                 continue
             binding = run.input_data["research"]
-            exhausted = permit and permit.status == "exhausted" and binding.get("permit_id") == permit.id
-            if exhausted or binding["research_revision_id"] != branch.head_revision_id:
+            owner = branch if binding["branch_id"] == branch.id else session.get(ResearchBranch, binding["branch_id"])
+            permit = permits.get(binding.get("permit_id"))
+            exhausted = permit is not None and permit.status == "exhausted"
+            if exhausted or owner is None or binding["research_revision_id"] != owner.head_revision_id:
                 jobs.cancel(run.id, session=session)
                 continue
             run.input_data = {
@@ -122,7 +128,8 @@ def apply_control(session, jobs, task, branch, action):
     if withdrawn:
         from knowledgeops_agent.research.deliveries import advance
 
-        advance(session, jobs, withdrawn)
+        for delivery in withdrawn:
+            advance(session, jobs, delivery)
 
 
 def background(session, binding):

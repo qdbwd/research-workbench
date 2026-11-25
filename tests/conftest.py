@@ -37,6 +37,9 @@ def business_sessions():
         connection.execute(
             text("CREATE EXTENSION IF NOT EXISTS pg_search WITH SCHEMA public CASCADE")
         )
+        connection.execute(
+            text("CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public CASCADE")
+        )
         connection.execute(text(f'CREATE SCHEMA "{schema}"'))
     engine = create_engine(url, connect_args={"options": f"-csearch_path={schema}"})
     try:

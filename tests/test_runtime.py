@@ -114,7 +114,7 @@ def runtime_services(business_sessions, tmp_path):
 
 
 def setup_run(
-    services, mode="preview", *, budgets=None, fail=False, task="整理材料", auxiliary=False
+    services, mode="preview", *, budgets=None, fail=False, task="整理材料"
 ):
     module = importlib.import_module("knowledgeops_agent.harness.runtime.agent")
     jobs, knowledge, sources, ledger = services
@@ -125,7 +125,6 @@ def setup_run(
         task,
         request_key=str(uuid4()),
         publication_mode=mode,
-        auxiliary=auxiliary,
         source_ids=[source["id"]],
         budgets=budgets,
     )

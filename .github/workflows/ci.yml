@@ -1,0 +1,112 @@
+name: CI (Offline Checks)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MODEL_CALLS_ENABLED: "false"
+  APP_ENV: "test"
+
+jobs:
+  frontend:
+    name: Frontend (Typecheck, Lint, Unit & Build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript typecheck
+        run: npm run typecheck
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Vitest unit & component tests
+        run: npm test
+
+      - name: Production bundle build check
+        run: npm run build
+
+  backend:
+    name: Backend (Ruff & Offline Pytest)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: paradedb/paradedb:0.26.1-pg17@sha256:c1c147499c6649739d7977f1e47db149578c894f35249953acdd7680ccbae75b
+        env:
+          PDB_TUNE: "false"
+          POSTGRES_USER: knowledgeops
+          POSTGRES_PASSWORD: knowledgeops
+          POSTGRES_DB: knowledgeops
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U knowledgeops -d knowledgeops"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      DATABASE_URL: postgresql+psycopg://knowledgeops:knowledgeops@localhost:5432/knowledgeops
+      ACCOUNTING_DATABASE_URL: postgresql+psycopg://knowledgeops:knowledgeops@localhost:5432/knowledgeops_accounting
+      TEST_DATABASE_URL: postgresql+psycopg://knowledgeops:knowledgeops@localhost:5432/knowledgeops_test
+      CELERY_BROKER_URL: redis://localhost:6379/0
+      RUNTIME_REDIS_URL: redis://localhost:6379/1
+      REDIS_URL: redis://localhost:6379/0
+      TEST_REDIS_URL: redis://localhost:6379/15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync dev dependencies
+        run: uv sync --frozen --group dev
+
+      - name: Initialize isolated databases
+        run: |
+          uv run python -c "from pathlib import Path; import psycopg; conn = psycopg.connect('postgresql://knowledgeops:knowledgeops@localhost:5432/knowledgeops', autocommit=True); [conn.execute(stmt) for stmt in Path('infra/postgres-init.sql').read_text(encoding='utf-8').split(';') if stmt.strip()]; conn.close()"
+
+      - name: Ruff lint check
+        run: uv run ruff check backend/src tests
+
+      - name: Offline pytest suite (zero paid model calls)
+        run: uv run pytest -m "not online"

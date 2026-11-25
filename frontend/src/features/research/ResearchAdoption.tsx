@@ -5,7 +5,28 @@ import { Button } from '../../shared/ui/Button';
 import { Dialog } from '../../shared/ui/Dialog';
 import { ErrorBox } from '../../shared/ui/components';
 import { researchApi, type ResearchTask } from './api';
-import type { AdoptionPreview } from './mapApi';
+import type { AdoptionPreview, CommitAdoptionPreview } from './mapApi';
+
+export function AdoptionDetails({ preview }: { preview: AdoptionPreview | CommitAdoptionPreview }) {
+  return <>
+    <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1">
+      {([['当前结论', preview.before], ['将采纳的结论', preview.after]] as const).map(([label, node]) => (
+        <section key={label} className="min-w-0 rounded-lg border border-line p-3">
+          <h3 className="m-0 text-sm font-semibold">{label}</h3>
+          <p className="my-1 whitespace-pre-wrap [overflow-wrap:anywhere]">
+            {node ? node.conclusion || '暂无结论' : '目标地图尚无此节点。'}
+          </p>
+          {node?.reason && <p className="m-0 text-sm text-control [overflow-wrap:anywhere]">{node.reason}</p>}
+        </section>
+      ))}
+    </div>
+    {preview.evidence.length > 0 && <ul className="m-0 grid gap-1 text-sm">
+      {preview.evidence.map(row => <li key={row.id}>
+        {row.url ? <Link to={row.url} target="_blank" rel="noreferrer">{row.title ?? '查看固定证据'}</Link> : '原依据无法读取'}
+      </li>)}
+    </ul>}
+  </>;
+}
 
 export function ResearchAdoption({ task, preview, onClose, onSaved }: {
   task: ResearchTask;
@@ -43,21 +64,8 @@ export function ResearchAdoption({ task, preview, onClose, onSaved }: {
     <Button type="submit" form={formId} disabled={busy}>确认采纳</Button>
   </>}>
     <div className="grid gap-4">
-      <p className="m-0 text-sm text-control">这次只更新当前主线的结论、理由和证据。保存新版本后，节点进入待复核。</p>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {([['当前结论', preview.before], ['将采纳的结论', preview.after]] as const).map(([label, node]) => (
-          <section key={label} className="rounded-lg border border-line p-3">
-            <h3 className="m-0 text-sm font-semibold">{label}</h3>
-            <p className="my-1 whitespace-pre-wrap [overflow-wrap:anywhere]">{node.conclusion || '暂无结论'}</p>
-            {node.reason && <p className="m-0 text-sm text-control">{node.reason}</p>}
-          </section>
-        ))}
-      </div>
-      {preview.evidence.length > 0 && <ul className="m-0 grid gap-1 text-sm">
-        {preview.evidence.map(row => <li key={row.id}>
-          {row.url ? <Link to={row.url}>{row.title}</Link> : '原依据无法读取'}
-        </li>)}
-      </ul>}
+      <p className="m-0 text-sm text-control">这次更新当前进展中的结论、理由和证据。保存新版本后，节点进入待复核。</p>
+      <AdoptionDetails preview={preview} />
       <form id={formId} onSubmit={event => {
         event.preventDefault();
         void adopt(String(new FormData(event.currentTarget).get('reason') ?? '').trim());

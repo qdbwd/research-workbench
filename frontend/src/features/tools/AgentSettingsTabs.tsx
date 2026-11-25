@@ -5,6 +5,7 @@ const sections = [
   ['/skills', '技能'],
   ['/mcp', 'MCP 连接'],
   ['/subagents', '子智能体'],
+  ['/retrieval', '检索与向量'],
 ] as const;
 
 export function AgentSettingsTabs() {

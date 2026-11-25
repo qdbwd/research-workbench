@@ -25,6 +25,7 @@ from knowledgeops_agent.research.service import (
     _append,
     _read_receipt,
     _save_receipt,
+    require_writable_branch,
     task_view,
 )
 
@@ -35,6 +36,7 @@ def view(session, row):
     branch = session.get(ResearchBranch, row.branch_id)
     return {
         "id": row.id, "branch_id": row.branch_id, "source_revision_id": row.source_revision_id,
+        "branch_name": branch.name, "branch_archived": branch.archived_at is not None,
         "submit_run_id": row.submit_run_id, "status": row.status, "drain_state": row.drain_state,
         "content": row.content, "blockers": row.blockers, "review_reason": row.review_reason,
         "evidence": evidence.views(session, row.content.get("evidence_ids", []), task_id=branch.task_id),
@@ -43,18 +45,23 @@ def view(session, row):
     }
 
 
-def for_task(session, task_id):
+def for_task(session, task_id, branch_id=None):
     task = session.get(ResearchTask, task_id)
     if task is None or task.deleted_at is not None:
         raise KeyError("没有找到该研发任务。")
-    return task, session.get(ResearchBranch, task.main_branch_id)
+    branch = session.get(ResearchBranch, branch_id or task.writing_branch_id)
+    if branch is None or branch.task_id != task.id:
+        raise KeyError("没有找到该任务的研发分支。")
+    return task, branch
 
 
 def list_deliveries(sessions, task_id):
     with sessions() as session:
-        _, branch = for_task(session, task_id)
-        items = list(session.scalars(select(ResearchDelivery).where(
-            ResearchDelivery.branch_id == branch.id,
+        for_task(session, task_id)
+        items = list(session.scalars(select(ResearchDelivery).join(
+            ResearchBranch, ResearchBranch.id == ResearchDelivery.branch_id,
+        ).where(
+            ResearchBranch.task_id == task_id,
         ).order_by(ResearchDelivery.created_at.desc(), ResearchDelivery.id.desc()).limit(20)))
         return {"items": [view(session, row) for row in items]}
 
@@ -123,7 +130,7 @@ def submit(jobs, run_id, worker_id, call_id, content):
         session.flush()
         branch.pending_delivery_id = row.id
         cancel_branch(session, branch.id, "准备交付，撤回尚未收录的实验授权。")
-        autonomy.invalidate(session, branch.task_id, "已提交成果，等待收尾与用户验收。")
+        autonomy.invalidate(session, branch.task_id, "已提交成果，等待收尾与用户验收。", branch_id=branch.id)
         for child in unsettled_children(session, root.id):
             jobs.cancel(child.id, session=session)
         for queued in session.scalars(select(Run).where(
@@ -160,7 +167,9 @@ def advance(session, jobs, row):
     if branch.pending_delivery_id != row.id:
         return
     task = session.get(ResearchTask, branch.task_id)
-    if task.status != "open" or branch.head_revision_id != row.source_revision_id:
+    is_writing = task.writing_branch_id == branch.id
+    if (task.status in {"paused", "closed"} or (is_writing and task.status != "open")
+            or branch.head_revision_id != row.source_revision_id):
         row.status = "superseded"
     session.flush()
     from knowledgeops_agent.research.experiments import blockers as experiment_blockers
@@ -177,8 +186,9 @@ def advance(session, jobs, row):
     if row.status == "superseded":
         return
     row.status = "submitted"
-    task.status = "awaiting_acceptance"
-    task.control_version += 1
+    if is_writing:
+        task.status = "awaiting_acceptance"
+        task.control_version += 1
     root = session.get(Run, row.submit_run_id)
     if root is None or root.lifecycle_state != "active":
         return
@@ -209,10 +219,10 @@ def recover(session, jobs):
 def refresh_drain(sessions, jobs, task_id, delivery_id):
     with sessions.begin() as session:
         lock_control(session)
-        _, branch = for_task(session, task_id)
         row = session.get(ResearchDelivery, delivery_id)
-        if row is None or row.branch_id != branch.id:
+        if row is None:
             raise KeyError("没有找到该研发成果。")
+        for_task(session, task_id, row.branch_id)
         advance(session, jobs, row)
         return view(session, row)
 
@@ -225,12 +235,15 @@ def review(sessions, task_id, delivery_id, body):
         prior = _read_receipt(session, key, request_hash)
         if prior is not None:
             return prior
-        task, branch = for_task(session, task_id)
         row = session.get(ResearchDelivery, delivery_id)
-        if row is None or row.branch_id != branch.id:
+        if row is None:
             raise KeyError("没有找到该研发成果。")
+        task, branch = for_task(session, task_id, row.branch_id)
+        require_writable_branch(branch)
+        is_writing = task.writing_branch_id == branch.id
+        allowed = {"open", "awaiting_acceptance"} if is_writing else {"open", "awaiting_acceptance", "completed"}
         if (
-            task.status != "awaiting_acceptance" or task.control_version != body.expected_control_version
+            task.status not in allowed or task.control_version != body.expected_control_version
             or row.status != "submitted" or row.drain_state != "settled"
             or branch.head_revision_id != row.source_revision_id or body.source_revision_id != row.source_revision_id
         ):
@@ -241,12 +254,15 @@ def review(sessions, task_id, delivery_id, body):
         if body.action == "accept":
             for identifier in row.content.get("evidence_ids", []):
                 evidence.scope_checked(session, identifier, branch, row.content["evidence_ids"])
-            row.status, task.status = "accepted", "completed"
+            row.status = "accepted"
         else:
-            row.status, task.status = "changes_requested", "open"
-        task.control_version += 1
-        head = session.get(ResearchRevision, branch.head_revision_id)
-        return _save_receipt(session, key, request_hash, {"task": task_view(task, head), "delivery": view(session, row)})
+            row.status = "changes_requested"
+        if is_writing:
+            task.status = "completed" if body.action == "accept" else "open"
+            task.control_version += 1
+        writing = session.get(ResearchBranch, task.writing_branch_id)
+        head = session.get(ResearchRevision, writing.head_revision_id)
+        return _save_receipt(session, key, request_hash, {"task": task_view(task, head, writing), "delivery": view(session, row)})
 
 
 def latest_for_branch(session, branch_id):

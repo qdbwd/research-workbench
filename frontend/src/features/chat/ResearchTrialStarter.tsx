@@ -1,5 +1,6 @@
 import { FlaskConical, MessageSquare, Search } from 'lucide-react';
 import { Button } from '../../shared/ui/Button';
+import { CompletedResearchTrial } from '../research/CompletedResearchTrial';
 
 export type TrialPrompt = { id: string; mode: 'chat' | 'research'; text: string; label: string };
 export type TrialCatalog = {
@@ -21,6 +22,7 @@ export function ResearchTrialStarter({ catalog, selected, disabled, onChoose, on
           onClick={() => onChoose(prompt)}><Icon size={14} aria-hidden="true" /> {prompt.label}</Button>;
       })}
     </div>
+    <CompletedResearchTrial />
     {selected && <div className="grid gap-2 rounded-xl border border-line bg-white px-4 py-3 text-xs text-control">
       <div className="flex flex-wrap items-center justify-between gap-1">
         <strong className="text-ink">{catalog.title}</strong>
