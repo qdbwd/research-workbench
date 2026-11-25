@@ -185,7 +185,7 @@ def execute_run(
         workspace_root=services.settings.workspace_root,
         workspace_execute_timeout=services.settings.workspace_execute_timeout,
         workspace_output_limit_bytes=services.settings.workspace_output_limit_bytes,
-        vector=services.vector,
+        vector=getattr(services, "vector", None),
     )
     stop_heartbeat = Event()
 

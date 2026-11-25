@@ -194,13 +194,26 @@ def test_missing_vite_command_is_rejected_before_database_or_services(tmp_path, 
     assert "npm ci" in output
 
 
-def test_old_schema_is_rejected_before_services_start(business_sessions, monkeypatch, capsys):
+def test_old_schema_is_rejected_before_services_start(
+    business_sessions, tmp_path, monkeypatch, capsys
+):
     """真实旧版本号留在隔离PG，入口须拒绝启动且不自动升级或改业务数据。"""
     from alembic.config import Config
     from alembic.script import ScriptDirectory
     from sqlalchemy import text
 
     from scripts import dev
+
+    python = tmp_path / ".venv/bin/python"
+    python.parent.mkdir(parents=True)
+    python.symlink_to(sys.executable)
+    vite = tmp_path / "frontend/node_modules/.bin/vite"
+    vite.parent.mkdir(parents=True)
+    vite.write_text("#!/bin/sh\n", encoding="utf-8")
+    vite.chmod(0o700)
+    (tmp_path / "alembic.ini").symlink_to(ROOT / "alembic.ini")
+    (tmp_path / "migrations").symlink_to(ROOT / "migrations")
+    monkeypatch.setattr(dev, "ROOT", tmp_path)
 
     engine = business_sessions.kw["bind"]
     with engine.begin() as connection:

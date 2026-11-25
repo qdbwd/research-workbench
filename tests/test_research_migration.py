@@ -146,6 +146,8 @@ def test_migration_preserves_history_and_guards_version_ownership():
                 "SELECT archived_at FROM research_branches WHERE id = 'old-branch'",
             )).one() == (None,)
             assert [connection.execute(table.select()).all() for table in (conversations, runs, messages)] == before
+            # 后续步骤通过当前 ORM 服务读写会话与研发任务，需要 schema 升级到最新版本。
+            command.upgrade(config, "head")
 
         scoped = create_engine(engine.url, connect_args={"options": f"-csearch_path={schema}"})
         try:

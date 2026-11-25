@@ -1,7 +1,7 @@
 #!/bin/sh
 # 容器内初始化入口。失败即停止，Compose 不会在依赖或迁移失败时启动应用。
 set -eu
-cd /workspace
+cd "${0%/*}/.."
 if [ "${1:-production}" = "development" ]; then
     uv sync --locked --group dev
     (cd frontend && npm ci)

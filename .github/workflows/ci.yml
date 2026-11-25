@@ -84,10 +84,16 @@ jobs:
       RUNTIME_REDIS_URL: redis://localhost:6379/1
       REDIS_URL: redis://localhost:6379/0
       TEST_REDIS_URL: redis://localhost:6379/15
+      OPENAI_BASE_URL: https://api.deepseek.com
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Install OCR & CJK font system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim fonts-noto-cjk
 
       - name: Setup Python 3.12
         uses: actions/setup-python@v5
@@ -102,9 +108,11 @@ jobs:
       - name: Sync dev dependencies
         run: uv sync --frozen --group dev
 
-      - name: Initialize isolated databases
+      - name: Initialize isolated databases and bundled skills
         run: |
           uv run python -c "from pathlib import Path; import psycopg; conn = psycopg.connect('postgresql://knowledgeops:knowledgeops@localhost:5432/knowledgeops', autocommit=True); [conn.execute(stmt) for stmt in Path('infra/postgres-init.sql').read_text(encoding='utf-8').split(';') if stmt.strip()]; conn.close()"
+          uv run alembic upgrade head
+          uv run python scripts/initialize_skills.py
 
       - name: Ruff lint check
         run: uv run ruff check backend/src tests
