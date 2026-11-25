@@ -254,6 +254,9 @@ def create_app(*, services: Services | None = None, publish_jobs: bool = True) -
         return failure(request, 409, "data conflict; refresh the current version",
                        "data_conflict", "刷新后重试")
 
+    from knowledgeops_agent.app.routes.browser import router as browser_router
+
+    app.include_router(browser_router)
     app.include_router(system_router)
     app.include_router(retrieval_router)
     app.include_router(activity_router)

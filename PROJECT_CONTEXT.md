@@ -4,7 +4,7 @@
 
 ## 一、当前接续状态
 
-- **最新迁移与数据库基线（2026-11-25）**：代码迁移与开发部署的正式业务库 `knowledgeops` 均已推进至 `0063`（主线 A：Hermes 完整在线自进化体系已完成封板提交 `1a9e9ac` 并推送 `origin/main`；正式库升级前已完成受保护备份 `artifacts/backups/a735894464e9` 与 11/11 项隔离恢复校验 `restore-verification-4186e329192f.json`）。
+- **最新迁移与数据库基线（2026-11-26）**：代码迁移已推进至 `0064`（主线 B：Playwright MCP 动态浏览器取证，已完成真实 Chromium/CDP 验证、桌面/390px 视觉验收与独立代码审查并封板提交）；正式业务库当前为 `0063`（升级前备份 `artifacts/backups/a735894464e9`），待备份与隔离恢复校验后升级至 `0064`。
 - **阶段收口已完成项**：
   - 通用辅助模型工具 `call_model` 与 `auxiliary` 工具组已彻底下线（迁移 `0057`，见 [决策 0032](docs/decisions/0032-retire-auxiliary-call-model.md)），应用内部单次调用及历史兼容保留。
   - 工程治理与 CI（2026-11-24）：新增 [数据库总览与核心状态机](docs/database-and-state-machines.md)（7 大表群、5 条 DB 红线、五轨状态机）；[AGENTS.md](AGENTS.md) 将 OpenAI Codex 列入长期参考对象；已新增离线零付费 GitHub CI（[.github/workflows/ci.yml](.github/workflows/ci.yml)），CD 镜像发布暂缓。
@@ -19,7 +19,8 @@
   - 已实现会话项目归类。支持项目内新建、重命名、置顶、拖动或菜单移动会话，以及移除项目后将会话退回未分组。[0060 验收](docs/progress.md#2026-11-25会话项目归类及恢复验证)已在隔离环境通过。
   - 智能体设置的技能页可从已验收运维案例生成带证据的方法提案。人工查看差异后可发布或驳回，实际发布沿用原 Skill 管理和运行冻结。隔离环境已验收；正式技能包尚无此发布。[方法提案验收](docs/progress.md#2026-11-25从已验收运维试点形成技能提案)
   - **主线 A（Hermes 完整在线自进化体系，`0062`–`0063`，已通过隔离验收与独立代码审查）**：已落地在线六大支柱（双槽记忆与硬容量上限、工具白名单隔离后台复盘与高信号/阈值/验收合并触发、会话级 Prompt Cache 冻结快照与 `revocation_epoch` 撤回穿透、确定性安全扫描与 `Pin/Lock` 保护、Skill 不可变快照回滚 + 持久遥测 + 零付费 Curator 整理与安全归档、Learning Journey 统一时间线与单项回滚），前台意图 `v6` 已剥离旧自动记忆提取（兼容 `v5` 历史冻结）；前端沉淀 5 个共用组件并打通长期记忆页、智能体设置→技能页与聊天「本次任务设置」快照刷新，通过桌面与 390px Chromium 截图验收。[0062 复核](artifacts/verification/hermes-evolution-0062-review/summary.md) · [0063 验收](artifacts/verification/hermes-evolution-0063/summary.md)
-  - **下一步接续重点**：按总计划 [roadmap-2026-11.md](docs/plans/roadmap-2026-11.md) 推进 **主线 B（Playwright MCP 动态浏览器取证，以 DSH 为主参考）** → **主线 C（子 Agent 限定目录只读代码检索 + 真实模型小规模闭环实测与重排评估）** → **主线 D（两账号协作试用）**。
+  - **主线 B（Playwright MCP 动态浏览器取证，`0064`，已通过隔离验收与独立代码审查）**：参考 DeepSeek Harness（DSH）浏览器子系统设计，预装锁版本 `@playwright/mcp@0.0.86` 于容器内；落地正常聊天与研发模式共用的 7 个只读内建工具（`browser` 工具组，子 Agent 暂不开放）、容器 HTTP/CONNECT 出站代理与公网 DNS/SSRF 校验、`launch`（容器无头隔离，默认）+ `attach`（本机可见浏览器 CDP，默认关闭、PG advisory lock 跨 worker 独占、退出不关窗）双模式、不可变 `SourceVersion(playwright-mcp-rendered-v1)` 与内容寻址 PNG `FileStore`/`RunArtifact` 归档及受控预览接口、Windows 专用调试窗口启动脚本 `scripts/start-local-browser.ps1`；前端接入工具页配置弹窗、聊天「本次任务设置」模式选择与运行截图预览，通过桌面与 390px 真实截图验收。[0064 交付](artifacts/verification/playwright-mcp-0064/summary.md) · [0064 复核](artifacts/verification/playwright-mcp-0064-review/summary.md)
+  - **下一步接续重点**：按总计划 [roadmap-2026-11.md](docs/plans/roadmap-2026-11.md) 推进 **主线 C（子 Agent 限定目录只读代码检索 + 重启 `dev` 容器真实模型小规模闭环实测与 `bge-reranker-v2-m3` 评估）** → **主线 D（两账号协作试用）**。
 - **既有未闭环工程项**：2026-10-31 APP-02～APP-05 独立验收仍有未通过项，记录在 [复核报告](docs/delivery/app02-app05-acceptance-20261031.md) 与 `docs/development-issues.md`（`DEV-121`），APP-01/06/07 继续暂缓。
 
 ## 二、当前技术栈与运行基线

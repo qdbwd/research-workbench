@@ -5,6 +5,7 @@ import type { ModelRecord, Run, RunEvent } from '../../shared/types/types';
 import { Button } from '../../shared/ui/Button';
 import { ErrorBox, Loading } from '../../shared/ui/components';
 import { DetailDialog } from '../../shared/ui/Workbench';
+import { BrowserScreenshotButton } from './BrowserScreenshotButton';
 import { RuntimeResources, type RuntimeManifest, type Continuation } from './RuntimeResources';
 
 type Records = {
@@ -106,15 +107,17 @@ export function RunDiagnostics({ run, refreshKey }: { run: Run; refreshKey: stri
       <h3>内部运行资料</h3>
       <p className="text-sm text-muted">长工具结果、压缩前历史与工作摘要用于执行核对和恢复。</p>
       {records.data?.artifacts.map((artifact) => (
-        <p className="text-sm break-all" key={artifact.id}>
+        <div className="my-2 text-sm break-all" key={artifact.id}>
           {artifact.available === false ? (
             `${artifact.kind}：正文已过期`
+          ) : artifact.kind === "browser_screenshot" ? (
+            <BrowserScreenshotButton runId={run.id} artifactId={artifact.id} />
           ) : (
             <Link to={`/runs/${run.id}/artifacts/${artifact.id}`}>
               {artifact.kind} · {artifact.length ?? '未知'} 字符 · 查看 →
             </Link>
           )}
-        </p>
+        </div>
       ))}
       {records.data && !records.data.artifacts.length && (
         <p className="text-sm text-muted">没有可查看的内部资料。</p>

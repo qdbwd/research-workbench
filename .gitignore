@@ -47,6 +47,7 @@ artifacts/
 # Root run artifacts only; app/runs and features/runs are application source.
 /runs/
 node_modules/
+/infra/playwright-mcp/node_modules/
 frontend/playwright-report/
 frontend/test-results/
 .superpowers/

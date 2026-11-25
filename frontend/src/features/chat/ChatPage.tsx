@@ -102,7 +102,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
   const composer = useComposerDraft(conversationId, searchParams.get('draft') ?? undefined,
     !conversationId && draftProject && /^[0-9a-f-]{36}$/.test(draftProject) ? draftProject : undefined);
   const { state: composerState, session: composerSession } = composer;
-  const { content, selected, mode, knowledgeOnly, delegation, reasoning, permission, researchMode, trialCase } = composerState.data;
+  const { content, selected, mode, knowledgeOnly, delegation, reasoning, permission, researchMode, trialCase, browserMode } = composerState.data;
   const trial = useResource<TrialCatalog | null>(conversationId
     ? `/api/conversations/${encodeURIComponent(conversationId)}/trial` : '/api/research-trial');
   const trialCatalog = trial.data?.prompts?.length ? trial.data : null;
@@ -663,6 +663,8 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
             mode={mode}
             setMode={(value) => edit('mode', value)}
             knowledgeOnly={knowledgeOnly}
+            browserMode={browserMode}
+            setBrowserMode={(value) => edit('browserMode', value)}
             setKnowledgeOnly={(value) => edit('knowledgeOnly', value)}
             delegation={delegation}
             setDelegation={(value) => edit('delegation', value)}

@@ -22,6 +22,7 @@ PATTERNS = {
     "source": rf"[0-9a-f]{{2}}/{_SHA}",
     "delivery": rf"deliveries/blobs/[0-9a-f]{{2}}/{_SHA}",
     "artifact": rf"artifacts/{_ID}/{_SHA}\.txt",
+    "browser_screenshot": rf"artifacts/{_ID}/browser/{_SHA}\.png",
     "knowledge": rf"knowledge/versions/{_ID}\.md",
     "profile": rf"profiles/versions/{_ID}/[1-9][0-9]*-{_SHA}\.md",
     "profile_import": rf"profiles/imports/{_ID}\.md",
@@ -37,7 +38,8 @@ def validate(kind, key, digest):
         raise ValueError("content installation is outside its managed identity")
     if kind in {"source", "delivery"} and key.split("/")[-2:] != [digest[:2], digest]:
         raise ValueError("content installation hash differs from its address")
-    if kind == "artifact" and not key.endswith(f"/{digest}.txt"):
+    suffix = {"artifact": ".txt", "browser_screenshot": ".png"}.get(kind)
+    if suffix and not key.endswith(f"/{digest}{suffix}"):
         raise ValueError("artifact installation hash differs from its address")
 
 

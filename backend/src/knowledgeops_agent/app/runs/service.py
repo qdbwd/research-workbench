@@ -11,6 +11,7 @@ import hashlib
 from collections.abc import Callable
 from contextlib import nullcontext
 from datetime import datetime
+from threading import Lock
 from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import BaseModel, Field
@@ -34,6 +35,7 @@ from knowledgeops_agent.app.lifecycle.access import (
 )
 from knowledgeops_agent.app.lifecycle.references import replace_references
 from knowledgeops_agent.app.runs.control import lock_control
+from knowledgeops_agent.core.config import Settings
 from knowledgeops_agent.core.pagination import page_rows
 from knowledgeops_agent.harness.sandbox.receipts import invalidate_prepared_files
 from knowledgeops_agent.persistence.models import (
@@ -91,6 +93,9 @@ class RunService:
         from knowledgeops_agent.harness.mcp.sessions import MCPSessionManager
 
         self.sessions = sessions
+        self.browser_config = Settings(_env_file=None, browser_enabled=False)
+        self._browser_sessions = None
+        self._browser_sessions_lock = Lock()
         self.now = now
         self.event_bridge = event_bridge
         self.live_check: Callable[[], None] | None = None
@@ -107,6 +112,29 @@ class RunService:
             is_valid=valid_scope,
             **(mcp_session_options or {}),
         )
+
+    @property
+    def browser_sessions(self):
+        """同一 worker 首次并发调用也只装配一套根 Run 会话管理器。"""
+        from knowledgeops_agent.harness.browser.session import BrowserSessionManager
+
+        def is_live(root_id):
+            with self.sessions() as session:
+                run = session.get(Run, root_id)
+                return run is not None and run.status == "running" and not run.cancel_requested
+
+        with self._browser_sessions_lock:
+            if self._browser_sessions is None:
+                self._browser_sessions = BrowserSessionManager(self.browser_config, self.sessions, is_live=is_live)
+            return self._browser_sessions
+
+    def close_browser_session(self, root_id: str) -> None:
+        if manager := self._browser_sessions:
+            manager.close_run(root_id)
+
+    def close_browser_sessions(self) -> None:
+        if manager := self._browser_sessions:
+            manager.close()
 
     def close_mcp_sessions(self) -> None:
         """由应用生命周期调用；关闭活动连接不清除调用回执和对话历史。"""
@@ -282,6 +310,8 @@ class RunService:
                     }
                     if body.get("learning_task_id") is not None:
                         inputs["learning_task_id"] = body["learning_task_id"]
+                    if body.get("browser_mode") is not None:
+                        inputs["browser_mode"] = body["browser_mode"]
                     old_inputs = normalized_inputs(prior.input_data)
                     requested = prior.details_summary.get("requested_reasoning", "default") if prior.input_fingerprint else old_inputs["reasoning"]
                     inputs["reasoning"] = body.get("reasoning_effort") or requested
@@ -390,6 +420,7 @@ class RunService:
         budgets: dict | None = None,
         learning_task_id: str | None = None,
         submission_fingerprint: str | None = None,
+        browser_mode: Literal["launch", "attach"] | None = None,
     ) -> dict:
         """可信用户入口原子保存消息和任务；重复请求必须具有相同内容与选项。"""
         if not task.strip() or len(task) > 100000 or not 1 <= len(request_key) <= 200:
@@ -403,6 +434,10 @@ class RunService:
             "delegation": delegation,
             "source_ids": source_ids or [],
         }
+        if browser_mode is not None:
+            if browser_mode not in {"launch", "attach"}:
+                raise ValueError("invalid browser mode")
+            inputs["browser_mode_requested"] = browser_mode
         if learning_task_id is not None:
             inputs["learning_task_id"] = learning_task_id
         if reasoning is not None:
@@ -442,6 +477,7 @@ class RunService:
                 prior_inputs.pop("trial_case", None)
                 prior_inputs.pop("research", None)
                 prior_inputs.pop("research_next", None)
+                prior_inputs.pop("browser_mode", None)
                 # 相同用户请求重试返回最初冻结的选择；元数据刷新不能改写原运行。
                 for value in (prior_inputs, comparison_inputs):
                     value["reasoning"] = value.get("reasoning", {}).get("requested", "default")
@@ -476,6 +512,13 @@ class RunService:
                 selected_task = session.get(LearningTask, selected_task_id)
                 if selected_task is None or selected_task.conversation_id != conversation_id:
                     raise ValueError("学习任务不属于当前会话")
+            if self.browser_config.browser_enabled or browser_mode is not None:
+                from knowledgeops_agent.harness.browser.settings import resolve_mode
+
+                inputs["browser_mode"] = resolve_mode(
+                    session, self.browser_config, browser_mode,
+                    inputs={**inputs, "trial_case": conversation.trial_case},
+                )
             run_id = new_id()
             if conversation.user_sequence == 0 and conversation.title in {"新对话", "材料讨论"}:
                 conversation.title = task.strip()[:30] or "新对话"

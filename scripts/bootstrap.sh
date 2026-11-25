@@ -5,6 +5,7 @@ cd "${0%/*}/.."
 if [ "${1:-production}" = "development" ]; then
     uv sync --locked --group dev
     (cd frontend && npm ci)
+    (cd infra/playwright-mcp && npm ci --omit=dev --ignore-scripts)
 fi
 export MODEL_CALLS_ENABLED=false
 if [ "${1:-production}" != "guarded" ]; then

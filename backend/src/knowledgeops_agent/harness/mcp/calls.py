@@ -469,7 +469,8 @@ class MCPCalls:
 
 def mcp_tools(context) -> list[StructuredTool]:
     """冻结Schema成为模型可见工具；运行依赖由ToolRuntime注入，不接受模型伪造run信息。"""
-    if context.jobs.get_run(context.root_id)["input"].get("knowledge_only"):
+    inputs = context.jobs.get_run(context.root_id)["input"]
+    if inputs.get("knowledge_only") or inputs.get("research") or inputs.get("trial_case"):
         return []
     if not role_allows_mcp(context):
         return []

@@ -18,6 +18,9 @@ WORKDIR /workspace
 
 # 锁文件生成后可构建不可变应用镜像；开发模式用同一工具链和锁文件。
 FROM toolchain AS application
+COPY infra/playwright-mcp/package.json infra/playwright-mcp/package-lock.json /workspace/infra/playwright-mcp/
+RUN cd /workspace/infra/playwright-mcp && npm ci --omit=dev --ignore-scripts \
+    && node node_modules/playwright/cli.js install chromium
 COPY pyproject.toml uv.lock /workspace/
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-install-project --no-dev
 COPY README.md /workspace/

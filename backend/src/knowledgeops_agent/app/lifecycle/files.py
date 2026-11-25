@@ -53,9 +53,10 @@ def _unlink(store, key: str, digest: str) -> bool:
     return True
 
 
-def remove_artifact_file(store, *, run_id: str, content_hash: str, storage_key: str) -> bool:
+def remove_artifact_file(store, *, run_id: str, content_hash: str, storage_key: str, kind: str = "") -> bool:
     """只接受RunArtifact的既有生成地址，不能用DB里的任意路径删除用户资产。"""
-    expected = f"artifacts/{_identity(run_id)}/{_digest(content_hash)}.txt"
+    suffix = f"browser/{_digest(content_hash)}.png" if kind == "browser_screenshot" else f"{_digest(content_hash)}.txt"
+    expected = f"artifacts/{_identity(run_id)}/{suffix}"
     if storage_key != expected:
         raise ValueError("artifact storage key is outside its managed identity")
     return _unlink(store, expected, content_hash)

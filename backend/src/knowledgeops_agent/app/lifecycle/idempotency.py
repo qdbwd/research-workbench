@@ -10,6 +10,9 @@ def normalized_inputs(value: dict) -> dict:
     result.pop("runtime_settings", None)
     result.pop("trial_case", None)
     result.pop("research", None)
+    result.pop("browser_mode", None)
+    if (requested := result.pop("browser_mode_requested", None)) is not None:
+        result["browser_mode"] = requested
     result["reasoning"] = result.get("reasoning", {}).get("requested", "default")
     return result
 

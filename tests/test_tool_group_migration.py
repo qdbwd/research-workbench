@@ -78,7 +78,7 @@ def test_group_migration_preserves_old_selection_and_versions():
             assert all(row["revision"] == 1 and row["deleted"] is False and row["tool_ids"] for row in groups)
             assert {row["id"] for row in groups} - {"auxiliary"} == {
                 row["id"] for row in default_groups()
-            }
+            } - {"browser"}  # 0064 将浏览器作为新的实时默认组，0036 的种子保持原样。
             command.downgrade(config, "0035")
             command.upgrade(config, "0036")
             connection.execute(

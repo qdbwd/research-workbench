@@ -10,6 +10,7 @@ from copy import deepcopy
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select, text
 
+from knowledgeops_agent.harness.browser.names import BROWSER_IDS
 from knowledgeops_agent.harness.runtime.resources import content_hash
 from knowledgeops_agent.harness.tools.catalog import tool_options
 from knowledgeops_agent.harness.tools.configuration import lock_configuration
@@ -98,6 +99,10 @@ class ToolPolicyUpdate(BaseModel):
         return None if value is None else normalize_group_ids(value)
 
 
+def with_browser_defaults(policy: dict) -> dict:
+    return {**policy, "enabled": {**dict.fromkeys(sorted(BROWSER_IDS), True), **policy["enabled"]}}
+
+
 def _selected_ids(policy: dict, *, is_root: bool) -> set[str]:
     """已保存的许可上限；不从实时组成员推导，也不把外部MCP开关复制进来。"""
     allowed = {key for key, enabled in policy["enabled"].items() if enabled is True}
@@ -116,8 +121,8 @@ def advance_main_epochs(current: dict, updated: dict) -> None:
     """选择收窄只撤回主 Agent，不撤回子角色的独立工具许可。"""
     old = current['resolved_main_tools']
     new = updated['resolved_main_tools']
-    old_selection = set(current['enabled']) if old is None else set(old)
-    new_selection = set(updated['enabled']) if new is None else set(new)
+    old_selection = set(with_browser_defaults(current)['enabled']) if old is None else set(old)
+    new_selection = set(with_browser_defaults(updated)['enabled']) if new is None else set(new)
     for identifier in old_selection - new_selection:
         updated['main_epochs'][identifier] = current['main_epochs'].get(identifier, 0) + 1
 
@@ -193,7 +198,7 @@ class ToolPolicyService:
                     switches[name] = enabled
             switches = data.pop("enabled", {})
             for identifier, enabled in switches.items():
-                if current["enabled"].get(identifier, False) and not enabled:
+                if current["enabled"].get(identifier, identifier in BROWSER_IDS) and not enabled:
                     updated["tool_epochs"][identifier] = (
                         current["tool_epochs"].get(identifier, 0) + 1
                     )
@@ -211,7 +216,7 @@ class ToolPolicyService:
             save_policy(session, current, updated)
             return deepcopy(updated)
 
-    def allowed_ids(self, binding: dict, *, is_root: bool) -> set[str]:
+    def allowed_ids(self, binding: dict, *, is_root: bool, include_browser: bool = False) -> set[str]:
         """旧策略只会收窄；先核对完整历史，再与当前许可及撤回代次求交。"""
         if binding.get("id") != POLICY_ID or type(binding.get("revision")) is not int:
             raise PermissionError("工具策略绑定不兼容")
@@ -231,6 +236,8 @@ class ToolPolicyService:
             if original is None or content_hash(binding) != content_hash(original):
                 raise PermissionError("工具策略与冻结历史不符")
             current = read_policy(session)
+        if include_browser:
+            binding, current = with_browser_defaults(binding), with_browser_defaults(current)
         return {
             identifier
             for identifier in _selected_ids(binding, is_root=is_root)

@@ -37,6 +37,7 @@ class Services:
     maintenance: MaintenanceLease | None = None
 
     def __post_init__(self):
+        self.jobs.browser_config = self.settings
         # 显式注入的应用实例同样使用事务内引用合同，不能只在默认构造函数生效。
         self.sessions.configure(info={
             **self.sessions.kw.get("info", {}),
@@ -84,6 +85,7 @@ class Services:
     def close(self) -> None:
         """只释放本进程连接池，不停止容器或删除数据。"""
         try:
+            self.jobs.close_browser_sessions()
             self.jobs.close_mcp_sessions()
             self.engine.dispose()
             self.gateway.ledger.engine.dispose()

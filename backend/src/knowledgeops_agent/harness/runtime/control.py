@@ -11,6 +11,7 @@ from langgraph.types import Command
 
 from knowledgeops_agent.app.runs.guidance import applied_messages
 from knowledgeops_agent.app.runs.service import SteeringPending
+from knowledgeops_agent.harness.browser.names import BROWSER_NAMES
 from knowledgeops_agent.harness.models.validation import current_length_limit
 from knowledgeops_agent.harness.permissions.approvals import (
     ExecutionApprovals,
@@ -70,7 +71,7 @@ class RuntimeControlMiddleware(AgentMiddleware):
             if call["name"] == "execute":
                 workspace, cwd = workspace_paths(context)
                 ticket = journal.start(call, workspace=workspace, cwd=cwd)
-            elif not any(
+            elif call["name"] not in BROWSER_NAMES and not any(
                 item["name"] == call["name"] and item["source"] == "mcp"
                 for item in context.tool_catalog or []
             ):
@@ -94,7 +95,8 @@ class RuntimeControlMiddleware(AgentMiddleware):
                     {
                         "tool_call_id": call["id"],
                         "name": call["name"],
-                        "args": self._event_value(context, call["args"], "tool_input"),
+                        "args": ({} if call["name"] in BROWSER_NAMES
+                                 else self._event_value(context, call["args"], "tool_input")),
                     },
                 )
                 if call["name"] == "execute":

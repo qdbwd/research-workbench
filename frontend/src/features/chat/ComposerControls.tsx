@@ -5,6 +5,8 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowUp, BookOpen, FlaskConical, GraduationCap, Paperclip, Plus, Search, ShieldCheck, SlidersHorizontal, X } from 'lucide-react';
 import type { Source } from '../../shared/types/types';
+import { useResource } from '../../shared/api/api';
+import { type BrowserMode, type BrowserSettings, browserSettingsPath, effectiveBrowserMode } from '../tools/browserSettings';
 import { ConversationMemorySnapshot } from './ConversationMemorySnapshot';
 
 type Props = {
@@ -29,6 +31,8 @@ type Props = {
   mode: 'ask' | 'preview' | 'direct';
   setMode: (value: 'ask' | 'preview' | 'direct') => void;
   knowledgeOnly: boolean;
+  browserMode?: BrowserMode;
+  setBrowserMode?: (value: BrowserMode | undefined) => void;
   setKnowledgeOnly: (value: boolean) => void;
   delegation: boolean;
   setDelegation: (value: boolean) => void;
@@ -57,6 +61,11 @@ const reasoningLabels: Record<string, string> = {
 export function ComposerControls(props: Props) {
   const [open, setOpen] = useState(false);
   const [settings, setSettings] = useState(false);
+  const browser = useResource<BrowserSettings>(settings && props.setBrowserMode ? browserSettingsPath : null);
+  const defaultBrowser = effectiveBrowserMode(browser.data);
+  const attachAllowed = Boolean(browser.data?.local_attach_enabled && browser.data.deployment?.local_attach_available);
+  const unavailableAttach = props.browserMode === 'attach' && !attachAllowed && !!browser.data;
+  const browserMode = props.browserMode ?? defaultBrowser;
   const [materials, setMaterials] = useState<string[] | null>(null);
   const [query, setQuery] = useState('');
   const container = useRef<HTMLDivElement>(null);
@@ -181,6 +190,30 @@ export function ComposerControls(props: Props) {
                   />
                   允许子Agent分工
                 </label>
+                {props.setBrowserMode && (
+                  <div className="min-w-0 rounded-lg border border-line bg-canvas p-3">
+                    <label className="m-0 text-sm font-medium">
+                      动态浏览器取证（本次任务）
+                      <select aria-label="本次任务浏览器模式" value={browserMode}
+                        disabled={props.knowledgeOnly || props.trial || (!browser.data?.deployment?.browser_enabled && !unavailableAttach)}
+                        onChange={(event) => {
+                          const value = event.target.value as BrowserMode;
+                          props.setBrowserMode?.(value);
+                        }}>
+                        <option value="launch">容器隔离浏览器{defaultBrowser === 'launch' ? '（默认）' : ''}</option>
+                        {unavailableAttach && <option value="attach" disabled>本机浏览器已停用，请重新选择</option>}
+                        {attachAllowed && <option value="attach">本机可见浏览器 · CDP{defaultBrowser === 'attach' ? '（默认）' : ''}</option>}
+                      </select>
+                    </label>
+                    {(props.knowledgeOnly || props.trial || !browser.data?.deployment?.browser_enabled) && (
+                      <p className="mt-2 mb-0 text-xs text-muted">
+                        {props.knowledgeOnly ? '仅知识库模式下暂停联网和动态浏览器取证。'
+                          : props.trial ? '试用案例使用固定材料。'
+                            : browser.loading ? '正在读取部署状态…' : '当前部署未启用动态浏览器取证。'}
+                      </p>
+                    )}
+                  </div>
+                )}
                 {props.conversationId && (
                   <Link to={`/tools?conversation_id=${props.conversationId}#execution-rules`}>
                     命令规则

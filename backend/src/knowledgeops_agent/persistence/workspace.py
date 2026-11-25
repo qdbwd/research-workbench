@@ -32,6 +32,12 @@ def migrate_content(sessions, *, legacy_source_root: Path | None = None) -> dict
             row.body_storage_key, row._body = key, ""
             counts["knowledge_versions"] += 1
         for row in session.scalars(select(RunArtifact).with_for_update()):
+            if row.kind == "browser_screenshot":
+                from knowledgeops_agent.harness.browser.capture import screenshot_bytes
+
+                if row.expired_at is None:
+                    screenshot_bytes(store, row)
+                continue
             if row.content_storage_key:
                 store.read(row.content_storage_key, row.content_hash)
                 continue

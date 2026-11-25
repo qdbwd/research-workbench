@@ -127,6 +127,7 @@ class ResourceService:
                 except knowledge_policy.KnowledgePolicyError as error:
                     raise ResourceUnavailable(str(error)) from error
                 from knowledgeops_agent.evolution.snapshots import get_or_freeze_conversation_memory
+                from knowledgeops_agent.harness.browser.settings import frozen_browser
                 from knowledgeops_agent.harness.context.management import SUMMARY_PROMPT
                 from knowledgeops_agent.harness.mcp.registry import active_connections
                 from knowledgeops_agent.harness.runtime.agent import SYSTEM_PROMPT
@@ -206,6 +207,7 @@ class ResourceService:
                     "child_mcp": 1,
                     "subagents": active_definitions(session),
                     "tool_policy": tool_policy,
+                    "browser": frozen_browser(session, context.jobs.browser_config, root.input_data),
                     "web_search": load_web_search_config().model_dump(mode="json"),
                 }
                 diagnostics = [

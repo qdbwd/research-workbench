@@ -1,3 +1,5 @@
+import type { BrowserMode } from '../../tools/browserSettings';
+
 /** 浏览器草稿的事务边界。正文版本与请求回执分别维护，任何网络请求都在事务之外。 */
 export type DraftData = {
   content: string;
@@ -9,6 +11,7 @@ export type DraftData = {
   permission: string;
   researchMode?: true;
   trialCase?: string;
+  browserMode?: BrowserMode;
 };
 
 export const emptyDraft = (): DraftData => ({ content: '', selected: [], mode: 'ask', knowledgeOnly: false,
@@ -16,7 +19,7 @@ export const emptyDraft = (): DraftData => ({ content: '', selected: [], mode: '
 
 export type MessageBody = {
   content: string; source_ids: string[]; publication_mode: DraftData['mode']; knowledge_only: boolean;
-  delegation: boolean; reasoning_effort: string; request_key: string;
+  delegation: boolean; reasoning_effort: string; request_key: string; browser_mode?: BrowserMode;
 };
 export type PendingSubmission = {
   id: string;
@@ -55,6 +58,7 @@ export function normalizeDraft(raw: unknown): DraftData {
     if (typeof value[field] === 'boolean') result[field] = value[field];
   if (typeof value.reasoning === 'string' && value.reasoning.length <= 40) result.reasoning = value.reasoning;
   if (['ask', 'auto_review'].includes(String(value.permission))) result.permission = value.permission as string;
+  if (value.browserMode === 'attach' || value.browserMode === 'launch') result.browserMode = value.browserMode;
   if (value.researchMode === true) result.researchMode = true;
   if (typeof value.trialCase === 'string' && /^[a-z0-9-]{1,80}$/.test(value.trialCase)) result.trialCase = value.trialCase;
   return result;
@@ -199,7 +203,9 @@ export class DraftStore {
         },
         body: { content: data.content, source_ids: data.selected, publication_mode: data.mode,
           knowledge_only: data.knowledgeOnly, delegation: data.delegation,
-          reasoning_effort: data.reasoning, request_key: crypto.randomUUID() },
+          reasoning_effort: data.reasoning, request_key: crypto.randomUUID(),
+          ...(!data.knowledgeOnly && !data.trialCase && data.browserMode ? { browser_mode: data.browserMode } : {}),
+        },
         needsSettings: !row.conversationId, stage: row.conversationId ? 'message' : 'creation',
         state: 'unknown', uncertain: false, error: '' };
       return this.put(rows, row);
@@ -238,7 +244,7 @@ export class DraftStore {
       const sent = row.pending;
       // 只退休实际发送的正文版本；之后输入以及其他标签的冲突副本不受影响。
       if (sent.intent !== 'materials' && row.revision === sent.revision && sameDraft(row.data, sent.data)) {
-        row.data = { ...row.data, content: '', selected: [], researchMode: undefined, trialCase: undefined };
+        row.data = { ...row.data, content: '', selected: [], researchMode: undefined, trialCase: undefined, browserMode: undefined };
         row.revision += 1;
       }
       row.lastAccepted = { id, runId, intent: sent.intent };

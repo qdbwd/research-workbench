@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>生产紧急变更规程</title>
+<main>
+  <h1>生产紧急变更规程</h1>
+  <div role="tablist" aria-label="规程版本">
+    <button id="history-tab" type="button" role="tab" aria-controls="rule" aria-selected="true">历史版</button>
+    <button id="current-tab" type="button" role="tab" aria-controls="rule" aria-selected="false">现行版</button>
+  </div>
+  <section id="rule" role="tabpanel" aria-labelledby="history-tab"></section>
+</main>
+<script>
+  const show = (tab) => {
+    for (const candidate of document.querySelectorAll('[role=tab]')) {
+      candidate.setAttribute('aria-selected', String(candidate === tab));
+    }
+    const panel = document.querySelector('#rule');
+    panel.replaceChildren();
+    panel.setAttribute('aria-labelledby', tab.id);
+    const isCurrent = tab.id === 'current-tab';
+    window.setTimeout(() => {
+      if (panel.getAttribute('aria-labelledby') !== tab.id) return;
+      const title = document.createElement('h2');
+      title.textContent = isCurrent ? '现行审批条款' : '历史审批条款';
+      const rule = document.createElement('p');
+      const fromNumbers = (values) => String.fromCodePoint(...values);
+      rule.textContent = isCurrent
+        ? fromNumbers([29983, 20135, 32039, 24613, 21464, 26356, 39035, 30001, 24403, 29677, 36127, 36131, 20154, 20107, 21069, 25209, 20934, 12290])
+        : '此处仅为旧版规程的模拟记录，不用于当前值班操作，请切换至现行版核对。';
+      panel.replaceChildren(title, rule);
+    }, 120);
+  };
+  for (const tab of document.querySelectorAll('[role=tab]')) tab.addEventListener('click', () => show(tab));
+  show(document.querySelector('#history-tab'));
+</script>
+</html>

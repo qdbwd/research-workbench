@@ -15,7 +15,11 @@ from knowledgeops_agent.harness.tools.groups import (
     ToolGroupService,
     read_groups,
 )
-from knowledgeops_agent.harness.tools.policy import ToolPolicyService, ToolPolicyUpdate
+from knowledgeops_agent.harness.tools.policy import (
+    ToolPolicyService,
+    ToolPolicyUpdate,
+    with_browser_defaults,
+)
 from knowledgeops_agent.harness.tools.preview import effective_catalog
 
 router = APIRouter()
@@ -75,12 +79,14 @@ def effective_tools(
         knowledge_only=knowledge_only,
         delegation=delegation,
         workspace_enabled=svc(request).settings.workspace_root is not None,
+        browser_enabled=svc(request).settings.browser_enabled,
     )
 
 
 @router.get("/api/tools/policy")
 def tool_policy(request: Request):
-    return ToolPolicyService(svc(request).sessions).get()
+    # 实时目录投影新增工具默认值，持久修订及冻结快照保持原文。
+    return with_browser_defaults(ToolPolicyService(svc(request).sessions).get())
 
 
 @router.get("/api/tools/policy/history")

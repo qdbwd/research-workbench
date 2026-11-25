@@ -162,7 +162,7 @@ class RunRetentionCleaner:
         rows = list(session.execute(query.order_by(db.RunArtifact.id).limit(self.batch_size + 1)))
         files, expired, promoted = [], 0, 0
         for row, kept, durable_use, file_used in rows[:self.batch_size]:
-            if durable_use and not row.promoted_version_id:
+            if durable_use and not row.promoted_version_id and row.kind != "browser_screenshot":
                 promote_material(session, row)
                 promoted += 1
             if file_used or (kept and not row.promoted_version_id):
@@ -170,10 +170,17 @@ class RunRetentionCleaner:
             if row.content_storage_key:
                 if store is None:
                     raise ValueError("material cleanup requires the configured workspace")
-                expected = f"artifacts/{row.run_id}/{row.content_hash}.txt"
+                digest = row.content_hash
+                if row.kind == "browser_screenshot":
+                    from knowledgeops_agent.harness.browser.capture import screenshot_metadata
+
+                    digest = screenshot_metadata(row)["sha256"]
+                expected = (f"artifacts/{row.run_id}/browser/{digest}.png"
+                            if row.kind == "browser_screenshot" else f"artifacts/{row.run_id}/{digest}.txt")
                 if row.content_storage_key != expected:
                     raise ValueError("artifact storage key is outside its managed identity")
-                files.append({"run_id": row.run_id, "content_hash": row.content_hash, "storage_key": row.content_storage_key})
+                files.append({"run_id": row.run_id, "content_hash": digest,
+                              "storage_key": row.content_storage_key, "kind": row.kind})
             row.expired_at, row._content, row.content_storage_key = self.now(), "", None
             replace_references(session, "material", row.id, {})
             expired += 1

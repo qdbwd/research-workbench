@@ -33,6 +33,7 @@ def _registered(session, root, kind, key):
         "source": (db.SourceVersion, db.SourceVersion.storage_key),
         "delivery": (db.DeliveredFile, db.DeliveredFile.storage_key),
         "artifact": (db.RunArtifact, db.RunArtifact.content_storage_key),
+        "browser_screenshot": (db.RunArtifact, db.RunArtifact.content_storage_key),
         "knowledge": (db.KnowledgeVersion, db.KnowledgeVersion.body_storage_key),
         "profile": (db.LearningProfileRevision, db.LearningProfileRevision.storage_key),
         "profile_import": (db.LearningProfileImport, db.LearningProfileImport.storage_key),

@@ -4,6 +4,8 @@
 外部服务、不构造第二套MCP许可，也不把工具启用等同于知识发布授权。
 """
 
+from knowledgeops_agent.harness.browser.names import BROWSER_IDS, BROWSER_NAMES
+from knowledgeops_agent.harness.browser.settings import task_allowed
 from knowledgeops_agent.harness.mcp.access import check_access
 from knowledgeops_agent.harness.mcp.registry import MCPRegistry
 from knowledgeops_agent.harness.tools.catalog import tool_options
@@ -12,16 +14,22 @@ from knowledgeops_agent.harness.tools.policy import ToolPolicyService, baseline_
 
 def allowed_local_ids(context, *, is_root: bool | None = None) -> set[str]:
     """历史清单没有策略时只采用固定零版本，不能借恢复获得当前新增工具。"""
-    binding = (context.resources or {}).get("tool_policy", baseline_policy())
+    resources = context.resources or {}
+    inputs = context.jobs.get_run(context.root_id)["input"]
+    browser_enabled = (resources.get("browser", {}).get("enabled") is True
+                       and context.jobs.browser_config.browser_enabled and task_allowed(inputs))
+    binding = resources.get("tool_policy", baseline_policy())
     allowed = ToolPolicyService(context.jobs.sessions).allowed_ids(
         binding,
         is_root=context.run_id == context.root_id if is_root is None else is_root,
+        include_browser=browser_enabled,
     )
     is_main = context.run_id == context.root_id if is_root is None else is_root
     workspace = (context.resources or {}).get("workspace")
     if not workspace or not is_main or "middleware:read_file" not in allowed:
         allowed -= {item["id"] for item in tool_options() if item["condition"] == "workspace"}
-    inputs = context.jobs.get_run(context.root_id)["input"]
+    if not browser_enabled or not is_main:
+        allowed -= BROWSER_IDS
     if inputs.get("knowledge_only"):
         allowed.discard("middleware:execute")
     if inputs.get("research") or inputs.get("trial_case"):
@@ -49,6 +57,8 @@ def unavailable_tools(context) -> dict[str, str]:
         for item in tool_options()
         if item["id"] not in allowed
     }
+    if not (context.resources or {}).get("browser", {}).get("enabled") or not context.jobs.browser_config.browser_enabled:
+        denied.update(dict.fromkeys(BROWSER_NAMES, "部署或本次任务未启用受控动态浏览器取证"))
     bindings = {row["id"]: row for row in (context.resources or {}).get("mcp", [])}
     registry = MCPRegistry(context.jobs.sessions)
     for item in context.tool_catalog or []:

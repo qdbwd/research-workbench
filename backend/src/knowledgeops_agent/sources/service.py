@@ -421,9 +421,9 @@ class SourceService:
             )
             return self._version_view(session, source, version) if version else None
 
-    def read_segment(self, segment_id: str, *, root_id: str) -> dict:
+    def read_segment(self, segment_id: str, *, root_id: str, session=None) -> dict:
         """实际读取成功才登记证据；失败页/空片段不能作为模型已读证据。"""
-        with self.sessions.begin() as session:
+        with (self.sessions.begin() if session is None else nullcontext(session)) as session:
             lock_control(session)
             segment = session.get(SourceSegment, segment_id)
             if segment is None or segment.status != "ready" or not segment.text.strip():
@@ -433,7 +433,7 @@ class SourceService:
             evidence_id = self._record_segment_read(
                 session, version, segment, root_id, segment.start_offset, segment.end_offset,
             )
-        return self.get_evidence(evidence_id)
+            return self.get_evidence(evidence_id, session=session)
 
     def read_search_hit(
         self, segment_id: str, *, version_id: str, start: int, end: int, root_id: str, source_ids=None,
@@ -551,9 +551,9 @@ class SourceService:
         """保留旧内部调用合同；新模型上下文用有排序和分页入口的 evidence_page。"""
         return self.evidence_page(root_id, limit=200, deduplicate=False)["items"]
 
-    def get_evidence(self, evidence_id: str) -> dict:
+    def get_evidence(self, evidence_id: str, *, session=None) -> dict:
         """历史引用直接解析固定版本，不追随文档的当前版本指针。"""
-        with self.sessions() as session:
+        with (self.sessions() if session is None else nullcontext(session)) as session:
             evidence = session.get(Evidence, evidence_id)
             if evidence is None:
                 raise KeyError("evidence not found")

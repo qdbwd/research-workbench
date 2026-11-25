@@ -372,6 +372,8 @@ def execute_run(
     finally:
         stop_heartbeat.set()
         heart.join(timeout=5)
+        if run_id == run["root_id"]:
+            services.jobs.close_browser_session(run_id)
     outcome = material_outcome or _outcome(context, state, stopped=status != "completed")
     if status == "paused":
         return services.jobs.settle_pause(run_id, owner, outcome=outcome)

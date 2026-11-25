@@ -6,6 +6,7 @@ import { Button } from '../../shared/ui/Button';
 import { ErrorBox, Loading, PageTitle } from '../../shared/ui/components';
 import { Dialog } from '../../shared/ui/Dialog';
 import { SettingsRow } from '../../shared/ui/SettingsRow';
+import { BrowserSettingsRow } from './BrowserSettingsDialog';
 import { AgentSettingsTabs } from './AgentSettingsTabs';
 import { ExecutionRules } from '../permissions/ExecutionRules';
 import { CapabilitySelector, type CapabilityChoice } from './CapabilitySelector';
@@ -135,6 +136,7 @@ function PolicyEditor({
             当前配置修订 {saved.revision}{changed ? ' · 有未保存修改' : ''}
           </p>
         </header>
+        <BrowserSettingsRow />
         <SettingsRow title="全局工具开关" description={`已启用 ${local.filter((tool) => draft.enabled[tool.id]).length} 项工具 · 适用于主智能体和子智能体`}
           icon={<ToggleRight size={17} aria-hidden="true" />}>
           <CapabilitySelector

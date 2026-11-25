@@ -4,6 +4,7 @@
 构造参数优先于文件。测试使用 _env_file=None 与虚构凭据。
 """
 
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -59,6 +60,22 @@ class Settings(BaseSettings):
     mcp_session_idle_seconds: float = Field(default=1800, ge=1, le=86400)
     mcp_session_sweep_seconds: float = Field(default=2, ge=0.1, le=60)
     mcp_session_close_seconds: float = Field(default=5, ge=0.1, le=30)
+    # 动态浏览器默认关闭，CDP 端点仅由部署配置提供。
+    browser_enabled: bool = False
+    browser_local_attach_enabled: bool = False
+    browser_local_cdp_endpoint: str = Field(default="", repr=False)
+    browser_local_cdp_host_header: str = "localhost:9222"
+    browser_mcp_command: str = "node"
+    browser_mcp_entrypoint: str = ""
+    browser_chromium_executable: str = ""
+    browser_allowed_origins: str = ""
+    browser_attach_allowed_origins: str = ""
+    browser_action_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
+    browser_idle_seconds: float = Field(default=180.0, ge=10, le=3600)
+    browser_max_actions_per_run: int = Field(default=25, ge=1, le=200)
+    browser_max_concurrent_sessions: int = Field(default=2, ge=1, le=8)
+    browser_max_capture_chars: int = Field(default=120000, ge=1000, le=500000)
+    browser_max_screenshot_bytes: int = Field(default=4 * 1024 * 1024, ge=65536, le=20 * 1024 * 1024)
     model_calls_enabled: bool = False
     openai_api_key: SecretStr = SecretStr("")
     openai_base_url: str = Field(default="", repr=False)
@@ -84,6 +101,31 @@ class Settings(BaseSettings):
     api_allowed_hosts: str = "localhost,127.0.0.1,::1"
     # 与 Uvicorn/Celery 共同支持的级别保持一致，避免仅 API 读取了应用日志配置。
     app_log_level: Literal["critical", "error", "warning", "info", "debug"] = "info"
+
+    @field_validator("browser_local_cdp_endpoint")
+    @classmethod
+    def validate_cdp_endpoint(cls, value: str) -> str:
+        if not value:
+            return value
+        try:
+            url = urlsplit(value)
+            if (
+                re.search(r"[\x00-\x20\x7f\\?#@]", value)
+                or url.scheme not in {"http", "https", "ws", "wss"}
+                or not url.hostname
+                or url.port == 0
+            ):
+                raise ValueError
+        except ValueError:
+            raise ValueError("BROWSER_LOCAL_CDP_ENDPOINT must be a credential-free HTTP(S)/WS(S) URL") from None
+        return value
+
+    @field_validator("browser_local_cdp_host_header")
+    @classmethod
+    def validate_cdp_host(cls, value: str) -> str:
+        if value and not re.fullmatch(r"(?:[a-zA-Z0-9.-]+|\[[0-9a-fA-F:]+\])(?::[0-9]{1,5})?", value):
+            raise ValueError("BROWSER_LOCAL_CDP_HOST_HEADER must contain a host and optional port")
+        return value
 
     @field_validator("api_allowed_hosts")
     @classmethod

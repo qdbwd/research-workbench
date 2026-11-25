@@ -1042,6 +1042,8 @@ class RunArtifact(Base):
             return SourceService._verified_body(session, version)[1]
         from knowledgeops_agent.persistence.files import stored_text
 
+        if self.kind == "browser_screenshot":
+            return self._content
         return stored_text(self, self.content_storage_key, self.content_hash, self._content)
 
     @content.setter
@@ -1725,6 +1727,26 @@ class EmbeddingProfile(Base):
     contextual: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     status: Mapped[str] = mapped_column(String(24), default="building", server_default="building")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class BrowserSettings(Base):
+    """当前浏览器偏好。RunResourceSnapshot 保存历史运行实际策略。"""
+
+    __tablename__ = "browser_settings"
+    __table_args__ = (
+        CheckConstraint("id = 'default'", name="ck_browser_settings_singleton"),
+        CheckConstraint("default_mode IN ('launch', 'attach')", name="ck_browser_settings_mode"),
+        CheckConstraint("revision >= 1", name="ck_browser_settings_revision"),
+        CheckConstraint(
+            "default_mode <> 'attach' OR local_attach_enabled = true", name="ck_browser_settings_attach"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, server_default="default")
+    local_attach_enabled: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    default_mode: Mapped[str] = mapped_column(String(16), server_default="launch")
+    revision: Mapped[int] = mapped_column(Integer, server_default="1")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
 
 
 class RagSettings(Base):

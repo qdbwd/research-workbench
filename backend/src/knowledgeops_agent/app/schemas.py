@@ -111,6 +111,7 @@ class MessageInput(InputModel):
     request_key: str = Field(min_length=1, max_length=200)
     publication_mode: Literal["ask", "preview", "direct"] = "ask"
     knowledge_only: bool = False
+    browser_mode: Literal["launch", "attach"] | None = None
     delegation: bool = True
     reasoning_effort: str | None = Field(default=None, min_length=1, max_length=32)
     source_ids: list[str] = Field(default_factory=list, max_length=30)

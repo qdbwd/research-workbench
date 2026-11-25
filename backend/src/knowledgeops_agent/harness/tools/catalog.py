@@ -15,10 +15,12 @@ from typing import Literal, cast
 from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 
+from knowledgeops_agent.harness.browser.names import BROWSER_NAMES
 from knowledgeops_agent.harness.runtime.resources import content_hash
 
 # 仅用于界面；函数名、模型描述及参数Schema仍由真实LangChain工具定义提供。
 DISPLAY_NAMES = {
+    **BROWSER_NAMES,
     'start_async_task': '启动子任务', 'check_async_task': '查看子任务',
     'list_async_tasks': '列出子任务', 'update_async_task': '补充子任务要求',
     'cancel_async_task': '取消子任务', 'wait_async_tasks': '等待子任务',
@@ -79,6 +81,8 @@ class ToolDefinition:
 # 顺序保留原主/子工具装配顺序，不为了目录展示更改模型看到的默认工具排列。
 # 内置角色历史修订仍在subagent_registry中显式保存，不由这里动态扩充许可。
 STATIC_TOOLS = (
+    *(ToolDefinition(name, description, "browser", main_only=True, subagent_selectable=False, condition="web")
+      for name, description in BROWSER_NAMES.items()),
     *(ToolDefinition(name, description, "delegation", effect="delegate",
                      subagent_selectable=False, main_only=True, condition="delegation")
       for name, description in (
@@ -293,6 +297,7 @@ GROUP_LABELS = {
     "knowledge_maintenance": "知识维护",
     "delegation": "子任务委派",
     "web": "网页获取",
+    "browser": "动态浏览器取证",
     "skills": "技能读取",
     "files_read": "工作区读取",
     "files_write": "工作区编辑",
@@ -356,6 +361,8 @@ def local_tool_reasons(
         item["effect"] != "read" or item["condition"] == "web"
     ):
         reasons.append("research_review_only")
+    if item["group"] == "browser" and root_input.get("trial_case"):
+        reasons.append("trial_case")
     if item["condition"] == "web" and root_input.get("knowledge_only", False):
         reasons.append("knowledge_only")
     if item["name"] == "execute" and root_input.get("knowledge_only", False):

@@ -5,6 +5,7 @@ import { api, messageOf, send, terminal } from '../../shared/api/api';
 import { Badge, ErrorBox } from '../../shared/ui/components';
 import { Button } from '../../shared/ui/Button';
 import type { Guidance, Run, RunEvent } from '../../shared/types/types';
+import { BrowserScreenshotButton } from './BrowserScreenshotButton';
 import { RunPauseControl } from './RunPauseControl';
 
 const TOOL_LABELS: Record<string, string> = {
@@ -28,6 +29,13 @@ const TOOL_LABELS: Record<string, string> = {
   read_research_experiment: '读取实验结果',
   search_web: '网页搜索',
   read_web: '读取网页',
+  browser_navigate: '导航到网页',
+  browser_observe: '观察页面',
+  browser_click: '点击取证控件',
+  browser_wait: '等待页面内容',
+  browser_back: '返回上一个页面',
+  browser_capture: '采集网页证据',
+  browser_close: '关闭浏览器会话',
   read_file: '读取工作区文件',
   write_file: '写入工作区文件',
   edit_file: '编辑工作区文件',
@@ -42,6 +50,8 @@ type TimelineStep = {
   label: string;
   status: 'running' | 'done' | 'error';
   detail?: string;
+  browserMode?: 'launch' | 'attach';
+  screenshotId?: string;
 };
 
 function toolLabel(name: unknown): string {
@@ -119,6 +129,21 @@ export function LiveRunPanel({
           return [...prev, { id: stepId, label, status: 'running' }];
         });
       }
+      if (event.kind === 'browser_action' || event.kind === 'browser_capture') {
+        const stepId = String(event.data.tool_call_id ?? `seq-${event.sequence}`);
+        const screenshot = event.data.screenshot as { artifact_id?: unknown } | undefined;
+        const step: TimelineStep = {
+          id: stepId,
+          label: toolLabel(`browser_${String(event.data.action ?? 'capture')}`),
+          status: event.data.status === 'started' ? 'running' : event.data.status === 'failed' ? 'error' : 'done',
+          browserMode: event.data.mode === 'attach' ? 'attach' : 'launch',
+          detail: typeof event.data.message === 'string' ? event.data.message : undefined,
+          screenshotId: typeof screenshot?.artifact_id === 'string' ? screenshot.artifact_id : undefined,
+        };
+        setSteps((previous) => previous.some((item) => item.id === stepId)
+          ? previous.map((item) => item.id === stepId ? step : item)
+          : [...previous, step]);
+      }
       if (event.kind === 'tool_finished') {
         const label = toolLabel(event.data.name);
         const stepId = String(event.data.tool_call_id ?? '');
@@ -139,6 +164,7 @@ export function LiveRunPanel({
             return [...prev, { id: stepId || `seq-${event.sequence}`, label, status: failed ? 'error' : 'done' }];
           }
           const next = [...prev];
+          if (next[index].browserMode && next[index].status !== 'running') return prev;
           next[index] = { ...next[index], status: failed ? 'error' : 'done' };
           return next;
         });
@@ -270,11 +296,16 @@ export function LiveRunPanel({
           aria-label="执行步骤"
         >
           {steps.map((step) => (
-            <li key={step.id} className="flex items-center gap-2 text-[#45644a]">
+            <li key={step.id} className="flex min-w-0 flex-wrap items-center gap-2 text-control">
               {step.status === 'running' && <Loader2 size={13} className="shrink-0 animate-spin" aria-hidden="true" />}
               {step.status === 'done' && <Check size={13} className="shrink-0 text-brand" aria-hidden="true" />}
               {step.status === 'error' && <AlertCircle size={13} className="shrink-0 text-danger" aria-hidden="true" />}
               <span className={step.status === 'error' ? 'text-danger' : undefined}>{step.label}</span>
+              {step.browserMode && <span className="rounded-full bg-sidebar px-2 py-0.5 text-brand">
+                {step.browserMode === 'attach' ? '本机可见 · CDP' : '容器隔离'}
+              </span>}
+              {step.screenshotId && <BrowserScreenshotButton runId={run.id} artifactId={step.screenshotId} />}
+              {step.detail && <span className="basis-full text-danger">{step.detail}</span>}
             </li>
           ))}
         </ol>

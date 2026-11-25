@@ -164,3 +164,18 @@ it('refuses a stale conflict choice or discard confirmation instead of deleting 
   await expect(store.resolve(row.scope, current.change, null)).rejects.toThrow('草稿又有变化');
   expect((await store.read(row.scope)).data.content).toBe(other.data.content);
 });
+
+
+it.each([false, true])('freezes the browser mode with the original message body (knowledgeOnly=%s)', async (knowledgeOnly) => {
+  const store = new DraftStore(crypto.randomUUID());
+  const draft = await store.open({ conversationId: 'chat' });
+  const edited = await store.save(draft.scope, draft.revision, {
+    ...emptyDraft(), content: '核对动态规程', browserMode: 'attach', knowledgeOnly,
+  }, 'one');
+  const prepared = await store.prepare(edited.scope, edited.revision, 'send');
+  await store.save(edited.scope, prepared.revision, { ...edited.data, browserMode: 'launch' }, 'one');
+  const http = { get: vi.fn(), post: vi.fn().mockResolvedValue({ id: 'run' }) };
+  await dispatchSubmission(store, edited.scope, true, http);
+  expect(http.post).toHaveBeenCalledWith('/api/conversations/chat/messages', prepared.pending?.body);
+  expect(prepared.pending?.body.browser_mode).toBe(knowledgeOnly ? undefined : 'attach');
+});

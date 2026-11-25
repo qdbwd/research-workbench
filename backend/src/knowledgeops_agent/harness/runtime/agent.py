@@ -14,6 +14,7 @@ from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from knowledgeops_agent.app.runs.guidance import GuidanceMiddleware
+from knowledgeops_agent.harness.browser.tools import BROWSER_TOOLS
 from knowledgeops_agent.harness.context.assembly import assemble_system_prompt
 from knowledgeops_agent.harness.context.continuity import (
     ContinuityMiddleware,
@@ -220,6 +221,7 @@ LOCAL_TOOLS = {
     tool.name: tool
     for tool in (
         *ASYNC_TOOLS,
+        *BROWSER_TOOLS,
         search_knowledge,
         search_references,
         list_knowledge,

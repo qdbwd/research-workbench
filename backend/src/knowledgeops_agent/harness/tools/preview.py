@@ -9,7 +9,7 @@ from knowledgeops_agent.harness.tools.catalog import (
     role_inherits_mcp,
     role_tool_names,
 )
-from knowledgeops_agent.harness.tools.policy import ToolPolicyService
+from knowledgeops_agent.harness.tools.policy import ToolPolicyService, with_browser_defaults
 
 REASONS = {
     "globally_disabled": "全局已关闭",
@@ -17,6 +17,8 @@ REASONS = {
     "role_not_selected": "该角色没有选择此工具或所属工具组",
     "main_only": "只提供给主Agent，子角色不能写入或递归委派",
     "legacy_only": "仅用于恢复历史任务，新任务使用task委派",
+    "browser_disabled": "部署未启用受控动态浏览器取证",
+    "trial_case": "试用案例使用固定材料",
     "knowledge_only": "仅知识库模式不允许联网或外部MCP",
     "research_mode_required": "仅用于已绑定研发任务的主运行",
     "research_autonomy_required": "需要已确认的自主研发授权",
@@ -40,9 +42,10 @@ def effective_catalog(
     knowledge_only: bool = False,
     delegation: bool = True,
     workspace_enabled: bool = False,
+    browser_enabled: bool = False,
 ) -> dict:
     """预览已保存配置；真正执行仍冻结资源并重新核对许可、预算和业务条件。"""
-    policy = ToolPolicyService(sessions).get()
+    policy = with_browser_defaults(ToolPolicyService(sessions).get())
     role = SubagentRegistry(sessions).get(role_id) if role_id else None
     has_subagents = bool(SubagentRegistry(sessions).snapshot()) if role is None else False
     root = {"knowledge_only": knowledge_only, "delegation": delegation}
@@ -66,6 +69,8 @@ def effective_catalog(
                 reasons.append("knowledge_only")
         else:
             reasons += local_tool_reasons(item, root, is_root=is_root, role_tools=selected)
+            if item["group"] == "browser" and not browser_enabled:
+                reasons.append("browser_disabled")
             if is_root and item["name"] == "task" and not has_subagents:
                 reasons.append("no_subagents")
             if policy["enabled"].get(item["id"]) is not True:
