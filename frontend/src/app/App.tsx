@@ -12,7 +12,7 @@ import {
   useOutletContext,
   useParams,
 } from 'react-router-dom';
-import { Activity, BookOpen, Compass, Files, FlaskConical, GraduationCap, List, Plus, Settings, SlidersHorizontal } from 'lucide-react';
+import { Activity, BookOpen, Brain, Compass, Files, FlaskConical, GraduationCap, List, Plus, Settings, SlidersHorizontal } from 'lucide-react';
 import { useResource } from '../shared/api/api';
 import { ChatPage } from '../features/chat/ChatPage';
 import { BackgroundDeletions } from '../features/chat/BackgroundDeletions';
@@ -55,6 +55,7 @@ function WorkspaceLayout() {
   const { pathname } = useLocation();
   const [showRecent, setShowRecent] = useState(false);
   const configuringAgent = /^\/(tools|skills|mcp|subagents|retrieval)(\/|$)/.test(pathname);
+  const viewingMemories = /^\/(memories|preferences)(\/|$)/.test(pathname);
   const [version, setVersion] = useState(0);
   const refresh = useCallback(() => setVersion((value) => value + 1), []);
   const workspace = useMemo(() => ({ version, refresh }), [version, refresh]);
@@ -108,6 +109,14 @@ function WorkspaceLayout() {
                 <Files size={18} />
                 材料与来源
               </NavLink>
+              <Link
+                className={navigationStyle + (viewingMemories ? ' active' : '')}
+                to="/memories"
+                aria-current={viewingMemories ? 'page' : undefined}
+              >
+                <Brain size={18} aria-hidden="true" />
+                长期记忆
+              </Link>
               <NavLink className={navigationStyle} to="/learning">
                 <GraduationCap size={18} />
                 学习与整理

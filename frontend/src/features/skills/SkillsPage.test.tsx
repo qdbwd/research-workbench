@@ -133,10 +133,12 @@ it('reviews a colored diff, reports rollback conflict, and queues zero-model Cur
       <SkillsPage />
     </MemoryRouter>,
   );
-  expect(await screen.findByRole('button', { name: '方法改进提案' })).toBeVisible();
+  expect(await screen.findByRole('button', { name: '技能进化与整理' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: '方法改进提案' })).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole('button', { name: '技能进化与整理' }));
   const dialog = await screen.findByRole('dialog', { name: '技能进化与整理' });
   const review = within(dialog);
+  expect(review.getByRole('button', { name: '方法改进提案' })).toBeVisible();
   expect(await review.findByText('+新的方法')).toHaveClass('bg-[#e3f1e8]');
   expect(review.getByText('-原方法')).toHaveClass('bg-[#fbeae8]');
   await userEvent.click(review.getByRole('button', { name: '批准' }));

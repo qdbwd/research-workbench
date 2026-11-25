@@ -4,7 +4,8 @@ test('reviews a method from the completed operations case before publishing it',
   await page.goto('/skills');
   const skill = page.getByRole('article', { name: '证据核对' });
   await expect(skill).toContainText('修订 1');
-  await page.getByRole('button', { name: '方法改进提案' }).click();
+  await page.getByRole('button', { name: '技能进化与整理' }).click();
+  await page.getByRole('dialog', { name: '技能进化与整理' }).getByRole('button', { name: '方法改进提案' }).click();
   const dialog = page.getByRole('dialog', { name: '方法改进提案' });
   await dialog.getByRole('button', { name: '从已验收案例准备提案' }).click();
   await expect(dialog.getByText('定位检索问答的缺证与误引', { exact: true })).toBeVisible();
@@ -21,6 +22,7 @@ test('reviews a method from the completed operations case before publishing it',
   await page.screenshot({ path: '../artifacts/verification/skill-method-proposals-narrow.png' });
   await dialog.getByRole('button', { name: '确认发布修订' }).click();
   await expect(dialog.getByText('已发布修订 2', { exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
   await page.keyboard.press('Escape');
   await expect(skill).toContainText('修订 2');
   await skill.getByRole('button', { name: '查看详情' }).click();

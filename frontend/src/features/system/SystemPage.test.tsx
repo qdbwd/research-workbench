@@ -59,6 +59,7 @@ it('shows layered readiness, refreshes on a bounded interval and lists backup re
   expect(screen.getByText('已校验并有隔离恢复')).toBeInTheDocument();
   expect(screen.getByText('b1')).toBeInTheDocument();
   expect(screen.getByText('未完成')).toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: '长期记忆' })).not.toBeInTheDocument();
   expect(fetcher).toHaveBeenCalledTimes(2);
 
   await act(() => vi.advanceTimersByTimeAsync(5000));

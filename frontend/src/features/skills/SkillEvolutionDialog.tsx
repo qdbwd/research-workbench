@@ -14,6 +14,7 @@ import {
   reasonLabels,
   type Job,
 } from '../evolution/LearningJourneyList';
+import { SkillMethodProposals } from './SkillMethodProposals';
 
 type Candidate = {
   target_id: string;
@@ -155,7 +156,7 @@ export function SkillEvolutionDialog({
   version: string;
 }) {
   const [tab, setTab] = useState<'changes' | 'curator'>('changes');
-  const [nested, setNested] = useState<'settings' | 'review' | null>(null);
+  const [nested, setNested] = useState<'settings' | 'review' | 'proposals' | null>(null);
   const settings = useResource<EvolutionSettings>(
     nested === 'settings' ? '/api/evolution/settings' : null,
     version,
@@ -172,6 +173,9 @@ export function SkillEvolutionDialog({
         }
       >
         <div className="mb-3 flex flex-wrap justify-end gap-2">
+          <Button type="button" className="button-secondary" onClick={() => setNested('proposals')}>
+            方法改进提案
+          </Button>
           <Button type="button" className="button-secondary" onClick={() => setNested('settings')}>
             自进化设置
           </Button>
@@ -220,6 +224,14 @@ export function SkillEvolutionDialog({
           <ErrorBox message={settings.error} />
           {settings.loading && <Loading />}
         </Dialog>
+      )}
+      {nested === 'proposals' && (
+        <SkillMethodProposals
+          onClose={() => setNested(null)}
+          onPublished={() => {
+            onChanged();
+          }}
+        />
       )}
       {nested === 'review' && (
         <ManualReviewDialog

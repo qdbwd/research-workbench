@@ -4,7 +4,7 @@
 
 ## 一、当前接续状态
 
-- **最新迁移与数据库基线（2026-11-25）**：代码迁移已推进至 `0063`（主线 A：Hermes 完整在线自进化体系，已完成两轮独立代码审查与真实浏览器视觉验收并封板提交）；正式业务库当前为 `0061`（升级前备份 `artifacts/backups/91372a5c8dc5`），待备份与隔离恢复校验后升级至 `0063`。
+- **最新迁移与数据库基线（2026-11-25）**：代码迁移与开发部署的正式业务库 `knowledgeops` 均已推进至 `0063`（主线 A：Hermes 完整在线自进化体系已完成封板提交 `1a9e9ac` 并推送 `origin/main`；正式库升级前已完成受保护备份 `artifacts/backups/a735894464e9` 与 11/11 项隔离恢复校验 `restore-verification-4186e329192f.json`）。
 - **阶段收口已完成项**：
   - 通用辅助模型工具 `call_model` 与 `auxiliary` 工具组已彻底下线（迁移 `0057`，见 [决策 0032](docs/decisions/0032-retire-auxiliary-call-model.md)），应用内部单次调用及历史兼容保留。
   - 工程治理与 CI（2026-11-24）：新增 [数据库总览与核心状态机](docs/database-and-state-machines.md)（7 大表群、5 条 DB 红线、五轨状态机）；[AGENTS.md](AGENTS.md) 将 OpenAI Codex 列入长期参考对象；已新增离线零付费 GitHub CI（[.github/workflows/ci.yml](.github/workflows/ci.yml)），CD 镜像发布暂缓。

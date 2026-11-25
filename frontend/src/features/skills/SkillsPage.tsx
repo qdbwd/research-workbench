@@ -16,7 +16,6 @@ import { AgentSettingsTabs } from '../tools/AgentSettingsTabs';
 import { CapabilityDetails } from '../tools/CapabilityDetails';
 import { SkillEvolutionDialog } from './SkillEvolutionDialog';
 import { SkillImportDialog } from './SkillImportDialog';
-import { SkillMethodProposals } from './SkillMethodProposals';
 import type { SkillEntry } from './types';
 
 export function SkillsPage() {
@@ -36,7 +35,6 @@ export function SkillsPage() {
   const pendingCount =
     pending.data?.filter((change) => change.review_state === 'pending_review').length ?? 0;
   const [query, setQuery] = useState('');
-  const [proposalsOpen, setProposalsOpen] = useState(false);
   const [editor, setEditor] = useState<{ skill: SkillEntry | null } | null>(null);
   const [detail, setDetail] = useState<SkillEntry | null>(null);
   const [confirm, setConfirm] = useState<{
@@ -183,9 +181,6 @@ export function SkillsPage() {
           </label>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button className="button-secondary" onClick={() => setProposalsOpen(true)}>
-            方法改进提案
-          </Button>
           <Button className="button-secondary" onClick={() => setEvolutionOpen(true)}>
             <Sparkles size={16} aria-hidden="true" />
             技能进化与整理
@@ -209,9 +204,6 @@ export function SkillsPage() {
           onChanged={reload}
           version={viewVersion}
         />
-      )}
-      {proposalsOpen && (
-        <SkillMethodProposals onClose={() => setProposalsOpen(false)} onPublished={reload} />
       )}
       {!confirm && <ErrorBox message={error} />}
       <ErrorBox message={catalog.error} />

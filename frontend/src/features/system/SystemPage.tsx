@@ -84,7 +84,6 @@ export function SystemPage() {
   return (
     <>
       <PageTitle title="系统与维护">
-        <Link className="button button-secondary" to="/memories">长期记忆</Link>
         <Button className="button-secondary" onClick={() => setTick((value) => value + 1)}>重新检查</Button>
       </PageTitle>
       <ErrorBox message={error} />
