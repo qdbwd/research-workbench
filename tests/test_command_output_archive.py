@@ -1,6 +1,8 @@
 """短命令输出流先落盘，预览截断不会丢掉保存上限内的尾部。"""
 
 import shlex
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -30,7 +32,7 @@ def context(business_sessions, tmp_path):
 def run_command(context, command, *, limit=1048576, timeout=3, guard=lambda: None):
     with output_scope(context, limit_bytes=limit) as output:
         result = execute_local_command(command, cwd=context.workspace_root,
-                                       env={"PATH": "/workspace/.venv/bin:/usr/bin:/bin"},
+                                       env={"PATH": f"{Path(sys.executable).parent}:/usr/bin:/bin"},
                                        timeout=timeout, guard=guard)
     return result, output
 

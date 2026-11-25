@@ -63,10 +63,20 @@ def main():
         parser.error('需要实际工作区')
     if args.database != 'knowledgeops' and not args.workspace:
         parser.error('隔离备份必须使用自己的工作区')
-    if args.fixture_root and not re.fullmatch(r'/workspace/artifacts/verification/backup-[a-f0-9]{12}/extensions', str(args.fixture_root)):
-        parser.error('隔离扩展目录不在约定范围')
+    repo_root = Path(__file__).resolve().parents[1]
+    if args.fixture_root:
+        fixture_root = args.fixture_root.absolute()
+        verification_root = (repo_root / 'artifacts' / 'verification').absolute()
+        if (
+            fixture_root.name != 'extensions'
+            or not re.fullmatch(r'backup-[a-f0-9]{12}', fixture_root.parent.name)
+            or fixture_root.parent.parent != verification_root
+            or any(path.is_symlink() for path in (fixture_root, *fixture_root.parents))
+        ):
+            parser.error('隔离扩展目录不在约定范围')
     folder = args.folder.absolute()
-    if (folder != Path('/backup') and not folder.is_relative_to(Path('/workspace/artifacts/backups'))
+    backups_root = (repo_root / 'artifacts' / 'backups').absolute()
+    if (folder != Path('/backup') and not folder.is_relative_to(backups_root)
             or any(path.is_symlink() for path in (folder, *folder.parents))):
         parser.error('备份目标必须为项目备份目录或明确的备份挂载')
     skills = args.fixture_root / 'skills' if args.fixture_root else resource_path('SKILLS_DIRECTORY', managed_resource_root('skills'))

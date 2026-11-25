@@ -3,6 +3,7 @@
 import json
 import os
 import selectors
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -30,10 +31,11 @@ def isolated_backup():
     with admin.connect() as connection:
         connection.execute(text(f'CREATE DATABASE {database}'))
     engine = create_engine(admin.url.set(database=database))
-    workspace = Path(f'/workspace/artifacts/verification/backup-{identity}/workspace')
+    repo_root = Path(__file__).resolve().parents[1]
+    workspace = repo_root / 'artifacts' / 'verification' / f'backup-{identity}' / 'workspace'
     workspace.mkdir(parents=True)
     (workspace / 'source.txt').write_text('fixture data only')
-    folder = Path('/workspace/artifacts/backups') / ('guard-' + identity)
+    folder = repo_root / 'artifacts' / 'backups' / ('guard-' + identity)
     command = [sys.executable, 'scripts/backup_guard.py', '--database', database,
                '--operation-id', identity, '--workspace', str(workspace), '--folder', str(folder),
                '--fixture-root', str(workspace.parent / 'extensions')]
@@ -44,6 +46,8 @@ def isolated_backup():
         with admin.connect() as connection:
             connection.execute(text(f'DROP DATABASE {database} WITH (FORCE)'))
         admin.dispose()
+        shutil.rmtree(workspace.parent, ignore_errors=True)
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 @pytest.mark.parametrize('failure', ['host_eof', 'lost_database_connection'])
