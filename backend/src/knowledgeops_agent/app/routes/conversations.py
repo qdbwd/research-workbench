@@ -20,6 +20,25 @@ from knowledgeops_agent.app.schemas import (
 router = APIRouter()
 
 
+@router.get("/api/conversations/{conversation_id}/memory-snapshot")
+def get_memory_snapshot(conversation_id: str, request: Request):
+    from knowledgeops_agent.evolution.snapshots import conversation_memory_snapshot_view
+
+    with svc(request).sessions() as session:
+        return conversation_memory_snapshot_view(session, conversation_id)
+
+
+@router.post("/api/conversations/{conversation_id}/memory-snapshot/refresh")
+def refresh_memory_snapshot(conversation_id: str, request: Request):
+    from knowledgeops_agent.app.runs.control import lock_control
+    from knowledgeops_agent.evolution.snapshots import refresh_conversation_memory_snapshot
+
+    with svc(request).sessions.begin() as session:
+        lock_control(session)
+        return refresh_conversation_memory_snapshot(session, conversation_id)
+
+
+
 class ConversationDeletionInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_version: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -119,8 +138,8 @@ def retry_deletion(conversation_id: str, request: Request):
 
 
 @router.get("/api/conversations")
-def conversations(request: Request):
-    return svc(request).jobs.conversations()
+def conversations(request: Request, include_trials: bool = True):
+    return svc(request).jobs.conversations(include_trials=include_trials)
 
 
 @router.get("/api/conversations/page")

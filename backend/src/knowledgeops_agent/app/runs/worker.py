@@ -18,6 +18,7 @@ from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.types import Command
 from psycopg import Connection
 from psycopg.rows import dict_row
+from pydantic import ValidationError
 
 from knowledgeops_agent.app.runs.children import ChildrenWaiting, ChildRuns
 from knowledgeops_agent.app.runs.questions import InputWaiting, RunQuestions
@@ -25,6 +26,7 @@ from knowledgeops_agent.app.runs.queue import create_queue, worker_lease
 from knowledgeops_agent.app.runs.service import RunPaused, RunStopped
 from knowledgeops_agent.app.services import Services, create_services
 from knowledgeops_agent.core.config import get_settings
+from knowledgeops_agent.evolution.security import redact_credentials
 from knowledgeops_agent.harness.context.capacity import ContextCapacityExceeded
 from knowledgeops_agent.harness.context.continuation import from_state
 from knowledgeops_agent.harness.mcp.calls import MCPApprovalRequired, MCPCalls
@@ -216,6 +218,13 @@ def execute_run(
     material_outcome = None
     children_wait = None
     compacted_state = None
+    from knowledgeops_agent.evolution.service import EvolutionService
+
+    def finish_foreground(**kwargs):
+        finished = services.jobs.finish(run_id, owner, **kwargs)
+        EvolutionService(services).on_foreground_run_finished(finished)
+        return finished
+
     try:
         if run["kind"] == "material":
             material_outcome = execute_material(services, run, owner)
@@ -227,6 +236,15 @@ def execute_run(
 
             prepare_resources(context)
             material_outcome, compacted_state = compact_context(context)
+        elif run["kind"] == "evolution_review":
+            from knowledgeops_agent.evolution.runner import prepare_evolution
+            from knowledgeops_agent.evolution.skill_review import skill_manager
+
+            complete = prepare_evolution(context, run)
+            try:
+                return services.jobs.finish(run_id, owner, complete_evolution=complete)
+            finally:
+                skill_manager(services.jobs.sessions).recover()
         elif run["kind"] == "memory_classification":
             from knowledgeops_agent.memory.classification import execute as classify_memory
 
@@ -250,9 +268,7 @@ def execute_run(
                     "draft_ids": [],
                     "published_ids": choice["published_ids"],
                 }
-                return services.jobs.finish(
-                    run_id, owner, status="completed", outcome=material_outcome
-                )
+                return finish_foreground(status="completed", outcome=material_outcome)
             with (
                 nullcontext(checkpointer)
                 if checkpointer is not None
@@ -333,13 +349,19 @@ def execute_run(
     ) as exc:
         status, reason = "failed", str(exc)
     except ValueError as exc:
-        # 材料适配器的业务错误已清除底层 HTTP/解析配置，可明确展示失败原因。
-        status, reason = (
-            "failed",
-            str(exc)
-            if run["kind"] in {"material", "context_compaction"}
-            else "invalid operation; saved progress is available",
-        )
+        status = "failed"
+        if run["kind"] == "evolution_review":
+            material_outcome = {"kind": "evolution_review_failed"}
+            if isinstance(exc, ValidationError):
+                # 校验详情可能含模型原始字段名或内容，仅呈现结构错误和数量。
+                reason = f"复盘模型响应未通过结构校验（{exc.error_count()} 项错误）"
+            else:
+                reason = redact_credentials(context.gateway._redact(str(exc)))[:500] or "复盘操作未通过校验"
+        elif run["kind"] in {"material", "context_compaction"}:
+            # 材料适配器的业务错误已清除底层 HTTP/解析配置。
+            reason = str(exc)
+        else:
+            reason = "invalid operation; saved progress is available"
     except Exception as exc:
         # 底层异常正文可能携带连接参数；对外保留类型、运行 ID 和已保存进度。
         status, reason = (
@@ -361,9 +383,7 @@ def execute_run(
     if run["kind"] == "material" and not material_outcome and run["input"].get("version_id"):
         source = services.sources.get_version(run["input"]["version_id"])
         outcome.update(source_id=source["id"], source_version_id=source["version_id"])
-    finished = services.jobs.finish(
-        run_id,
-        owner,
+    finished = finish_foreground(
         status=status,
         outcome=outcome,
         reason=reason,

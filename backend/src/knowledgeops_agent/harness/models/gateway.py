@@ -840,9 +840,14 @@ class ModelGateway:
         on_chunk: Callable[[str], None] | None = None,
         on_reasoning: Callable[[str], None] | None = None,
         call_id: str | None = None,
+        audit_redactor: Callable[[Any], Any] | None = None,
         **kwargs: Any,
     ) -> AIMessage:
         """执行一次尝试，不隐式重试；失败也在持久账本占一次额度。"""
+        def redact_audit(value: Any) -> Any:
+            safe = self._redact(value)
+            return audit_redactor(safe) if audit_redactor is not None else safe
+
         if not self.enabled:
             raise ModelCallsDisabled("model calls are disabled")
         kwargs = self.request_parameters(kwargs)
@@ -863,7 +868,7 @@ class ModelGateway:
             root_id,
             run_id,
             purpose,
-            self._redact({**packet, "stream": stream, "capacity": capacity}),
+            redact_audit({**packet, "stream": stream, "capacity": capacity}),
             root_limit=root_limit,
             root_reserve=root_reserve,
             call_id=call_id,
@@ -889,7 +894,7 @@ class ModelGateway:
             except Exception as exc:
                 self.ledger.finish(
                     reservation,
-                    error=self._redact(f"{type(exc).__name__}: {exc}")[:2000],
+                    error=redact_audit(f"{type(exc).__name__}: {exc}")[:2000],
                     duration_ms=0,
                 )
                 raise
@@ -916,18 +921,18 @@ class ModelGateway:
             if not isinstance(response, AIMessage):
                 raise TypeError("provider did not return an AIMessage")
         except Exception as exc:
-            safe_error = self._redact(f"{type(exc).__name__}: {exc}")[:2000]
+            safe_error = redact_audit(f"{type(exc).__name__}: {exc}")[:2000]
             self.ledger.finish(
                 reservation,
                 error=safe_error,
-                response=self._redact(combined.model_dump(mode="json")) if combined else None,
+                response=redact_audit(combined.model_dump(mode="json")) if combined else None,
                 duration_ms=(monotonic() - started) * 1000,
                 first_token_ms=first_token_ms,
             )
             raise ModelCallFailed(safe_error) from None
         self.ledger.finish(
             reservation,
-            response=self._redact(response.model_dump(mode="json")),
+            response=redact_audit(response.model_dump(mode="json")),
             usage=dict(response.usage_metadata) if response.usage_metadata is not None else None,
             duration_ms=(monotonic() - started) * 1000,
             first_token_ms=first_token_ms,

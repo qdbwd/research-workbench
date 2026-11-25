@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from knowledgeops_agent.app.runs.service import Budgets
-from knowledgeops_agent.memory.service import MemoryCategory
+from knowledgeops_agent.memory.service import MemoryCategory, MemorySlot, ProtectionLevel
 
 
 class InputModel(BaseModel):
@@ -46,14 +46,38 @@ class PreferenceUpdate(InputModel):
 
 
 class MemoryInput(PreferenceInput):
+    memory_slot: MemorySlot = "user"
+    protection_level: ProtectionLevel = "normal"
     # 旧客户端的内部类别参数仍兼容；新UI只管理展示类别。
     category: MemoryCategory | None = None
     display_category_id: str | None = Field(default=None, max_length=36)
 
 
 class MemoryUpdate(PreferenceUpdate):
+    memory_slot: MemorySlot | None = None
+    protection_level: ProtectionLevel | None = None
     category: MemoryCategory | None = None
     display_category_id: str | None = Field(default=None, max_length=36)
+
+
+class EvolutionReviewInput(InputModel):
+    job_type: Literal["memory_review", "skill_review", "combined_review"] = "memory_review"
+    conversation_id: str = Field(min_length=1, max_length=36)
+    focus_hint: str = Field(default="", max_length=500)
+    request_key: str = Field(min_length=1, max_length=200)
+
+
+class EvolutionSettingsUpdate(InputModel):
+    expected_revision: int = Field(ge=1)
+    auto_review_enabled: bool | None = None
+    memory_auto_write: bool | None = None
+    skill_auto_write: bool | None = None
+    user_slot_char_limit: int | None = Field(default=None, ge=200, le=20000)
+    system_slot_char_limit: int | None = Field(default=None, ge=200, le=30000)
+    review_turn_threshold: int | None = Field(default=None, ge=1, le=100)
+    skill_tool_threshold: int | None = Field(default=None, ge=1, le=100)
+    curator_stale_days: int | None = Field(default=None, ge=7, le=365)
+    daily_budget_requests: int | None = Field(default=None, ge=0, le=500)
 
 
 class MemoryCategoryInput(InputModel):

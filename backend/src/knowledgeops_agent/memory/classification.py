@@ -49,7 +49,7 @@ MESSAGES = {
 
 def queue_classification(session, jobs, gateway, row: Preference, request_key: str) -> None:
     """调用者已锁控制行和记忆。无模型时仍提交原文；事务失败不留下半个outbox。"""
-    if row.display_category_id is not None or row.status == "deleted":
+    if row.display_category_id is not None or row.status == "deleted" or row.protection_level == "locked":
         return
     if not 1 <= len(request_key) <= 200:
         raise ValueError("无效分类请求标识")
@@ -108,13 +108,15 @@ def queue_classification(session, jobs, gateway, row: Preference, request_key: s
 
 
 def retry(jobs, gateway, memory_id: str, *, expected_revision: int, request_key: str):
-    from knowledgeops_agent.memory.service import preference_view
+    from knowledgeops_agent.memory.service import LOCKED_ERROR, preference_view
 
     with jobs.sessions.begin() as session:
         lock_control(session)
         row = session.scalar(select(Preference).where(Preference.id == memory_id).with_for_update())
         if row is None or row.status == "deleted":
             raise ValueError("记忆不存在或已删除")
+        if row.protection_level == "locked":
+            raise ValueError(LOCKED_ERROR)
         if row.revision != expected_revision:
             raise ValueError("记忆修订已变化，请刷新后再分类")
         queue_classification(session, jobs, gateway, row, request_key)
@@ -125,6 +127,7 @@ def _current(row, run_id, data):
     return (
         row is not None
         and row.status != "deleted"
+        and row.protection_level != "locked"
         and row.revision == data["expected_revision"]
         and row.display_category_id is None
         and row.classification.get("run_id") == run_id

@@ -4,6 +4,23 @@ import { Link } from 'react-router-dom';
 import { api, messageOf, send, useResource } from '../../shared/api/api';
 import { Empty, ErrorBox, Loading, PageTitle } from '../../shared/ui/components';
 import { useWorkspace } from '../../shared/state/workspace';
+import {
+  EvolutionSettingsDialog,
+  ManualReviewDialog,
+  type EvolutionSettings,
+} from '../evolution/EvolutionDialogs';
+import {
+  LearningJourneyList,
+  PendingCount,
+  evolutionTabClass,
+  type Change,
+} from '../evolution/LearningJourneyList';
+import {
+  ProtectionBadge,
+  ProtectionControls,
+  type ProtectionLevel,
+} from '../evolution/ProtectionControls';
+import { SlotCapacityBar, slotLabels, type MemorySlot } from '../evolution/SlotCapacityBar';
 import { CategoryManager, CategorySelect, type MemoryCategory } from './MemoryCategories';
 
 type Preference = {
@@ -14,6 +31,8 @@ type Preference = {
   topic: string;
   status: 'active' | 'pending' | 'inactive' | 'deleted';
   category?: string;
+  memory_slot?: MemorySlot;
+  protection_level?: ProtectionLevel;
   display_category_id?: string | null;
   classification?: { status: string; source: string; error?: string; run_id?: string };
   needs_review?: boolean;
@@ -72,6 +91,9 @@ function PreferenceCard({
   const [topic, setTopic] = useState(row.topic);
   const [scope, setScope] = useState(row.scope);
   const [category, setCategory] = useState(displayId(row));
+  const [memorySlot, setMemorySlot] = useState<MemorySlot>(row.memory_slot ?? 'user');
+  const protection = row.protection_level ?? 'normal';
+  const locked = protection === 'locked';
   const [replace, setReplace] = useState('');
   const [history, setHistory] = useState<Preference[] | null>(null);
   const [evidence, setEvidence] = useState<Preference['evidence'] | null>(null);
@@ -81,13 +103,15 @@ function PreferenceCard({
     content !== base.content ||
     scope !== base.scope ||
     topic !== base.topic ||
-    category !== displayId(base);
+    category !== displayId(base) ||
+    memorySlot !== (base.memory_slot ?? 'user');
   function accept(latest: Preference) {
     setBase(latest);
     setContent(latest.content);
     setScope(latest.scope);
     setTopic(latest.topic);
     setCategory(displayId(latest));
+    setMemorySlot(latest.memory_slot ?? 'user');
     setError('');
   }
   // 后台分类/类别删除会推进修订；有本地输入时保留草稿和原修订供冲突校验。
@@ -129,15 +153,21 @@ function PreferenceCard({
             (row.display_category_id === undefined
               ? categoryLabel[row.category ?? 'preference']
               : '未分类')}{' '}
-          · {statusLabel[row.status]}
+          · {statusLabel[row.status]} · {slotLabels[row.memory_slot ?? 'user']}
         </strong>
-        <span className="muted text-muted small text-xs">修订 {row.revision}</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <ProtectionBadge level={protection} />
+          <span className="text-xs text-muted">修订 {row.revision}</span>
+        </div>
       </div>
       <p className="muted text-muted small text-xs">
         来源：
-        {{ manual: '手动设置', explicit: '用户明确表达', inferred: '根据对话推测' }[
-          row.source.kind
-        ] ?? row.source.kind}
+        {{
+          manual: '手动设置',
+          explicit: '用户明确表达',
+          inferred: '根据对话推测',
+          evolution_review: '后台复盘',
+        }[row.source.kind] ?? row.source.kind}
         {row.source.conversation_id && (
           <>
             {' '}
@@ -150,6 +180,19 @@ function PreferenceCard({
         <p className="notice border-l-[3px] border-[#c0a76b] bg-[#f5f0e0] px-4 py-3 text-[13px] [overflow-wrap:anywhere]">
           这条背景或目标已有一段时间未确认，请检查是否仍然适用。
         </p>
+      )}
+      {locked && (
+        <p className="rounded-lg bg-[#fbeae8]/60 p-2 text-sm text-danger">
+          已锁定，请先解锁再进行后台复盘或人工编辑。
+        </p>
+      )}
+      {row.status !== 'deleted' && (
+        <ProtectionControls
+          noun="记忆"
+          level={protection}
+          disabled={busy || (dirty && !locked)}
+          onChange={(level) => void update({ protection_level: level })}
+        />
       )}
       <ErrorBox message={error} />
       {row.classification?.status === 'pending' && (
@@ -179,7 +222,7 @@ function PreferenceCard({
           <Button
             type="button"
             className="button-secondary"
-            disabled={busy || dirty}
+            disabled={busy || dirty || locked}
             onClick={() => void action('classify', { request_key: crypto.randomUUID() })}
           >
             重新分类
@@ -215,7 +258,7 @@ function PreferenceCard({
         <textarea
           aria-label={`记忆内容 ${row.id}`}
           value={content}
-          disabled={busy || row.status === 'deleted'}
+          disabled={busy || locked || row.status === 'deleted'}
           maxLength={2000}
           onChange={(e) => setContent(e.target.value)}
         />
@@ -225,13 +268,24 @@ function PreferenceCard({
           categories={categories}
           value={category}
           onChange={setCategory}
-          disabled={busy || row.status === 'deleted'}
+          disabled={busy || locked || row.status === 'deleted'}
         />
+        <label>
+          记忆槽位
+          <select
+            value={memorySlot}
+            disabled={busy || locked || row.status === 'deleted'}
+            onChange={(event) => setMemorySlot(event.target.value as MemorySlot)}
+          >
+            <option value="user">{slotLabels.user}</option>
+            <option value="system">{slotLabels.system}</option>
+          </select>
+        </label>
         <label>
           适用范围
           <select
             value={scope}
-            disabled={busy || row.status === 'deleted'}
+            disabled={busy || locked || row.status === 'deleted'}
             onChange={(e) => setScope(e.target.value as typeof scope)}
           >
             <option value="global">全局</option>
@@ -244,17 +298,20 @@ function PreferenceCard({
             <input
               value={topic}
               maxLength={200}
-              disabled={busy || row.status === 'deleted'}
+              disabled={busy || locked || row.status === 'deleted'}
               onChange={(e) => setTopic(e.target.value)}
             />
           </label>
         )}
         {row.status !== 'deleted' && (
           <Button
-            disabled={busy || !dirty || !content.trim() || (scope === 'topic' && !topic.trim())}
+            disabled={
+              busy || locked || !dirty || !content.trim() || (scope === 'topic' && !topic.trim())
+            }
             onClick={() =>
               void update({
                 ...(content !== base.content ? { content } : {}),
+                ...(memorySlot !== (base.memory_slot ?? 'user') ? { memory_slot: memorySlot } : {}),
                 ...(category !== displayId(base) ? { display_category_id: category || null } : {}),
                 ...(scope !== base.scope || topic !== base.topic
                   ? { scope, topic: scope === 'global' ? '' : topic }
@@ -270,10 +327,20 @@ function PreferenceCard({
         <div className="row flex items-center gap-3 wrap flex-wrap">
           <label>
             确认时取代
-            <select value={replace} onChange={(e) => setReplace(e.target.value)}>
+            <select
+              value={replace}
+              disabled={busy || locked}
+              onChange={(e) => setReplace(e.target.value)}
+            >
               <option value="">不取代其他记忆</option>
               {rows
-                .filter((item) => item.id !== row.id && item.status === 'active')
+                .filter(
+                  (item) =>
+                    item.id !== row.id &&
+                    item.status === 'active' &&
+                    item.protection_level !== 'locked' &&
+                    (item.memory_slot ?? 'user') === memorySlot,
+                )
                 .map((item) => (
                   <option value={item.id} key={item.id}>
                     {item.content.slice(0, 70)}
@@ -282,7 +349,7 @@ function PreferenceCard({
             </select>
           </label>
           <Button
-            disabled={busy || dirty}
+            disabled={busy || dirty || locked}
             onClick={() =>
               void update({ status: 'active', ...(replace ? { supersedes_id: replace } : {}) })
             }
@@ -295,7 +362,7 @@ function PreferenceCard({
         {row.status === 'active' && (
           <Button
             className="secondary button-secondary"
-            disabled={busy || dirty}
+            disabled={busy || dirty || locked}
             onClick={() => void update({ status: 'inactive' })}
           >
             停用
@@ -304,7 +371,7 @@ function PreferenceCard({
         {row.status === 'inactive' && (
           <Button
             className="secondary button-secondary"
-            disabled={busy || dirty}
+            disabled={busy || dirty || locked}
             onClick={() => void update({ status: 'active' })}
           >
             重新启用
@@ -313,7 +380,7 @@ function PreferenceCard({
         {row.status !== 'deleted' && (
           <Button
             className="quiet button-quiet"
-            disabled={busy || dirty}
+            disabled={busy || dirty || locked}
             onClick={() => void update({ status: 'deleted' })}
           >
             删除记忆
@@ -346,7 +413,7 @@ function PreferenceCard({
         {row.source.merged_from && row.status === 'active' && (
           <Button
             className="secondary button-secondary"
-            disabled={busy || dirty}
+            disabled={busy || dirty || locked}
             onClick={() => void action('undo-merge')}
           >
             撤销合并
@@ -376,7 +443,7 @@ function PreferenceCard({
               {row.status !== 'deleted' && item.revision !== row.revision && (
                 <Button
                   className="quiet button-quiet"
-                  disabled={busy || dirty}
+                  disabled={busy || dirty || locked}
                   onClick={() => void action('rollback', { target_revision: item.revision })}
                 >
                   恢复修订 {item.revision}
@@ -393,6 +460,9 @@ function PreferenceCard({
 export function PreferencesPage() {
   const { version, refresh } = useWorkspace();
   const [tick, setTick] = useState(0);
+  const [tab, setTab] = useState<'memory' | 'journey'>('memory');
+  const [slot, setSlot] = useState<MemorySlot | 'all'>('all');
+  const [newSlot, setNewSlot] = useState<MemorySlot>('user');
   const [showDeleted, setShowDeleted] = useState(false);
   const [manageCategories, setManageCategories] = useState(false);
   const categories = useResource<MemoryCategory[]>('/api/memory-categories', tick);
@@ -421,168 +491,290 @@ export function PreferencesPage() {
     setSelected({});
     refresh();
   };
+  const visibleRows = (searchPath ? matches.data : rows.data)?.filter(
+    (row) => slot === 'all' || (row.memory_slot ?? 'user') === slot,
+  );
+  const revision = String(version) + ':' + String(tick);
+  function selectSlot(value: MemorySlot | 'all') {
+    setSlot(value);
+    setSelected({});
+    setTab('memory');
+    if (value !== 'all') setNewSlot(value);
+  }
+  const [dialog, setDialog] = useState<'settings' | 'review' | null>(null);
+  const settings = useResource<EvolutionSettings>('/api/evolution/settings', revision);
+  const pendingChanges = useResource<Change[]>(
+    '/api/evolution/changes?target_kind=memory&review_state=pending_review',
+    revision,
+  );
+  const pendingCount =
+    pendingChanges.data?.filter((item) => item.review_state === 'pending_review').length ?? 0;
   return (
     <>
-      <PageTitle eyebrow="MEMORY" title="长期记忆">
+      <PageTitle title="长期记忆">
+        <Button type="button" className="button-secondary" onClick={() => setDialog('review')}>
+          立即复盘
+        </Button>
+        <Button
+          type="button"
+          className="button-secondary"
+          disabled={!settings.data?.slots}
+          onClick={() => setDialog('settings')}
+        >
+          自进化设置
+        </Button>
         <Button className="button-secondary" onClick={() => setManageCategories(true)}>
           管理类别
         </Button>
       </PageTitle>
-      <p>
-        管理你明确提供的背景、偏好、习惯和持续目标。当前任务的明确要求优先；记忆不会增加操作权限或预算。
-      </p>
-      <p className="muted text-muted small text-xs">
-        停用或删除会停止后续注入；历史修订和原聊天仍保留，可用于核对。
-      </p>
-      <ErrorBox message={error || rows.error || categories.error} />
-      <form
-        className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setBusy(true);
-          setError('');
-          try {
-            await send('/api/memories', {
-              content,
-              display_category_id: category || null,
-              scope: 'global',
-              topic: '',
-            });
-            setContent('');
-            changed();
-          } catch (error) {
-            setError(messageOf(error));
-          } finally {
-            setBusy(false);
-          }
-        }}
+      <section
+        aria-label="记忆槽位与自进化状态"
+        className="mb-4 rounded-xl border border-line bg-white p-3.5"
       >
-        <label>
-          新增长期记忆
-          <textarea
-            value={content}
-            disabled={busy}
-            maxLength={2000}
-            onChange={(e) => setContent(e.target.value)}
-            placeholder="例如：讲新概念时，先解释要解决的问题，再给一个例子。"
-          />
-        </label>
-        <CategorySelect
-          value={category}
-          onChange={setCategory}
-          categories={categories.data ?? []}
-          disabled={busy}
-          automatic
-        />
-        <p className="text-xs text-muted">
-          可以选择已有类别，也可以留空自动分类。分类失败不会影响正文保存；新类别可在“管理类别”中添加。
-        </p>
-        <Button disabled={busy || !content.trim()}>新增记忆</Button>
-      </form>
-      <form
-        className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5 row flex items-center gap-3 wrap flex-wrap"
-        onSubmit={(e) => {
-          e.preventDefault();
-          setSearchPath(
-            `/api/memories/search?query=${encodeURIComponent(query)}&topic=${encodeURIComponent(topic)}&limit=20`,
-          );
-        }}
-      >
-        <label>
-          查找相关记忆
-          <input value={query} onChange={(e) => setQuery(e.target.value)} maxLength={500} />
-        </label>
-        <label>
-          适用主题（可留空）
-          <input value={topic} onChange={(e) => setTopic(e.target.value)} maxLength={200} />
-        </label>
-        <Button disabled={!query.trim()}>检索记忆</Button>
-        {searchPath && (
-          <Button type="button" className="quiet button-quiet" onClick={() => setSearchPath(null)}>
-            返回全部记录
-          </Button>
-        )}
-      </form>
-      <ErrorBox message={matches.error} />
-      <label className="check m-0 flex-row items-center gap-2 font-normal">
-        <input
-          type="checkbox"
-          checked={showDeleted}
-          onChange={(e) => setShowDeleted(e.target.checked)}
-        />
-        显示已删除记录
-      </label>
-      {(rows.loading || matches.loading) && <Loading />}
-      {(searchPath ? matches.data : rows.data)?.length === 0 && (
-        <Empty title={searchPath ? '没有匹配的有效记忆' : '还没有长期记忆'}>
-          可手动添加，也可以在对话中明确告诉 Agent 你的背景或以后如何配合你。
-        </Empty>
-      )}
-      {(searchPath ? matches.data : rows.data)?.map((row) => (
-        <div key={row.id}>
-          {['active', 'pending'].includes(row.status) && (
-            <label className="check m-0 flex-row items-center gap-2 font-normal">
-              <input
-                type="checkbox"
-                aria-label={`选择合并 ${row.id}`}
-                checked={selected[row.id] === row.revision}
-                onChange={(e) =>
-                  setSelected((previous) => {
-                    const next = { ...previous };
-                    if (e.target.checked) next[row.id] = row.revision;
-                    else delete next[row.id];
-                    return next;
-                  })
-                }
+        <div className="grid gap-3 md:grid-cols-2">
+          {settings.data?.slots &&
+            (['user', 'system'] as const).map((key) => (
+              <SlotCapacityBar
+                key={key}
+                slot={key}
+                usage={settings.data!.slots[key]}
+                selected={slot === key}
+                onSelect={() => selectSlot(key)}
               />
-              选择合并
-            </label>
-          )}
-          <PreferenceCard
-            row={row}
-            rows={rows.data ?? []}
-            categories={categories.data ?? []}
-            onChanged={changed}
-          />
+            ))}
         </div>
-      ))}
-      {Object.keys(selected).length >= 2 && (
-        <form
-          className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            setBusy(true);
-            setError('');
-            try {
-              await send('/api/memories/merge', { revisions: selected, content: mergedContent });
-              setMergedContent('');
-              changed();
-            } catch (error) {
-              setError(messageOf(error));
-            } finally {
-              setBusy(false);
-            }
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-control">
+          {slot !== 'all' && (
+            <Button type="button" className="button-quiet" onClick={() => selectSlot('all')}>
+              全部槽位
+            </Button>
+          )}
+          {settings.data?.slots && (
+            <span>
+              自动后台复盘 {settings.data.auto_review_enabled ? '已开启' : '已关闭'} · 记忆自动写入{' '}
+              {settings.data.memory_auto_write ? '已开启' : '已关闭'} · 今日复盘{' '}
+              {settings.data.daily_used} / {settings.data.daily_budget_requests} 次，剩余{' '}
+              {settings.data.daily_remaining} 次
+            </span>
+          )}
+        </div>
+        <ErrorBox message={settings.error} />
+      </section>
+      {dialog === 'settings' && settings.data && (
+        <EvolutionSettingsDialog
+          key={settings.data.revision}
+          data={settings.data}
+          onClose={() => setDialog(null)}
+          onReload={changed}
+          onSaved={() => {
+            changed();
+            setDialog(null);
           }}
+        />
+      )}
+      {dialog === 'review' && (
+        <ManualReviewDialog
+          onClose={() => setDialog(null)}
+          onQueued={() => {
+            setDialog(null);
+            setTab('journey');
+            changed();
+          }}
+        />
+      )}
+      <nav aria-label="长期记忆视图" className="mb-5 flex flex-wrap gap-1 border-b border-line">
+        <button
+          type="button"
+          className={evolutionTabClass}
+          aria-pressed={tab === 'memory'}
+          onClick={() => setTab('memory')}
         >
-          <p>
-            已选 {Object.keys(selected).length}{' '}
-            条。仅可合并用途、范围和主题兼容的记录。原文与来源保留，可撤销合并。
-          </p>
-          <label>
-            合并后的内容
-            <textarea
-              value={mergedContent}
-              maxLength={2000}
-              onChange={(e) => setMergedContent(e.target.value)}
+          记忆清单
+        </button>
+        <button
+          type="button"
+          className={evolutionTabClass}
+          aria-pressed={tab === 'journey'}
+          onClick={() => setTab('journey')}
+        >
+          复盘记录
+          <PendingCount count={pendingCount} />
+        </button>
+      </nav>
+      {tab === 'journey' ? (
+        <LearningJourneyList targetKind="memory" version={revision} refreshed={changed} />
+      ) : (
+        <>
+          <ErrorBox message={error || rows.error || categories.error} />
+          <form
+            className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setBusy(true);
+              setError('');
+              try {
+                await send('/api/memories', {
+                  content,
+                  display_category_id: category || null,
+                  memory_slot: newSlot,
+                  scope: 'global',
+                  topic: '',
+                });
+                setContent('');
+                changed();
+              } catch (error) {
+                setError(messageOf(error));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            <label>
+              新增长期记忆
+              <textarea
+                value={content}
+                disabled={busy}
+                maxLength={2000}
+                onChange={(e) => setContent(e.target.value)}
+                placeholder="例如：讲新概念时，先解释要解决的问题，再给一个例子。"
+              />
+            </label>
+            <label>
+              新记忆槽位
+              <select
+                value={newSlot}
+                disabled={busy}
+                onChange={(event) => setNewSlot(event.target.value as MemorySlot)}
+              >
+                <option value="user">{slotLabels.user}</option>
+                <option value="system">{slotLabels.system}</option>
+              </select>
+            </label>
+            <CategorySelect
+              value={category}
+              onChange={setCategory}
+              categories={categories.data ?? []}
+              disabled={busy}
+              automatic
             />
+            <p className="text-xs text-muted">
+              可以选择已有类别，也可以留空自动分类。分类失败不会影响正文保存；新类别可在“管理类别”中添加。
+            </p>
+            <Button disabled={busy || !content.trim()}>新增记忆</Button>
+          </form>
+          <form
+            className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5 row flex items-center gap-3 wrap flex-wrap"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setSearchPath(
+                `/api/memories/search?query=${encodeURIComponent(query)}&topic=${encodeURIComponent(topic)}&limit=20`,
+              );
+            }}
+          >
+            <label>
+              查找相关记忆
+              <input value={query} onChange={(e) => setQuery(e.target.value)} maxLength={500} />
+            </label>
+            <label>
+              适用主题（可留空）
+              <input value={topic} onChange={(e) => setTopic(e.target.value)} maxLength={200} />
+            </label>
+            <Button disabled={!query.trim()}>检索记忆</Button>
+            {searchPath && (
+              <Button
+                type="button"
+                className="quiet button-quiet"
+                onClick={() => setSearchPath(null)}
+              >
+                返回全部记录
+              </Button>
+            )}
+          </form>
+          <ErrorBox message={matches.error} />
+          <label className="check m-0 flex-row items-center gap-2 font-normal">
+            <input
+              type="checkbox"
+              checked={showDeleted}
+              onChange={(e) => setShowDeleted(e.target.checked)}
+            />
+            显示已删除记录
           </label>
-          <Button disabled={busy || !mergedContent.trim() || Object.keys(selected).length > 10}>
-            确认合并
-          </Button>
-          <Button type="button" className="quiet button-quiet" onClick={() => setSelected({})}>
-            取消选择
-          </Button>
-        </form>
+          {(rows.loading || matches.loading) && <Loading />}
+          {visibleRows?.length === 0 && (
+            <Empty title={searchPath ? '没有匹配的有效记忆' : '还没有长期记忆'}>
+              可手动添加，也可以在对话中明确告诉 Agent 你的背景或以后如何配合你。
+            </Empty>
+          )}
+          {visibleRows?.map((row) => (
+            <div key={row.id}>
+              {['active', 'pending'].includes(row.status) && row.protection_level !== 'locked' && (
+                <label className="check m-0 flex-row items-center gap-2 font-normal">
+                  <input
+                    type="checkbox"
+                    aria-label={`选择合并 ${row.id}`}
+                    checked={selected[row.id] === row.revision}
+                    onChange={(e) =>
+                      setSelected((previous) => {
+                        const next = { ...previous };
+                        if (e.target.checked) next[row.id] = row.revision;
+                        else delete next[row.id];
+                        return next;
+                      })
+                    }
+                  />
+                  选择合并
+                </label>
+              )}
+              <PreferenceCard
+                row={row}
+                rows={rows.data ?? []}
+                categories={categories.data ?? []}
+                onChanged={changed}
+              />
+            </div>
+          ))}
+          {Object.keys(selected).length >= 2 && (
+            <form
+              className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setBusy(true);
+                setError('');
+                try {
+                  await send('/api/memories/merge', {
+                    revisions: selected,
+                    content: mergedContent,
+                  });
+                  setMergedContent('');
+                  changed();
+                } catch (error) {
+                  setError(messageOf(error));
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              <p>
+                已选 {Object.keys(selected).length}{' '}
+                条。仅可合并用途、范围和主题兼容的记录。原文与来源保留，可撤销合并。
+              </p>
+              <label>
+                合并后的内容
+                <textarea
+                  value={mergedContent}
+                  maxLength={2000}
+                  onChange={(e) => setMergedContent(e.target.value)}
+                />
+              </label>
+              <Button disabled={busy || !mergedContent.trim() || Object.keys(selected).length > 10}>
+                确认合并
+              </Button>
+              <Button type="button" className="quiet button-quiet" onClick={() => setSelected({})}>
+                取消选择
+              </Button>
+            </form>
+          )}
+        </>
       )}
       {manageCategories && (
         <CategoryManager

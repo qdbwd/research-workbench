@@ -3,7 +3,7 @@
 import hashlib
 import json
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import case, delete, func, select, update
 
 from knowledgeops_agent.app.lifecycle.assets import (
     asset_plan,
@@ -270,6 +270,24 @@ class ConversationCleaner:
         more = len(rows) > self.batch_size
         if not more:
             session.execute(delete(db.ExecutionRule).where(db.ExecutionRule.conversation_id == conversation.id))
+            # 会话墓碑只保留复盘执行事实。持久记忆的正文与修订仍有独立生命周期。
+            session.execute(delete(db.ConversationMemorySnapshot).where(
+                db.ConversationMemorySnapshot.conversation_id == conversation.id,
+            ))
+            session.execute(delete(db.EvolutionCursor).where(
+                db.EvolutionCursor.conversation_id == conversation.id,
+            ))
+            session.execute(update(db.EvolutionJob).where(
+                db.EvolutionJob.conversation_id == conversation.id,
+            ).values(focus_hint="", cursor_from={}, cursor_to={}))
+            pending = db.EvolutionChange.review_state == "pending_review"
+            session.execute(update(db.EvolutionChange).where(
+                db.EvolutionChange.conversation_id == conversation.id,
+            ).values(
+                proposal_payload={}, evidence_refs={}, diff_summary={},
+                review_state=case((pending, "superseded"), else_=db.EvolutionChange.review_state),
+                resolved_at=case((pending, self.now()), else_=db.EvolutionChange.resolved_at),
+            ))
             conversation.title, conversation.runtime_settings = "已删除会话", {}
             conversation.deletion_state, conversation.deleted_at = "deleted", self.now()
         self.jobs.advance_in(job, phase="conversation_finalize" if more else "completed",

@@ -54,13 +54,22 @@ def content_hash(value: dict | list) -> str:
     ).hexdigest()
 
 
-def load_skills(tool_policy: dict | None = None) -> list[dict]:
+def archived_skill_names(session) -> set[str]:
+    return set(
+        session.scalars(
+            select(SkillPackageState.name).where(SkillPackageState.archived_at.is_not(None))
+        )
+    )
+
+
+def load_skills(tool_policy: dict | None = None, *, session=None) -> list[dict]:
     """冻结已启用技能的完整资源；发现时不运行脚本、不安装依赖。"""
     try:
         enabled = (tool_policy or {}).get("skill_enabled", {})
         return load_package_resources(
             resource_path("SKILLS_DIRECTORY", SKILLS_PATH),
-            excluded={name for name, value in enabled.items() if not value},
+            excluded={name for name, value in enabled.items() if not value}
+            | (archived_skill_names(session) if session is not None else set()),
         )
     except SkillPackageError as error:
         raise ResourceUnavailable(str(error)) from error
@@ -117,6 +126,7 @@ class ResourceService:
                     policy = load_knowledge_policy()
                 except knowledge_policy.KnowledgePolicyError as error:
                     raise ResourceUnavailable(str(error)) from error
+                from knowledgeops_agent.evolution.snapshots import get_or_freeze_conversation_memory
                 from knowledgeops_agent.harness.context.management import SUMMARY_PROMPT
                 from knowledgeops_agent.harness.mcp.registry import active_connections
                 from knowledgeops_agent.harness.runtime.agent import SYSTEM_PROMPT
@@ -140,7 +150,14 @@ class ResourceService:
                     else root.input_data.get("memory_topic", "")
                 )
                 trial = root.input_data.get("trial_case")
-                memory = {"selected": [], "catalog": []} if trial else freeze_memory(session, root.task[:500], topic=topic)
+                if trial:
+                    memory = {"selected": [], "catalog": []}
+                elif root.conversation_id:
+                    memory = get_or_freeze_conversation_memory(
+                        session, conversation_id=root.conversation_id, query=root.task, topic=topic
+                    )
+                else:
+                    memory = freeze_memory(session, root.task[:500], topic=topic)
                 learning = None
                 if learning_task:
                     learning = {
@@ -159,7 +176,8 @@ class ResourceService:
                 tool_policy = read_policy(session)
                 skill_catalog_rows, skill_resources = scan_packages(
                     skill_root,
-                    excluded={name for name, enabled in tool_policy.get("skill_enabled", {}).items() if not enabled},
+                    excluded={name for name, enabled in tool_policy.get("skill_enabled", {}).items() if not enabled}
+                    | archived_skill_names(session),
                 )
                 manifest: dict = {
                     "format_version": FORMAT_VERSION,

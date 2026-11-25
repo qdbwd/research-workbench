@@ -1,3 +1,5 @@
+import type { ProtectionLevel } from '../evolution/ProtectionControls';
+
 export type SkillEntry = {
   name: string;
   display_name: string;
@@ -9,6 +11,15 @@ export type SkillEntry = {
   managed: boolean;
   revision: number;
   policy_revision: number;
+  protection_level?: ProtectionLevel;
+  archived_at?: string | null;
+  telemetry?: {
+    load_count: number;
+    success_run_count: number;
+    failed_run_count: number;
+    correction_count: number;
+    last_used_at: string | null;
+  } | null;
 };
 
 export type SkillPreview = {

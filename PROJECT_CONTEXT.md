@@ -4,7 +4,7 @@
 
 ## 一、当前接续状态
 
-- **最新迁移与数据库基线（2026-11-25）**：代码迁移与开发部署的正式业务库均已推进至 `0061`（升级前已完成完整备份：`artifacts/backups/ded90504f04c` 对应 `0057`、`artifacts/backups/91372a5c8dc5` 对应 `0057 -> 0061`）；已完成 `0057`–`0061` 里程碑封板提交并推送 `origin/main`。
+- **最新迁移与数据库基线（2026-11-25）**：代码迁移已推进至 `0063`（主线 A：Hermes 完整在线自进化体系，已完成两轮独立代码审查与真实浏览器视觉验收并封板提交）；正式业务库当前为 `0061`（升级前备份 `artifacts/backups/91372a5c8dc5`），待备份与隔离恢复校验后升级至 `0063`。
 - **阶段收口已完成项**：
   - 通用辅助模型工具 `call_model` 与 `auxiliary` 工具组已彻底下线（迁移 `0057`，见 [决策 0032](docs/decisions/0032-retire-auxiliary-call-model.md)），应用内部单次调用及历史兼容保留。
   - 工程治理与 CI（2026-11-24）：新增 [数据库总览与核心状态机](docs/database-and-state-machines.md)（7 大表群、5 条 DB 红线、五轨状态机）；[AGENTS.md](AGENTS.md) 将 OpenAI Codex 列入长期参考对象；已新增离线零付费 GitHub CI（[.github/workflows/ci.yml](.github/workflows/ci.yml)），CD 镜像发布暂缓。
@@ -18,7 +18,8 @@
   - 先前的独立 Milvus 对照仅是历史验证。当前应用已接入 PostgreSQL pgvector、联合 BM25 的 RRF 融合以及可选重排。开发部署的业务库已现场核对为 `0061`，混合检索已启用，Harrier 640 维索引档案处于 `ready`。管理入口为「智能体设置 → 检索与向量」。隔离环境已验证真实嵌入、混合命中和 DeepSeek 基于证据作答，完整工具循环由离线回归覆盖。[检索实现](docs/architecture.md#联合词法与向量检索) · [验收](docs/progress.md#2026-11-25应用-rag-接入验收)
   - 已实现会话项目归类。支持项目内新建、重命名、置顶、拖动或菜单移动会话，以及移除项目后将会话退回未分组。[0060 验收](docs/progress.md#2026-11-25会话项目归类及恢复验证)已在隔离环境通过。
   - 智能体设置的技能页可从已验收运维案例生成带证据的方法提案。人工查看差异后可发布或驳回，实际发布沿用原 Skill 管理和运行冻结。隔离环境已验收；正式技能包尚无此发布。[方法提案验收](docs/progress.md#2026-11-25从已验收运维试点形成技能提案)
-  - **下一步接续重点**：借鉴 Hermes 自进化体系专项（先补全安全防线、双槽记忆与容量上限、使用遥测、Pin/Lock、缓存稳定策略等设计蓝图再拆期实施）；Playwright MCP 本地浏览器取证、更广的动态容器实验隔离与两账号协作按后续阶段推进。
+  - **主线 A（Hermes 完整在线自进化体系，`0062`–`0063`，已通过隔离验收与独立代码审查）**：已落地在线六大支柱（双槽记忆与硬容量上限、工具白名单隔离后台复盘与高信号/阈值/验收合并触发、会话级 Prompt Cache 冻结快照与 `revocation_epoch` 撤回穿透、确定性安全扫描与 `Pin/Lock` 保护、Skill 不可变快照回滚 + 持久遥测 + 零付费 Curator 整理与安全归档、Learning Journey 统一时间线与单项回滚），前台意图 `v6` 已剥离旧自动记忆提取（兼容 `v5` 历史冻结）；前端沉淀 5 个共用组件并打通长期记忆页、智能体设置→技能页与聊天「本次任务设置」快照刷新，通过桌面与 390px Chromium 截图验收。[0062 复核](artifacts/verification/hermes-evolution-0062-review/summary.md) · [0063 验收](artifacts/verification/hermes-evolution-0063/summary.md)
+  - **下一步接续重点**：按总计划 [roadmap-2026-11.md](docs/plans/roadmap-2026-11.md) 推进 **主线 B（Playwright MCP 动态浏览器取证，以 DSH 为主参考）** → **主线 C（子 Agent 限定目录只读代码检索 + 真实模型小规模闭环实测与重排评估）** → **主线 D（两账号协作试用）**。
 - **既有未闭环工程项**：2026-10-31 APP-02～APP-05 独立验收仍有未通过项，记录在 [复核报告](docs/delivery/app02-app05-acceptance-20261031.md) 与 `docs/development-issues.md`（`DEV-121`），APP-01/06/07 继续暂缓。
 
 ## 二、当前技术栈与运行基线

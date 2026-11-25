@@ -33,6 +33,10 @@ class SkillRevision(BaseModel):
     expected_revision: int = Field(ge=0)
 
 
+class SkillProtection(SkillRevision):
+    protection_level: Literal["normal", "pinned", "locked"]
+
+
 class SkillRead(BaseModel):
     model_config = ConfigDict(extra="forbid")
     path: str = Field(default="SKILL.md", max_length=512)
@@ -140,9 +144,9 @@ def review_method_proposal(identity: str, body: MethodProposalReview, request: R
 
 
 @router.get("/api/skills")
-def skills(request: Request):
+def skills(request: Request, include_archived: bool = False):
     try:
-        return manager(request).catalog()
+        return manager(request).catalog(include_archived=include_archived)
     except (OSError, ValueError) as exc:
         raise HTTPException(503, "技能配置不可用，请检查部署目录或重试恢复") from exc
 
@@ -172,3 +176,24 @@ def export_skill(name: str, request: Request):
 @router.delete("/api/skills/{name}")
 def remove_skill(name: str, body: SkillRevision, request: Request):
     return manager(request).remove(name, expected_revision=body.expected_revision)
+
+
+
+@router.patch("/api/skills/{name}/protection")
+def protect_skill(name: str, body: SkillProtection, request: Request):
+    return manager(request).set_protection(name, **body.model_dump())
+
+
+@router.post("/api/skills/{name}/archive")
+def archive_skill(name: str, body: SkillRevision, request: Request):
+    return manager(request).archive(name, **body.model_dump())
+
+
+@router.post("/api/skills/{name}/unarchive")
+def unarchive_skill(name: str, body: SkillRevision, request: Request):
+    return manager(request).unarchive(name, **body.model_dump())
+
+
+@router.get("/api/skills/{name}/revisions")
+def skill_revisions(name: str, request: Request):
+    return manager(request).revisions(name)

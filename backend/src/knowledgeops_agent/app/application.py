@@ -24,6 +24,7 @@ from knowledgeops_agent.app.routes.activity import router as activity_router
 from knowledgeops_agent.app.routes.assets import router as assets_router
 from knowledgeops_agent.app.routes.changesets import router as changesets_router
 from knowledgeops_agent.app.routes.conversations import router as conversations_router
+from knowledgeops_agent.app.routes.evolution import router as evolution_router
 from knowledgeops_agent.app.routes.execution import execution_router
 from knowledgeops_agent.app.routes.knowledge import router as knowledge_router
 from knowledgeops_agent.app.routes.learning import learning_router
@@ -274,6 +275,7 @@ def create_app(*, services: Services | None = None, publish_jobs: bool = True) -
     app.include_router(mcp_router)
     app.include_router(runs_router)
     app.include_router(memory_router)
+    app.include_router(evolution_router)
     app.include_router(sources_router)
     app.include_router(assets_router)
     app.include_router(workspace_router)

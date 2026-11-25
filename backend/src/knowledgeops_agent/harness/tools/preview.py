@@ -48,7 +48,8 @@ def effective_catalog(
     root = {"knowledge_only": knowledge_only, "delegation": delegation}
     is_root = role is None
     selected = role_tool_names(role) if role else None
-    available_skills = {row["resource"].split("/")[2] for row in load_skills(policy)}
+    with sessions() as session:
+        available_skills = {row["resource"].split("/")[2] for row in load_skills(policy, session=session)}
     has_skills = bool(available_skills & set(role["skills"])) if role else bool(available_skills)
     catalog = catalog_view(MCPRegistry(sessions).list())
     output = []

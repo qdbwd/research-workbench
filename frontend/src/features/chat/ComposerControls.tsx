@@ -5,9 +5,12 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowUp, BookOpen, FlaskConical, GraduationCap, Paperclip, Plus, Search, ShieldCheck, SlidersHorizontal, X } from 'lucide-react';
 import type { Source } from '../../shared/types/types';
+import { ConversationMemorySnapshot } from './ConversationMemorySnapshot';
 
 type Props = {
   conversationId?: string;
+  snapshotEligible?: boolean;
+  trial?: boolean;
   onManageMaterials: () => void;
   onOrganizeKnowledge: () => void;
   composerReady: boolean;
@@ -184,6 +187,8 @@ export function ComposerControls(props: Props) {
                   </Link>
                 )}
                 </div>
+                <ConversationMemorySnapshot key={props.conversationId} conversationId={props.conversationId}
+                  enabled={props.snapshotEligible ?? Boolean(props.conversationId)} trial={props.trial} />
               </Dialog>
             )}
             {materials && (

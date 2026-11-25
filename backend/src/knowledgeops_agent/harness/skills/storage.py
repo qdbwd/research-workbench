@@ -6,18 +6,23 @@
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import os
 import shutil
 import stat
+import zipfile
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from knowledgeops_agent.harness.skills.imports import (
     NAME,
     PackageInspection,
     _checked_files,
     inspect_package,
+    package_digest,
+    unpack_zip,
 )
 from knowledgeops_agent.harness.skills.packages import (
     MAX_BUNDLE_BYTES,
@@ -141,6 +146,60 @@ class SkillStorage:
                 if len(files) > MAX_BUNDLE_FILES:
                     raise SkillPackageError("技能包文件数量超限")
         return _checked_files(files)
+
+    def write_revision(self, name: str, revision: int, files: dict[str, bytes]) -> tuple[str, str]:
+        """内容寻址快照写入后不覆盖，相同修订的故障重试只复用相同字节。"""
+        self.package(name)
+        self.initialize()
+        digest = package_digest(files)
+        relative = f"revisions/{name}/rev-{revision}-{digest[:12]}.zip"
+        path = self.checked(".management/" + relative)
+        path.parent.parent.mkdir(exist_ok=True, mode=0o700)
+        path.parent.mkdir(exist_ok=True, mode=0o700)
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as bundle:
+            for filename, raw in sorted(files.items()):
+                info = zipfile.ZipInfo(filename, date_time=(1980, 1, 1, 0, 0, 0))
+                info.external_attr = (stat.S_IFREG | 0o600) << 16
+                bundle.writestr(info, raw, compress_type=zipfile.ZIP_DEFLATED)
+        data = output.getvalue()
+        sha = hashlib.sha256(data).hexdigest()
+        if path.exists():
+            if not path.is_file() or path.stat().st_size != len(data) or path.read_bytes() != data:
+                raise SkillPackageError("技能历史快照已存在且 SHA256 不匹配")
+        else:
+            temporary = path.with_name(f".{uuid4().hex}.tmp")
+            try:
+                with temporary.open("xb") as stream:
+                    stream.write(data)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary, path)
+            finally:
+                temporary.unlink(missing_ok=True)
+            for directory in (path.parent, path.parent.parent, path.parent.parent.parent):
+                sync_directory(directory)
+        return relative, sha
+
+    def read_revision(self, row) -> PackageInspection:
+        self.package(row.skill_name)
+        expected = f"revisions/{row.skill_name}/rev-{row.revision}-{row.content_hash[:12]}.zip"
+        if row.snapshot_path != expected:
+            raise SkillPackageError("技能历史快照路径无效")
+        path = self.checked(".management/" + expected)
+        if not path.is_file() or path.stat().st_size > MAX_BUNDLE_BYTES + 65536:
+            raise SkillPackageError("技能历史快照丢失或大小无效")
+        with path.open("rb") as stream:
+            data = stream.read(MAX_BUNDLE_BYTES + 65537)
+        if hashlib.sha256(data).hexdigest() != row.snapshot_sha256:
+            raise SkillPackageError("技能历史快照 SHA256 不匹配")
+        files = dict(unpack_zip(data))
+        result = inspect_package(list(files.items()))
+        if result.name != row.skill_name or package_digest(files) != row.content_hash:
+            raise SkillPackageError("技能历史快照内容摘要不匹配")
+        # 解析器可能规范化入口编码，回滚必须使用已核对的原始包字节。
+        result.files, result.digest = files, row.content_hash
+        return result
 
     def move(self, source: Path, target: Path) -> None:
         source = self.checked(source.relative_to(self.root).as_posix())

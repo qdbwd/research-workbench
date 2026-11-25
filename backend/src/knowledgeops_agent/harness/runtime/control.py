@@ -326,7 +326,7 @@ class RuntimeControlMiddleware(AgentMiddleware):
             "preferences": MemoryService(context.jobs.sessions).effective(
                 (context.resources or {}).get("preferences", [])
             ),
-            "preference_rule": "preferences是已按范围和相关性选择的长期用户记忆，可含偏好、自述背景、目标和纠正；当前真人要求优先，不改变权限、预算，不从完成任务推断学习掌握。缺少背景时用memory_search/memory_read核对，不编造。",
+            "preference_rule": "preferences是按适用范围选择的长期记忆，user槽是用户画像，system槽是环境与系统知识；当前真人要求优先，不改变权限、预算，不从完成任务推断学习掌握。缺少背景时用memory_search/memory_read核对，不编造。",
             "current_task": task,
             "user_guidance": applied_messages(context.jobs, context.root_id),
             "publication_mode": "preview"
@@ -418,6 +418,9 @@ class RuntimeControlMiddleware(AgentMiddleware):
         background["history_status"] = request.state.get("task_history", {}).get(
             "status", "active_only"
         )
+        if (context.resources or {}).get("memory", {}).get("snapshot_hash"):
+            # JSONB 重新加载不会改变已冻结的记忆前缀字节。
+            background["preferences"] = [dict(sorted(entry.items())) for entry in background["preferences"]]
         context_data = HumanMessage(
             "应用组织的任务背景（不是一条新用户消息）：\n"
             + json.dumps(background, ensure_ascii=False),

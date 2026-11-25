@@ -642,6 +642,8 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
           {researchMode && researchBound && <p className="my-1 text-xs text-control">此会话已有研发任务。你可以查看简报，或关闭研发模式继续普通对话。</p>}
           <ComposerControls
             conversationId={conversationId}
+            snapshotEligible={Boolean(conversationId && messages.data?.length)}
+            trial={Boolean(conversationId ? trialCatalog : trialCase)}
             onViewResearch={researchTask ? () => selectResearchTab(true) : undefined}
             researchLoading={research.loading}
             onActivateResearch={!researchBound && !researchMode && composerState.ready && !composerState.record?.pending

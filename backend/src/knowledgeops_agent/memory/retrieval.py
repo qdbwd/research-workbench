@@ -59,7 +59,8 @@ def catalog(session, *, topic: str = "") -> list[dict]:
         .order_by(Preference.id)
     )
     return [
-        {"id": row.id, "revision": row.revision, "revocation_epoch": row.revocation_epoch}
+        {"id": row.id, "revision": row.revision, "revocation_epoch": row.revocation_epoch,
+         "memory_slot": row.memory_slot}
         for row in rows
     ]
 
@@ -105,6 +106,9 @@ def read_frozen(session, refs: list[dict]) -> list[dict]:
             result.append(
                 {
                     "category": "preference",
+                    "memory_slot": ref.get("memory_slot", "user"),
+                    "protection_level": "normal",
+                    "last_used_at": None,
                     "confidence": 1.0,
                     "revocation_epoch": 0,
                     **value,
@@ -165,6 +169,7 @@ def context_entry(value: dict) -> dict:
     return {
         **{key: value[key] for key in ("id", "revision", "content", "scope", "topic")},
         "category": value.get("category", "preference"),
+        "memory_slot": value.get("memory_slot", "user"),
         "revocation_epoch": value.get("revocation_epoch", 0),
         "source_message_id": value.get("source_message_id"),
         "source_kind": value.get("source", {}).get("kind", "legacy"),
@@ -181,21 +186,36 @@ def freeze(
         raise ValueError("无效记忆注入预算")
     refs = catalog(session, topic=topic)
     ranked = search(session, query, topic=topic, refs=refs, limit=50)
-    # 通用表达/互动约定如“用中文”不必逐字命中当前问题，但仍受有界选择控制。
+    # 全局保护和纠偏记忆即使未词法命中，也应优先进入有界的会话冻结候选。
+    priority = or_(
+        Preference.protection_level.in_(["pinned", "locked"]),
+        Preference.category == "correction",
+    )
     baseline_refs = session.execute(
         select(Preference.id, Preference.revision)
         .where(
             Preference.status == "active",
             Preference.scope == "global",
-            Preference.category.in_(["preference", "behavior", "cognitive"]),
+            or_(
+                priority,
+                Preference.memory_slot == "system",
+                Preference.category.in_(["preference", "behavior", "cognitive"]),
+            ),
         )
-        .order_by(Preference.confirmed_at.desc().nulls_last(), Preference.id)
+        .order_by(priority.desc(), Preference.confirmed_at.desc().nulls_last(), Preference.id)
         .limit(32)
     ).all()
     baseline_keys = {(r.id, r.revision) for r in baseline_refs}
     baseline = read_frozen(session, [r for r in refs if (r["id"], r["revision"]) in baseline_keys])
     candidates = {r["id"]: r for r in [*ranked, *baseline]}
     ordered = rank_facts(list(candidates.values()), query)
+    # 保留同优先级的相关性排序，在总预算内先考虑保护和纠偏记忆。
+    ordered.sort(
+        key=lambda value: not (
+            value["scope"] == "global"
+            and (value["protection_level"] in {"pinned", "locked"} or value["category"] == "correction")
+        )
+    )
     selected: list[dict] = []
 
     def size(items):

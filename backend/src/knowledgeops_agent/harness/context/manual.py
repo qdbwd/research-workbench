@@ -14,6 +14,7 @@ from knowledgeops_agent.persistence.models import ContinuationSnapshot, Run, Run
 def _pending(session, conversation_id):
     return session.scalar(select(Run).where(
         Run.conversation_id == conversation_id, Run.parent_id.is_(None),
+        Run.kind != "evolution_review",
         (Run.status.in_(["queued", "running", "paused", "waiting_input", "waiting_children"]))
         | ((Run.status == "interrupted") & Run.outcome["kind"].astext.in_(["waiting_approval", "execution_unknown"])),
     ).order_by(Run.created_at, Run.id).limit(1))
@@ -67,7 +68,8 @@ def enqueue(jobs, gateway, conversation_id, request_key):
                   conversation_id=conversation_id, conversation_sequence=None,
                   request_key=request_key, kind="context_compaction", task="主动压缩会话上下文",
                   input_data={**runtime_inputs(session, conversation), "publication_mode": "preview",
-                              "knowledge_only": False, "delegation": False, "source_ids": []},
+                              "knowledge_only": False, "delegation": False, "source_ids": [],
+                              "trial_case": conversation.trial_case},
                   budgets=Budgets(model_requests=8, tool_calls=1, searches=0).model_dump(), created_at=jobs.now())
         session.add(run)
         session.flush()

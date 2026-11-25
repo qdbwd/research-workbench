@@ -227,7 +227,7 @@ def refresh_drain(sessions, jobs, task_id, delivery_id):
         return view(session, row)
 
 
-def review(sessions, task_id, delivery_id, body):
+def review(sessions, task_id, delivery_id, body, *, evolution=None):
     key = "research:review:" + fingerprint([task_id, delivery_id, body.operation_id])
     request_hash = fingerprint(body.model_dump(exclude={"operation_id"}))
     with sessions.begin() as session:
@@ -255,6 +255,8 @@ def review(sessions, task_id, delivery_id, body):
             for identifier in row.content.get("evidence_ids", []):
                 evidence.scope_checked(session, identifier, branch, row.content["evidence_ids"])
             row.status = "accepted"
+            if evolution is not None:
+                evolution.on_research_delivery_accepted(session, task.home_conversation_id, row.id)
         else:
             row.status = "changes_requested"
         if is_writing:

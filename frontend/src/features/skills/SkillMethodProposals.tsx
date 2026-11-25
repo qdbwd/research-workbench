@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { messageOf, send, useResource } from '../../shared/api/api';
 import { Button } from '../../shared/ui/Button';
+import { EvolutionDiffView } from '../evolution/EvolutionDiffView';
 import { Dialog } from '../../shared/ui/Dialog';
 import { ErrorBox, Loading } from '../../shared/ui/components';
 import { CompletedResearchTrial } from '../research/CompletedResearchTrial';
@@ -108,11 +109,7 @@ export function SkillMethodProposals({ onClose, onPublished }: { onClose: () => 
       </section>
       <section aria-label="技能正文差异">
         <h3 className="mb-2 mt-0 text-sm font-semibold">SKILL.md 变更</h3>
-        <pre className="m-0 overflow-auto whitespace-pre-wrap rounded-xl border border-line bg-canvas p-3 text-xs [overflow-wrap:anywhere]">
-          {proposal.diff.split('\n').map((line, index) => <span key={index} className={
-            `block ${line.startsWith('+') && !line.startsWith('+++') ? 'bg-[#e3f1e8] text-[#185940]' : ''}`
-          }>{line || '\u00a0'}</span>)}
-        </pre>
+        <EvolutionDiffView diff={{ unified_diff: proposal.diff }} />
       </section>
     </article>}
   </Dialog>;

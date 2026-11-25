@@ -158,8 +158,20 @@ it('saves text with automatic classification by default and permits an explicit 
   await userEvent.selectOptions(choice, 'coding');
   await userEvent.click(screen.getByRole('button', { name: '新增记忆' }));
   expect(calls).toEqual([
-    { content: '请用 Python 举例', display_category_id: null, scope: 'global', topic: '' },
-    { content: '说明示例的输入输出', display_category_id: 'coding', scope: 'global', topic: '' },
+    {
+      content: '请用 Python 举例',
+      display_category_id: null,
+      memory_slot: 'user',
+      scope: 'global',
+      topic: '',
+    },
+    {
+      content: '说明示例的输入输出',
+      display_category_id: 'coding',
+      memory_slot: 'user',
+      scope: 'global',
+      topic: '',
+    },
   ]);
 });
 
@@ -257,4 +269,270 @@ it('preserves a local draft when category management refreshes a newer memory re
   expect(await screen.findByText('记忆修订已变化')).toBeInTheDocument();
   await userEvent.click(screen.getByRole('button', { name: '放弃本地修改并重新加载' }));
   await waitFor(() => expect(field).toHaveValue('保留原文'));
+});
+
+const evolutionSettings = {
+  revision: 2,
+  auto_review_enabled: true,
+  memory_auto_write: true,
+  user_slot_char_limit: 2400,
+  system_slot_char_limit: 3600,
+  daily_used: 2,
+  daily_budget_requests: 20,
+  daily_remaining: 18,
+  slots: {
+    user: { character_count: 420, entry_count: 1, char_limit: 2400 },
+    system: { character_count: 117, entry_count: 1, char_limit: 3600 },
+  },
+};
+
+it('filters the two slots, shows capacity and applies protection against displayed revisions', async () => {
+  const userRow = {
+    id: 'user-row',
+    content: '先给示例',
+    revision: 1,
+    scope: 'global',
+    topic: '',
+    status: 'active',
+    source: { kind: 'manual' },
+    memory_slot: 'user',
+  };
+  let systemRow = {
+    ...userRow,
+    id: 'system-row',
+    content: '测试使用隔离库',
+    memory_slot: 'system',
+    protection_level: 'locked',
+  };
+  const writes: unknown[] = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string, options?: RequestInit) => {
+      if (url === '/api/evolution/settings') return Response.json(evolutionSettings);
+      if (url === '/api/memory-categories') return Response.json([]);
+      if (options?.method === 'PATCH') {
+        const body = JSON.parse(String(options.body));
+        writes.push(body);
+        systemRow = {
+          ...systemRow,
+          protection_level: body.protection_level,
+          revision: systemRow.revision + 1,
+        };
+        return Response.json(systemRow);
+      }
+      return Response.json([userRow, systemRow]);
+    }),
+  );
+  render(
+    <MemoryRouter>
+      <PreferencesPage />
+    </MemoryRouter>,
+  );
+  expect(await screen.findByText(/420 \/ 2400 字/)).toBeInTheDocument();
+  expect(screen.getByRole('progressbar', { name: '环境与系统知识容量' })).toHaveAttribute(
+    'aria-valuenow',
+    '117',
+  );
+  await userEvent.click(screen.getByRole('button', { name: '环境与系统知识' }));
+  expect(screen.queryByLabelText('记忆内容 user-row')).not.toBeInTheDocument();
+  const field = screen.getByLabelText('记忆内容 system-row');
+  expect(field).toBeDisabled();
+  expect(screen.getByRole('button', { name: '删除记忆' })).toBeDisabled();
+  expect(screen.getByText(/请先解锁/)).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: '解锁记忆' }));
+  await waitFor(() => expect(field).toBeEnabled());
+  await userEvent.click(screen.getByRole('button', { name: '固定记忆' }));
+  expect(await screen.findByText(/已固定 Pin/)).toBeInTheDocument();
+  expect(writes).toEqual([
+    { expected_revision: 1, protection_level: 'normal' },
+    { expected_revision: 2, protection_level: 'pinned' },
+  ]);
+});
+
+it('keeps settings input on a conflict and sends the optimistic revision', async () => {
+  const writes: unknown[] = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string, options?: RequestInit) => {
+      if (options?.method === 'PATCH') {
+        writes.push(JSON.parse(String(options.body)));
+        return Response.json({ detail: '自进化设置已变化，请刷新后再保存' }, { status: 409 });
+      }
+      return Response.json(url === '/api/evolution/settings' ? evolutionSettings : []);
+    }),
+  );
+  render(
+    <MemoryRouter>
+      <PreferencesPage />
+    </MemoryRouter>,
+  );
+  expect(await screen.findByText(/剩余 18 次/)).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: '自进化设置' }));
+  const toggle = screen.getByRole('checkbox', { name: '自动后台复盘' });
+  await userEvent.click(toggle);
+  await userEvent.click(screen.getByRole('button', { name: '保存自进化设置' }));
+  expect(await screen.findByText(/自进化设置已变化/)).toBeInTheDocument();
+  expect(toggle).not.toBeChecked();
+  expect(writes).toEqual([
+    {
+      expected_revision: 2,
+      auto_review_enabled: false,
+      memory_auto_write: true,
+      skill_auto_write: true,
+      user_slot_char_limit: 2400,
+      system_slot_char_limit: 3600,
+      review_turn_threshold: 6,
+      skill_tool_threshold: 8,
+      curator_stale_days: 30,
+      daily_budget_requests: 20,
+    },
+  ]);
+});
+
+it('approves, rejects and rolls back individual Journey changes and renders a conflict', async () => {
+  const base = {
+    action: 'update',
+    conversation_id: 'review-chat',
+    review_state: 'pending_review',
+    created_at: '2026-11-25T02:00:00Z',
+    evidence_refs: { quote: '用户原话' },
+    security_scan_result: { reasons: [] },
+  };
+  let changes = [
+    {
+      ...base,
+      id: 'accept',
+      diff_summary: {
+        before: { content: '先讲定义' },
+        after: { content: '先举例', category: 'preference' },
+      },
+    },
+    { ...base, id: 'decline', diff_summary: { before: {}, after: { content: '不接受的草稿' } } },
+    {
+      ...base,
+      id: 'conflict',
+      review_state: 'applied',
+      diff_summary: { before: {}, after: { content: '已经再次编辑' } },
+    },
+  ];
+  const writes: string[] = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string, options?: RequestInit) => {
+      if (url === '/api/evolution/settings') return Response.json(evolutionSettings);
+      if (options?.method === 'POST') {
+        writes.push(url);
+        const [, id, action] = url.match(/changes\/([^/]+)\/([^/]+)$/)!;
+        if (id === 'conflict')
+          return Response.json({ detail: '目标记忆修订已变化，请刷新后再回滚' }, { status: 409 });
+        const resolved: Record<string, string> = {
+          approve: 'approved',
+          reject: 'rejected',
+          rollback: 'rolled_back',
+        };
+        const next = resolved[action];
+        changes = changes.map((change) =>
+          change.id === id ? { ...change, review_state: next } : change,
+        );
+        return Response.json({});
+      }
+      return Response.json(url.startsWith('/api/evolution/changes?') ? changes : []);
+    }),
+  );
+  render(
+    <MemoryRouter>
+      <PreferencesPage />
+    </MemoryRouter>,
+  );
+  await userEvent.click(screen.getByRole('button', { name: '复盘记录' }));
+  const approved = within((await screen.findByText('修改后 先举例')).closest('article')!);
+  const rejected = within(screen.getByText('修改后 不接受的草稿').closest('article')!);
+  const conflict = within(screen.getByText('修改后 已经再次编辑').closest('article')!);
+  expect(approved.getByRole('link', { name: '来源会话' })).toHaveAttribute(
+    'href',
+    '/chat/review-chat',
+  );
+  expect(approved.getByText('修改前 先讲定义')).toBeInTheDocument();
+  expect(approved.getByText('修改后 表达偏好')).toBeInTheDocument();
+  await userEvent.click(approved.getByRole('button', { name: '批准' }));
+  await userEvent.click(await approved.findByRole('button', { name: '单项回滚' }));
+  expect(await approved.findByText('已回滚')).toBeInTheDocument();
+  await userEvent.click(rejected.getByRole('button', { name: '驳回' }));
+  expect(await rejected.findByText('已驳回')).toBeInTheDocument();
+  await userEvent.click(conflict.getByRole('button', { name: '单项回滚' }));
+  expect(await conflict.findByText(/目标记忆修订已变化/)).toBeInTheDocument();
+  expect(writes).toEqual([
+    '/api/evolution/changes/accept/approve',
+    '/api/evolution/changes/accept/rollback',
+    '/api/evolution/changes/decline/reject',
+    '/api/evolution/changes/conflict/rollback',
+  ]);
+});
+
+it('starts a manual review for the selected conversation and opens its activity', async () => {
+  const writes: unknown[] = [];
+  const job = { id: 'job', run_id: 'run', status: 'pending', conversation_id: 'c1' };
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string, options?: RequestInit) => {
+      if (url === '/api/evolution/settings') return Response.json(evolutionSettings);
+      if (url === '/api/conversations?include_trials=false')
+        return Response.json([{ id: 'c1', title: '已有会话' }]);
+      if (url === '/api/evolution/reviews') {
+        writes.push(JSON.parse(String(options?.body)));
+        return Response.json(job, { status: 202 });
+      }
+      return Response.json(url.startsWith('/api/evolution/jobs?') ? [job] : []);
+    }),
+  );
+  render(
+    <MemoryRouter>
+      <PreferencesPage />
+    </MemoryRouter>,
+  );
+  await userEvent.click(screen.getByRole('button', { name: '立即复盘' }));
+  await screen.findByRole('option', { name: '已有会话' });
+  await userEvent.selectOptions(screen.getByLabelText('复盘会话'), 'c1');
+  await userEvent.type(screen.getByLabelText('关注点（可选）'), '只看长期设置');
+  await userEvent.click(screen.getByRole('button', { name: '发起复盘' }));
+  expect(await screen.findByText('排队中')).toBeInTheDocument();
+  expect(writes).toEqual([
+    {
+      conversation_id: 'c1',
+      focus_hint: '只看长期设置',
+      job_type: 'memory_review',
+      request_key: expect.any(String),
+    },
+  ]);
+});
+
+it('keeps Journey cards and actions usable when audit metadata is empty or missing', async () => {
+  const base = {
+    action: 'update',
+    conversation_id: null,
+    review_state: 'pending_review',
+    created_at: '2026-11-25T02:00:00Z',
+  };
+  const changes = [
+    { ...base, id: 'empty', diff_summary: {}, evidence_refs: {}, security_scan_result: {} },
+    { ...base, id: 'missing' },
+    { ...base, id: 'null', diff_summary: null, evidence_refs: null, security_scan_result: null },
+  ];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string) =>
+      Response.json(url.startsWith('/api/evolution/changes?') ? changes : []),
+    ),
+  );
+  render(
+    <MemoryRouter>
+      <PreferencesPage />
+    </MemoryRouter>,
+  );
+  await userEvent.click(screen.getByRole('button', { name: '复盘记录' }));
+  const cards = await screen.findAllByRole('article');
+  expect(cards).toHaveLength(3);
+  for (const card of cards) expect(within(card).getByText('待审核')).toBeInTheDocument();
+  expect(screen.getAllByRole('button', { name: '批准' })).toHaveLength(3);
+  expect(screen.queryByText(/^修改前 /)).not.toBeInTheDocument();
 });

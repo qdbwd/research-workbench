@@ -1,6 +1,6 @@
 """可审查、可撤回的通用长期记忆，沿用旧偏好表和提取回执。
 
-本应用不用自由文件编辑或后台扫描：只解释新真人消息，按明确性决定生效/待确认；
+人工编辑、历史提取和后台复盘沿用同一记忆修订与索引写入边界；
 调用预算、写入许可和学习进度均不由偏好产生。UI修改不需要模型。
 """
 
@@ -11,6 +11,7 @@ import hashlib
 import re
 import unicodedata
 from collections.abc import Callable
+from contextlib import nullcontext
 from datetime import timedelta
 from typing import Literal
 
@@ -20,6 +21,7 @@ from sqlalchemy.orm import Session, object_session
 
 from knowledgeops_agent.app.lifecycle.access import require_conversation
 from knowledgeops_agent.app.runs.control import lock_control
+from knowledgeops_agent.evolution.settings import SLOTS, exceeds_capacity, require_capacity
 from knowledgeops_agent.memory.categories import (
     UNSET,
     CategorySelection,
@@ -42,6 +44,10 @@ from knowledgeops_agent.persistence.models import (
 
 EXTRACTOR_VERSION = "user-intent-v9-memory-categories"
 MemoryCategory = Literal["preference", "background", "behavior", "cognitive", "goal", "correction"]
+MemorySlot = Literal["user", "system"]
+ProtectionLevel = Literal["normal", "pinned", "locked"]
+PROTECTION_LEVELS = {"normal", "pinned", "locked"}
+LOCKED_ERROR = "该记忆已锁定，请先解锁后再修改或删除"
 CATEGORIES = {"preference", "background", "behavior", "cognitive", "goal", "correction"}
 
 
@@ -60,7 +66,7 @@ def _identity_lock(session, content: str, category: str, scope: str, topic: str)
     )
 
 
-def _duplicate(session, content: str, category: str, scope: str, topic: str):
+def _duplicate(session, content: str, category: str, scope: str, topic: str, slot: str = "user"):
     return next(
         (
             r
@@ -68,6 +74,7 @@ def _duplicate(session, content: str, category: str, scope: str, topic: str):
                 select(Preference)
                 .where(
                     Preference.category == category,
+                    Preference.memory_slot == slot,
                     Preference.scope == scope,
                     Preference.topic == topic,
                     Preference.status.in_(["active", "pending"]),
@@ -194,6 +201,9 @@ def preference_view(row: Preference) -> dict:
         "source": row.source,
         "supersedes_id": row.supersedes_id,
         "category": row.category,
+        "memory_slot": row.memory_slot,
+        "protection_level": row.protection_level,
+        "last_used_at": row.last_used_at.isoformat() if row.last_used_at else None,
         "display_category_id": row.display_category_id,
         "classification": classification,
         "confidence": row.confidence,
@@ -289,7 +299,7 @@ class MemoryService:
         context_key = None
         if message is not None:
             run = session.get(Run, message.run_id)
-            learning_id = getattr(run, "learning_task_id", None) or (run.input_data or {}).get(
+            learning_id = getattr(run, "learning_task_id", None) or (getattr(run, "input_data", None) or {}).get(
                 "learning_task_id"
             )
             context_key = (
@@ -336,22 +346,47 @@ class MemoryService:
         topic: str,
         category: str = "preference",
         display_category_id: CategorySelection = UNSET,
+        memory_slot: str = "user",
+        protection_level: str = "normal",
+        session: Session | None = None,
+        message: ChatMessage | None = None,
+        quote: str = "",
     ) -> dict:
         _validate(content, scope, topic)
         if category not in CATEGORIES:
             raise ValueError("无效记忆类别")
-        with self.sessions.begin() as session:
+        if memory_slot not in SLOTS or protection_level not in PROTECTION_LEVELS:
+            raise ValueError("无效记忆槽位或保护级别")
+        with (self.sessions.begin() if session is None else nullcontext(session)) as session:
             lock_control(session)
             _identity_lock(session, content, category, scope, topic)
-            existing = _duplicate(session, content, category, scope, topic)
+            existing = _duplicate(session, content, category, scope, topic, memory_slot)
             if existing and existing.status == "active":
                 return preference_view(existing)
+            require_capacity(session, memory_slot, content)
+            kind = "evolution_review" if message else "manual"
+            source = {"kind": kind}
+            if message is not None:
+                source.update(
+                    conversation_id=message.conversation_id, run_id=message.run_id, quote=quote,
+                )
             if existing:
+                if existing.protection_level == "locked":
+                    raise ValueError(LOCKED_ERROR)
+                # 默认保护级别只用于新记录，激活时保留人工设置的固定保护。
+                if existing.protection_level != "pinned" or protection_level != "normal":
+                    existing.protection_level = protection_level
                 existing.status, existing.revision = "active", existing.revision + 1
-                existing.source = {**existing.source, "last_editor": "user"}
+                if message is not None:
+                    existing.source_message_id = message.id
+                existing.source = {
+                    **existing.source,
+                    **(source if message else {}),
+                    "last_editor": kind if message else "user",
+                }
                 if not isinstance(display_category_id, UnsetCategory):
                     assign_category(session, existing, display_category_id)
-                self._evidence(session, existing)
+                self._evidence(session, existing, message=message, kind=kind, quote=quote)
                 self._save(session, existing)
                 if self.on_created is not None:
                     self.on_created(session, existing)
@@ -362,12 +397,15 @@ class MemoryService:
                 topic=topic,
                 category=category,
                 status="active",
-                source={"kind": "manual"},
+                memory_slot=memory_slot,
+                protection_level=protection_level,
+                source_message_id=message.id if message else None,
+                source=source,
             )
             session.add(row)
             if not isinstance(display_category_id, UnsetCategory):
                 assign_category(session, row, display_category_id)
-            self._evidence(session, row)
+            self._evidence(session, row, message=message, kind=kind, quote=quote)
             self._save(session, row)
             if self.on_created is not None:
                 self.on_created(session, row)
@@ -385,9 +423,14 @@ class MemoryService:
         supersedes_id: str | None = None,
         category: str | None = None,
         display_category_id: CategorySelection = UNSET,
+        memory_slot: str | None = None,
+        protection_level: str | None = None,
+        session: Session | None = None,
+        message: ChatMessage | None = None,
+        quote: str = "",
     ) -> dict:
         """乐观修订号和行锁避免覆盖旧页面；取代与确认同事务，不先删除旧偏好。"""
-        with self.sessions.begin() as session:
+        with (self.sessions.begin() if session is None else nullcontext(session)) as session:
             lock_control(session)
             # 多行按ID锁定，两个相反取代请求也不形成锁顺序反转。
             rows = {
@@ -406,51 +449,72 @@ class MemoryService:
                 raise ValueError("偏好修订已变化，请刷新后再操作")
             if row.status == "deleted":
                 raise ValueError("已删除的偏好保留历史，不自动恢复")
-            if not isinstance(display_category_id, UnsetCategory):
+            body_changes = any(
+                value is not None
+                for value in (content, scope, topic, status, supersedes_id, category, memory_slot)
+            )
+            category_change = not isinstance(display_category_id, UnsetCategory)
+            if row.protection_level == "locked" and (body_changes or category_change) and (
+                protection_level not in {"normal", "pinned"}
+            ):
+                raise ValueError(LOCKED_ERROR)
+            new_slot = row.memory_slot if memory_slot is None else memory_slot
+            new_level = row.protection_level if protection_level is None else protection_level
+            if new_slot not in SLOTS or new_level not in PROTECTION_LEVELS:
+                raise ValueError("无效记忆槽位或保护级别")
+            if category_change:
                 assign_category(session, row, display_category_id)
-                if all(
-                    value is None
-                    for value in (content, scope, topic, status, supersedes_id, category)
-                ):
-                    row.revision += 1
-                    self._save(session, row)
-                    return preference_view(row)
-            elif row.classification.get("status") == "pending":
+            if not body_changes:
+                row.protection_level = new_level
+                row.revision += 1
+                self._save(session, row)
+                return preference_view(row)
+            if not category_change and row.classification.get("status") == "pending":
                 # 正文/状态发生人工修改，正在分类的旧修订不能再覆盖它。
                 assign_category(session, row, row.display_category_id)
             new_status = status or row.status
             if new_status not in {"active", "pending", "inactive", "deleted"}:
                 raise ValueError("无效偏好状态")
-            row.content = row.content if content is None else content
-            row.scope = row.scope if scope is None else scope
-            row.topic = row.topic if topic is None else topic
-            row.category = row.category if category is None else category
-            if row.category not in CATEGORIES:
+            new_content = row.content if content is None else content
+            new_scope = row.scope if scope is None else scope
+            new_topic = row.topic if topic is None else topic
+            new_category = row.category if category is None else category
+            if new_category not in CATEGORIES:
                 raise ValueError("无效记忆类别")
-            _validate(row.content, row.scope, row.topic)
-            if supersedes_id:
-                old = rows.get(supersedes_id)
-                if (
-                    old is None
-                    or old.id == row.id
-                    or old.status == "deleted"
-                    or new_status != "active"
-                ):
-                    raise ValueError("取代对象或确认状态无效")
+            _validate(new_content, new_scope, new_topic)
+            old = rows.get(supersedes_id) if supersedes_id else None
+            if supersedes_id and (
+                old is None or old.id == row.id or old.status == "deleted" or new_status != "active"
+            ):
+                raise ValueError("取代对象或确认状态无效")
+            if old is not None and old.protection_level == "locked":
+                raise ValueError(LOCKED_ERROR)
+            if new_status == "active":
+                require_capacity(
+                    session, new_slot, new_content, replacing=(row, old) if old else (row,)
+                )
+            row.content, row.scope, row.topic = new_content, new_scope, new_topic
+            row.category, row.memory_slot, row.protection_level = new_category, new_slot, new_level
+            if old is not None:
                 old.status, old.revision = "inactive", old.revision + 1
                 old.revocation_epoch += 1
                 self._save(session, old)
                 row.supersedes_id = old.id
-            if new_status in {"inactive", "deleted"} and new_status != row.status:
+            if new_status != row.status and (row.status == "active" or new_status == "deleted"):
                 row.revocation_epoch += 1
             row.status, row.revision = new_status, row.revision + 1
-            row.source = {**row.source, "last_editor": "user"}
+            row.source = {**row.source, "last_editor": "evolution_review" if message else "user"}
+            if message is not None:
+                row.source_message_id = message.id
             row.confidence = 1.0
             row.confirmed_at = utcnow() if new_status == "active" else row.confirmed_at
             row.review_after = (
                 utcnow() + timedelta(days=90) if row.category in {"background", "goal"} else None
             )
-            self._evidence(session, row)
+            self._evidence(
+                session, row, message=message, kind="evolution_review" if message else "manual",
+                quote=quote,
+            )
             self._save(session, row)
             return preference_view(row)
 
@@ -521,6 +585,8 @@ class MemoryService:
                             .where(Preference.id == item.target_id)
                             .with_for_update()
                         )
+                        if target and target.protection_level != "normal":
+                            raise ValueError("受保护的记忆需要人工审核")
                         ref = expected.get(item.target_id)
                         if (
                             not ref
@@ -559,6 +625,8 @@ class MemoryService:
                         session, item.content, item.category, item.scope, item.topic
                     )
                     if duplicate is not None:
+                        if duplicate.protection_level != "normal":
+                            raise ValueError("受保护的记忆需要人工审核")
                         self._evidence(
                             session,
                             duplicate,
@@ -582,7 +650,13 @@ class MemoryService:
                             and not item.target_id
                             and item.durability == "durable"
                         )
-                        if duplicate.status == "pending" and (certain or safe_inferred):
+                        if (
+                            duplicate.status == "pending" and (certain or safe_inferred)
+                            and not exceeds_capacity(
+                                session, duplicate.memory_slot, duplicate.content,
+                                replacing=(target,) if target else (),
+                            )
+                        ):
                             duplicate.status = "active"
                             duplicate.confidence = 0.9 if certain else 0.65
                         if certain:
@@ -592,7 +666,7 @@ class MemoryService:
                                 if duplicate.category in {"background", "goal"}
                                 else None
                             )
-                        if target and target.id != duplicate.id and certain:
+                        if target and target.id != duplicate.id and certain and duplicate.status == "active":
                             target.status, target.revision = "inactive", target.revision + 1
                             target.revocation_epoch += 1
                             self._save(session, target)
@@ -602,6 +676,10 @@ class MemoryService:
                         self._save(session, duplicate)
                         result["updated"].append(duplicate.id)
                         continue
+                    if certain and exceeds_capacity(
+                        session, "user", item.content, replacing=(target,) if target else (),
+                    ):
+                        certain = False
                     row = Preference(
                         content=item.content,
                         scope=item.scope,
@@ -721,10 +799,11 @@ class MemoryService:
             scope=value["scope"],
             topic=value["topic"],
             category=value.get("category", "preference"),
+            memory_slot=value.get("memory_slot", "user"),
             display_category_id=identity,
         )
 
-    def merge(self, *, revisions: dict[str, int], content: str) -> dict:
+    def merge(self, *, revisions: dict[str, int], content: str, session: Session | None = None) -> dict:
         """用户审阅后的语义合并，不靠字符串相似度自动丢弃内容。
 
         同一事务创建新记录、关联全部来源并停用原项；保留原正文/版本，
@@ -732,7 +811,7 @@ class MemoryService:
         """
         if not 2 <= len(revisions) <= 10:
             raise ValueError("合并需要2至10条明确修订")
-        with self.sessions.begin() as session:
+        with (self.sessions.begin() if session is None else nullcontext(session)) as session:
             lock_control(session)
             rows = list(
                 session.scalars(
@@ -749,15 +828,21 @@ class MemoryService:
                 for row in rows
             ):
                 raise ValueError("合并对象修订或状态已变化，请重新审阅")
+            if any(row.protection_level == "locked" for row in rows):
+                raise ValueError(LOCKED_ERROR)
             first = rows[0]
             if any(
-                (r.category, r.scope, r.topic) != (first.category, first.scope, first.topic)
+                (r.category, r.scope, r.topic, r.memory_slot)
+                != (first.category, first.scope, first.topic, first.memory_slot)
                 for r in rows
             ):
                 raise ValueError("不同类别或作用域的记忆不能直接合并")
             _validate(content, first.scope, first.topic)
+            require_capacity(session, first.memory_slot, content, replacing=rows)
             merged = Preference(
                 content=content,
+                memory_slot=first.memory_slot,
+                protection_level="pinned" if any(r.protection_level == "pinned" for r in rows) else "normal",
                 category=first.category,
                 scope=first.scope,
                 topic=first.topic,
@@ -811,9 +896,9 @@ class MemoryService:
                 self._save(session, row)
             return preference_view(merged)
 
-    def undo_merge(self, memory_id: str, *, expected_revision: int) -> dict:
+    def undo_merge(self, memory_id: str, *, expected_revision: int, session: Session | None = None) -> dict:
         """只有整组源记录仍在合并后的修订时才能撤销，避免覆盖后续人工更改。"""
-        with self.sessions.begin() as session:
+        with (self.sessions.begin() if session is None else nullcontext(session)) as session:
             lock_control(session)
             candidate = session.get(Preference, memory_id)
             sources = candidate.source.get("merged_from", []) if candidate else []
@@ -841,6 +926,13 @@ class MemoryService:
                 for s in sources
             ):
                 raise ValueError("原记忆已经另有修改，不能整体回退合并")
+            if any(row.protection_level == "locked" for row in rows.values()):
+                raise ValueError(LOCKED_ERROR)
+            restored = "".join(
+                rows[source["id"]].content for source in sources if source["before_status"] == "active"
+            )
+            require_capacity(session, merged.memory_slot, restored, replacing=(merged,))
+            merged.status = "inactive"
             for source in sources:
                 row = rows[source["id"]]
                 row.status, row.revision = source["before_status"], row.revision + 1

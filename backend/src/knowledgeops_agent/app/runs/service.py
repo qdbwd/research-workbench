@@ -203,7 +203,7 @@ class RunService:
             "details_available": run.lifecycle_state == "active",
             "details_expires_at": run.details_expires_at.isoformat() if run.details_expires_at else None,
             "details_summary": run.details_summary,
-            "resumable": run.lifecycle_state == "active" and run.parent_id is None
+            "resumable": run.kind != "evolution_review" and run.lifecycle_state == "active" and run.parent_id is None
             and run.status in {"failed", "cancelled", "interrupted", "budget_exhausted", "paused"},
             "outcome": run.outcome,
             "stop_reason": run.stop_reason,
@@ -291,24 +291,26 @@ class RunService:
                     raise ValueError("idempotency key belongs to a different request")
             return self._view(prior)
 
-    def conversations(self) -> list[dict]:
+    def conversations(self, *, include_trials: bool = True) -> list[dict]:
         with self.sessions() as session:
+            query = select(Conversation).where(
+                Conversation.deletion_state == "active",
+                # 材料需要归属ID；导入回执不等于用户已开始聊天。
+                select(ChatMessage.id).where(
+                    ChatMessage.conversation_id == Conversation.id,
+                    ChatMessage.role == "user",
+                ).exists(),
+            )
+            if not include_trials:
+                query = query.where(Conversation.trial_case.is_(None))
+            rows = session.scalars(query.order_by(
+                Conversation.activity_at.desc().nullslast(), Conversation.created_at.desc(),
+                Conversation.id.desc(),
+            ))
             return [
-                {
-                    "id": row.id,
-                    "title": row.title,
-                    "selected_learning_task_id": row.selected_learning_task_id,
-                }
-                for row in session.scalars(
-                    select(Conversation).where(
-                        Conversation.deletion_state == "active",
-                        # 材料需要归属ID；导入回执不等于用户已开始聊天。
-                        select(ChatMessage.id).where(
-                            ChatMessage.conversation_id == Conversation.id,
-                            ChatMessage.role == "user",
-                        ).exists(),
-                    ).order_by(Conversation.activity_at.desc().nullslast(), Conversation.created_at.desc(), Conversation.id.desc())
-                )
+                {"id": row.id, "title": row.title,
+                 "selected_learning_task_id": row.selected_learning_task_id}
+                for row in rows
             ]
 
     def rename_conversation(self, conversation_id: str, title: str) -> dict:
@@ -578,8 +580,6 @@ class RunService:
                         "message": {"id": message.id, "content": message.content},
                         "candidates": candidates[:20],
                         "candidates_truncated": len(candidates) > 20,
-                        "known_preferences": [] if conversation.trial_case else self._preference_context(session, task),
-                        "memory_categories": self._memory_category_context(session),
                         "learning_context": self._learning_context(
                             session, conversation_id, selected_task_id
                         ),
@@ -589,22 +589,10 @@ class RunService:
             return self._view(run)
 
     @staticmethod
-    def _memory_category_context(session) -> list[dict]:
-        from knowledgeops_agent.memory.categories import model_catalog
-
-        return model_catalog(session)
-
-    @staticmethod
     def _learning_context(session, conversation_id: str, selected_task_id: str | None) -> dict:
         from knowledgeops_agent.learning.intent import intent_context
 
         return intent_context(session, conversation_id, selected_task_id)
-
-    @staticmethod
-    def _preference_context(session, query: str | None = None) -> list[dict]:
-        from knowledgeops_agent.memory.service import known_preferences
-
-        return known_preferences(session, query)
 
     def publication_context(self, run_id: str) -> dict:
         """仅使用可信消息表和提交时的草稿快照，不从 Agent State/摘要恢复授权。"""
@@ -839,7 +827,7 @@ class RunService:
                 self._event(session, run, "started", {"status": "running"})
                 self._event(session, root, "child_started", {"child_id": run.id})
                 return self._view(run)
-            if run.conversation_id:
+            if run.conversation_id and run.kind != "evolution_review":
                 waiting = session.scalar(
                     select(Run.id)
                     .where(
@@ -926,6 +914,10 @@ class RunService:
             )
             if advance:
                 advance.status = "running"
+            if run.kind == "evolution_review":
+                from knowledgeops_agent.evolution.service import mark_running
+
+                mark_running(session, run, self.now())
             self._event(session, run, "started", {"status": "running"})
             return self._view(run)
 
@@ -966,6 +958,10 @@ class RunService:
                 # 下方仅对确有待办/未知副作用的根运行恢复对应的等待类型。
                 run.outcome = {**run.outcome, "kind": "partial"}
                 self._event(session, run, "interrupted", {"reason": run.stop_reason})
+                if run.kind == "evolution_review":
+                    from knowledgeops_agent.evolution.service import settle_job
+
+                    settle_job(session, run, self.now())
             from knowledgeops_agent.persistence.models import (
                 CommandExecution,
                 ExecutionAction,
@@ -1304,7 +1300,9 @@ class RunService:
 
         with (self.sessions.begin() if session is None else nullcontext(session)) as session:
             run = self._locked(session, run_id)
-            waiting = run.status == "interrupted" and is_unsettled(run.status, run.outcome.get("kind"))
+            waiting = run.status == "interrupted" and (
+                run.kind == "evolution_review" or is_unsettled(run.status, run.outcome.get("kind"))
+            )
             if run.status in TERMINAL and not waiting:
                 return self._view(run)
             run.cancel_requested = True
@@ -1355,6 +1353,10 @@ class RunService:
                     from knowledgeops_agent.learning.coordinator import finished
 
                     finished(session, run)
+            if run.kind == "evolution_review" and run.status == "cancelled":
+                from knowledgeops_agent.evolution.service import settle_job
+
+                settle_job(session, run, self.now())
             self._event(session, run, "cancel_requested", {"status": run.status})
             from knowledgeops_agent.app.runs.children import child_finished, sync_group_clock
 
@@ -1380,6 +1382,7 @@ class RunService:
         outcome: dict | None = None,
         reason: str | None = None,
         continuation: dict | None = None,
+        complete_evolution: Callable | None = None,
     ) -> dict:
         """保存运行终态与用户结果；已提交业务数据不会被取消伪装为撤销。"""
         if status not in TERMINAL:
@@ -1451,11 +1454,25 @@ class RunService:
                 reference_ids = final_reference_ids(session, run.id, outcome["answer"])
                 if reference_ids:
                     outcome = {**outcome, "reference_citations": reference_ids}
+            if run.kind == "evolution_review" and status == "completed":
+                if complete_evolution is None:
+                    raise ValueError("复盘完成必须提供受控写回")
+                outcome = complete_evolution(session)
             run.status, run.outcome, run.stop_reason = status, outcome or {}, reason
             run.finished_at = self.now()
+            if run.kind == "evolution_review":
+                from knowledgeops_agent.evolution.service import settle_job
+
+                settle_job(session, run, run.finished_at)
             from knowledgeops_agent.harness.context.continuation import save_snapshot
 
             snapshot_id = save_snapshot(session, run, continuation)
+            if snapshot_id and run.kind == "context_compaction" and not run.input_data.get("trial_case"):
+                from knowledgeops_agent.evolution.snapshots import (
+                    refresh_conversation_memory_snapshot,
+                )
+
+                refresh_conversation_memory_snapshot(session, run.conversation_id)
             from knowledgeops_agent.app.lifecycle.continuity import (
                 confirm_child_consumption,
                 message_payload,
@@ -1526,6 +1543,8 @@ class RunService:
         """仅由用户入口恢复。新预算是总上限，不重置已消费次数或活跃时长。"""
         with (self.sessions.begin() if session is None else nullcontext(session)) as session:
             run = self._locked(session, run_id)
+            if run.kind == "evolution_review":
+                raise ValueError("复盘中断后请重新发起，原运行不会继续。")
             from knowledgeops_agent.research.execution import guard as guard_research
 
             try:

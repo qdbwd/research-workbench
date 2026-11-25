@@ -24,13 +24,16 @@ from knowledgeops_agent.harness.tools.policy import read_policy, save_policy
 from knowledgeops_agent.persistence.models import (
     ExtensionOperation,
     SkillPackageState,
+    SkillRevision,
     new_id,
     utcnow,
 )
 
 
 def package_view(row: SkillPackageState) -> dict:
-    return {"name": row.name, "revision": row.revision, "content_hash": row.content_hash, "removed": row.removed}
+    return {"name": row.name, "revision": row.revision, "content_hash": row.content_hash,
+            "removed": row.removed, "protection_level": row.protection_level,
+            "archived_at": row.archived_at}
 
 
 class SkillManagement:
@@ -42,23 +45,35 @@ class SkillManagement:
     def _checkpoint(self, _event: str) -> None:
         """事务关键点供故障注入；正常运行不执行额外动作。"""
 
-    def catalog(self) -> list[dict]:
+    def catalog(self, *, include_archived: bool = False) -> list[dict]:
+        from knowledgeops_agent.evolution.telemetry import telemetry_map
+
         with self.sessions.begin() as session:
             lock_configuration(session)
             self._recover_in(session)
             policy = read_policy(session)
             states = {row.name: row for row in session.scalars(select(SkillPackageState))}
-            return [self._present(item, states.get(item["name"]), policy) for item in package_catalog(self.root)
-                    if states.get(item["name"]) is None or not states[item["name"]].removed]
+            telemetry = telemetry_map(session)
+            return [
+                self._present(item, states.get(item["name"]), policy, telemetry.get(item["name"]))
+                for item in package_catalog(self.root)
+                if states.get(item["name"]) is None or (
+                    not states[item["name"]].removed
+                    and (include_archived or states[item["name"]].archived_at is None)
+                )
+            ]
 
     @staticmethod
-    def _present(item, state, policy):
-        return {**present_skill(item), "available": item["enabled"],
-                "enabled": item["enabled"] and policy.get("skill_enabled", {}).get(item["name"], True),
+    def _present(item, state, policy, telemetry=None):
+        archived_at = state.archived_at if state else None
+        return {**present_skill(item), "available": item["enabled"] and archived_at is None,
+                "enabled": item["enabled"] and archived_at is None and policy.get("skill_enabled", {}).get(item["name"], True),
                 "policy_revision": policy["revision"], "revision": state.revision if state else 0,
-                "managed": state is not None}
+                "managed": state is not None, "archived_at": archived_at,
+                "protection_level": state.protection_level if state else "normal", "telemetry": telemetry}
 
     def detail(self, name: str, *, resource: str | None = None) -> dict:
+        from knowledgeops_agent.evolution.telemetry import telemetry_map
         from knowledgeops_agent.harness.skills.details import package_detail
 
         with self.sessions.begin() as session:
@@ -68,7 +83,80 @@ class SkillManagement:
             if state is not None and state.removed:
                 raise KeyError("技能不存在")
             detail = package_detail(self.root, name, resource=resource)
-            return detail if resource is not None else self._present(detail, state, read_policy(session))
+            return detail if resource is not None else self._present(
+                detail, state, read_policy(session), telemetry_map(session).get(name),
+            )
+
+    def _record_revision(self, session, row, files, source_kind, *, change_id=None):
+        snapshot_path, snapshot_sha256 = self.storage.write_revision(row.name, row.revision, files)
+        session.add(SkillRevision(
+            skill_name=row.name, revision=row.revision, content_hash=package_digest(files),
+            snapshot_path=snapshot_path, snapshot_sha256=snapshot_sha256, source_kind=source_kind,
+            change_id=change_id,
+        ))
+
+    def _ensure_baseline(self, session, row, files):
+        if session.get(SkillRevision, (row.name, row.revision)) is None:
+            self._record_revision(session, row, files, "bootstrap")
+
+    def read_revision_snapshot(self, session, name, revision):
+        row = session.get(SkillRevision, (name, revision))
+        if row is None:
+            raise KeyError("技能历史修订不存在")
+        return self.storage.read_revision(row)
+
+    def revisions(self, name):
+        with self.sessions() as session:
+            if session.get(SkillPackageState, name) is None:
+                raise KeyError("技能不存在")
+            rows = session.scalars(select(SkillRevision).where(SkillRevision.skill_name == name)
+                                   .order_by(SkillRevision.revision.desc()))
+            fields = ("skill_name", "revision", "content_hash", "snapshot_path",
+                      "snapshot_sha256", "source_kind", "change_id", "created_at")
+            return [{key: getattr(row, key) for key in fields} for row in rows]
+
+    def set_protection(self, name, *, expected_revision, protection_level):
+        if protection_level not in {"normal", "pinned", "locked"}:
+            raise ValueError("技能保护级别无效")
+        return self._metadata(name, expected_revision, protection_level=protection_level)
+
+    def archive(self, name, *, expected_revision, session=None, change_id=None):
+        if session is not None:
+            return self._metadata_in(session, name, expected_revision, archived=True, change_id=change_id)
+        return self._metadata(name, expected_revision, archived=True)
+
+    def unarchive(self, name, *, expected_revision, session=None, change_id=None):
+        if session is not None:
+            return self._metadata_in(session, name, expected_revision, archived=False, change_id=change_id)
+        return self._metadata(name, expected_revision, archived=False)
+
+    def _metadata(self, name, expected_revision, **changes):
+        with self.sessions.begin() as session:
+            lock_configuration(session)
+            self._recover_in(session)
+            return self._metadata_in(session, name, expected_revision, **changes)
+
+    def _metadata_in(self, session, name, expected_revision, *, protection_level=None,
+                     archived=None, change_id=None):
+        row, directory = self._current(session, name, expected_revision)
+        if row is None or row.removed:
+            raise KeyError("受管技能不存在")
+        if archived is True and row.protection_level != "normal":
+            raise ValueError("该技能已固定或锁定，请先取消保护后归档")
+        if ((archived is not None and archived == (row.archived_at is not None))
+            or (protection_level is not None and protection_level == row.protection_level)):
+            return package_view(row)
+        files = self.storage.read_files(directory)
+        self._ensure_baseline(session, row, files)
+        row.revision += 1
+        row.updated_at = utcnow()
+        if archived is not None:
+            row.archived_at = row.updated_at if archived else None
+        if protection_level is not None:
+            row.protection_level = protection_level
+        self._record_revision(session, row, files, "curator" if change_id else "manual_import",
+                              change_id=change_id)
+        return package_view(row)
 
     def stage(self, files, *, name=None, description=None, expected_revision=0, _bootstrap_id=None,
               _method_review=None) -> dict:
@@ -239,30 +327,7 @@ class SkillManagement:
                         raise ValueError("请先补填技能名称和用途，再确认导入")
                     if inspected.digest != operation.parameters["content_hash"] or inspected.name != operation.target:
                         raise ValueError("待导入文件已变化，请重新检查")
-                row, current = self._current(session, operation.target, operation.expected_revision,
-                                             content_hash=operation.parameters.get("current_hash"))
-                existed = row is not None and not row.removed
-                record = {
-                    "format": FORMAT, "operation_id": identity, "name": operation.target,
-                    "kind": operation.kind, "had_current": existed,
-                    "old_hash": operation.parameters.get("current_hash", row.content_hash) if row is not None and existed else None,
-                    "new_hash": inspected.digest if inspected else None,
-                    "old_revision": operation.expected_revision,
-                }
-                journal = self.storage.operation_path("journal", identity)
-                self.storage.write_json(journal, record)
-                if existed:
-                    self.storage.move(current, self.storage.operation_path("rollback", identity))
-                self._checkpoint("old_moved")
-                if inspected:
-                    self.storage.move(self.storage.operation_path("staging", identity) / "candidate", current)
-                self._checkpoint("new_moved")
-                row = self._save_state(session, row, operation, inspected, existed)
-                operation.status, operation.error_code = "succeeded", None
-                operation.result = {"package": package_view(row)}
-                operation.updated_at = utcnow()
-                operation.attempts += 1
-                result = deepcopy(operation.result["package"])
+                result = self._replace_in(session, operation, inspected)
             self._checkpoint("database_committed")
             self.recover()
             return result
@@ -277,6 +342,63 @@ class SkillManagement:
                     operation.updated_at = utcnow()
             raise ValueError("技能包写入失败，原版本已恢复；可重试或重新上传") from exc
 
+    def publish_evolution(self, session, inspected, *, expected_revision, base_hash,
+                          source_kind, change_id):
+        """调用方持配置锁，在同一业务事务登记快照和变更回执。"""
+        self.storage.initialize()
+        operation = ExtensionOperation(
+            id=new_id(), kind="skill_import", target=inspected.name, status="ready",
+            expected_revision=expected_revision, parameters={"current_hash": base_hash},
+            result={},
+        )
+        session.add(operation)
+        return self._replace_in(session, operation, inspected, source_kind=source_kind,
+                                change_id=change_id, inline=True)
+
+    def _replace_in(self, session, operation, inspected, *, source_kind=None, change_id=None, inline=False):
+        from knowledgeops_agent.evolution.telemetry import mark_updated
+
+        row, current = self._current(session, operation.target, operation.expected_revision,
+                                     content_hash=operation.parameters.get("current_hash"))
+        if row is not None and row.protection_level == "locked":
+            raise ValueError("该技能已锁定，请先解锁后再修改或移除")
+        existed = row is not None and not row.removed
+        if existed:
+            self._ensure_baseline(session, row, self.storage.read_files(current))
+        identity = operation.id
+        record = {
+            "format": FORMAT, "operation_id": identity, "name": operation.target,
+            "kind": operation.kind, "had_current": existed,
+            "old_hash": operation.parameters.get("current_hash", row.content_hash) if existed else None,
+            "new_hash": inspected.digest if inspected else None,
+            "old_revision": operation.expected_revision,
+            "inline_evolution": inline,
+        }
+        journal = self.storage.operation_path("journal", identity)
+        self.storage.write_json(journal, record)
+        if inline:
+            # 日志先行，连暂存期间的异常也可以由恢复器收束。
+            self.storage.write_candidate(identity, inspected)
+        if existed:
+            self.storage.move(current, self.storage.operation_path("rollback", identity))
+        self._checkpoint("old_moved")
+        if inspected:
+            self.storage.move(self.storage.operation_path("staging", identity) / "candidate", current)
+        self._checkpoint("new_moved")
+        row = self._save_state(session, row, operation, inspected, existed)
+        session.flush()
+        if inspected:
+            if source_kind is None:
+                source_kind = ("bootstrap" if operation.parameters.get("bootstrap_id") else
+                               "method_proposal" if operation.parameters.get("method_review") else "manual_import")
+            self._record_revision(session, row, inspected.files, source_kind, change_id=change_id)
+            mark_updated(session, row.name, row.updated_at)
+        operation.status, operation.error_code = "succeeded", None
+        operation.result = {"package": package_view(row)}
+        operation.updated_at = utcnow()
+        operation.attempts += 1
+        return deepcopy(operation.result["package"])
+
     @staticmethod
     def _save_state(session, row, operation, inspected, existed):
         if row is None:
@@ -284,6 +406,8 @@ class SkillManagement:
             session.add(row)
         row.revision += 1
         row.removed = inspected is None
+        if not existed or row.removed:
+            row.archived_at = None
         if inspected:
             row.content_hash = inspected.digest
         row.updated_at = utcnow()
@@ -313,6 +437,8 @@ class SkillManagement:
                 raise KeyError("技能不存在")
             if row.removed:
                 return package_view(row)
+            if row.protection_level == "locked":
+                raise ValueError("该技能已锁定，请先解锁后再修改或移除")
             operation = ExtensionOperation(id=new_id(), kind="skill_remove", target=name, status="ready",
                                            expected_revision=expected_revision, parameters={}, result={},
                                            expires_at=utcnow() + timedelta(days=1))
@@ -334,12 +460,23 @@ class SkillManagement:
             journal = self.storage.operation_path("journal", identity)
             with journal.open("rb") as stream:
                 record = json.loads(stream.read(4096))
-            operation = self._get_operation(session, identity)
-            if (record.get("format") != FORMAT or record.get("operation_id") != identity
-                or record.get("name") != operation.target or record.get("kind") != operation.kind
-                or record.get("old_revision") != operation.expected_revision):
+            operation = session.get(ExtensionOperation, identity)
+            if record.get("format") != FORMAT or record.get("operation_id") != identity:
                 raise SkillPackageError("技能恢复日志不匹配，保留文件等待核对")
-            self._recover_record(record, operation.status == "succeeded")
+            if operation is None and record.get("inline_evolution") is True:
+                state = session.get(SkillPackageState, record["name"])
+                if (state is None or state.removed or record.get("kind") != "skill_import"
+                    or not record.get("had_current") or state.revision != record["old_revision"]
+                    or state.content_hash != record["old_hash"]):
+                    raise SkillPackageError("技能事务恢复基准不匹配")
+                self._recover_record(record, False)
+                self.storage.remove_owned(self.storage.operation_path("staging", identity))
+            else:
+                operation = self._get_operation(session, identity)
+                if (record.get("name") != operation.target or record.get("kind") != operation.kind
+                    or record.get("old_revision") != operation.expected_revision):
+                    raise SkillPackageError("技能恢复日志不匹配，保留文件等待核对")
+                self._recover_record(record, operation.status == "succeeded")
             journal.unlink()
             sync_directory(journal.parent)
 
@@ -395,8 +532,11 @@ class SkillManagement:
                 inspected = self.storage.read(directory)
                 if inspected.missing or inspected.name != directory.name:
                     raise ValueError("已有技能包需要先修正名称与用途")
-                session.add(SkillPackageState(name=directory.name,
-                                             content_hash=package_digest(self.storage.read_files(directory))))
+                files = self.storage.read_files(directory)
+                row = SkillPackageState(name=directory.name, revision=1, content_hash=package_digest(files))
+                session.add(row)
+                session.flush()
+                self._record_revision(session, row, files, "bootstrap")
                 adopted.append(directory.name)
         return adopted
 

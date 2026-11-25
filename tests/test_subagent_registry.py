@@ -79,7 +79,7 @@ def test_builtin_binding_survives_live_catalog_changes(registry, monkeypatch, ch
         skill_rows = [
             row for row in skill_rows if not row["resource"].startswith("/skills/evidence-check/")
         ]
-    monkeypatch.setattr(module, "load_skills", lambda: skill_rows)
+    monkeypatch.setattr(module, "load_skills", lambda *, session=None: skill_rows)
     live = registry.options()
     if change == "add":
         assert "new_read_tool" in {row["name"] for row in live["tools"]}

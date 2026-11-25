@@ -1139,12 +1139,53 @@ class SkillPackageState(Base):
     """当前包身份及移除标记；正文在项目目录，历史任务自持完整冻结字节。"""
 
     __tablename__ = "skill_packages"
+    __table_args__ = (
+        CheckConstraint("protection_level IN ('normal', 'pinned', 'locked')", name="ck_skill_packages_protection_level"),
+    )
+    protection_level: Mapped[str] = mapped_column(String(20), default="normal", server_default="normal")
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     name: Mapped[str] = mapped_column(String(64), primary_key=True)
     revision: Mapped[int] = mapped_column(Integer, default=1)
     content_hash: Mapped[str] = mapped_column(String(64))
     removed: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class SkillRevision(Base):
+    """完整包快照和不可变修订身份。"""
+
+    __tablename__ = "skill_revisions"
+    __table_args__ = (CheckConstraint("source_kind IN ('manual_import','method_proposal','evolution_patch','rollback','bootstrap','curator')", name="ck_skill_revisions_source_kind"),)
+    skill_name: Mapped[str] = mapped_column(String(64), ForeignKey("skill_packages.name", ondelete="CASCADE"), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, primary_key=True)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    snapshot_path: Mapped[str] = mapped_column(Text)
+    snapshot_sha256: Mapped[str] = mapped_column(String(64))
+    source_kind: Mapped[str] = mapped_column(String(32))
+    change_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("evolution_changes.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
+
+
+class SkillUsageTelemetry(Base):
+    """从实际技能读取结算的长期遥测。"""
+
+    __tablename__ = "skill_usage_telemetry"
+    __table_args__ = (
+        CheckConstraint("load_count >= 0", name="ck_skill_telemetry_load_count"),
+        CheckConstraint("success_run_count >= 0", name="ck_skill_telemetry_success_run_count"),
+        CheckConstraint("failed_run_count >= 0", name="ck_skill_telemetry_failed_run_count"),
+        CheckConstraint("correction_count >= 0", name="ck_skill_telemetry_correction_count"),
+    )
+    skill_name: Mapped[str] = mapped_column(String(64), ForeignKey("skill_packages.name", ondelete="CASCADE"), primary_key=True)
+    load_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    success_run_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    failed_run_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    correction_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
+
 
 
 class ExtensionOperation(Base):
@@ -1200,6 +1241,13 @@ class Preference(Base):
     """通用长期记忆的当前指针；沿用表名和ID，旧偏好属于preference类别。"""
 
     __tablename__ = "preferences"
+    __table_args__ = (
+        CheckConstraint("memory_slot IN ('user', 'system')", name="ck_preferences_memory_slot"),
+        CheckConstraint("protection_level IN ('normal', 'pinned', 'locked')", name="ck_preferences_protection_level"),
+    )
+    memory_slot: Mapped[str] = mapped_column(String(20), default="user", server_default="user")
+    protection_level: Mapped[str] = mapped_column(String(20), default="normal", server_default="normal")
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     revision: Mapped[int] = mapped_column(Integer, default=1)
     content: Mapped[str] = mapped_column(Text)
@@ -1700,6 +1748,108 @@ class RagSettings(Base):
     )
     revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class EvolutionSettings(Base):
+    __tablename__ = "evolution_settings"
+    __table_args__ = (
+        CheckConstraint("curator_stale_days BETWEEN 7 AND 365", name="ck_evolution_settings_curator_stale_days"),
+        CheckConstraint("id = 'default'", name="ck_evolution_settings_singleton"),
+        CheckConstraint("user_slot_char_limit BETWEEN 200 AND 20000", name="ck_evolution_settings_user_slot_char_limit"),
+        CheckConstraint("system_slot_char_limit BETWEEN 200 AND 30000", name="ck_evolution_settings_system_slot_char_limit"),
+        CheckConstraint("review_turn_threshold BETWEEN 1 AND 100", name="ck_evolution_settings_review_turn_threshold"),
+        CheckConstraint("skill_tool_threshold BETWEEN 1 AND 100", name="ck_evolution_settings_skill_tool_threshold"),
+        CheckConstraint("daily_budget_requests BETWEEN 0 AND 500", name="ck_evolution_settings_daily_budget_requests"),
+    )
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default="default", server_default="default")
+    auto_review_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    memory_auto_write: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    skill_auto_write: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    user_slot_char_limit: Mapped[int] = mapped_column(Integer, default=2400, server_default="2400")
+    system_slot_char_limit: Mapped[int] = mapped_column(Integer, default=3600, server_default="3600")
+    review_turn_threshold: Mapped[int] = mapped_column(Integer, default=6, server_default="6")
+    skill_tool_threshold: Mapped[int] = mapped_column(Integer, default=8, server_default="8")
+    daily_budget_requests: Mapped[int] = mapped_column(Integer, default=20, server_default="20")
+    curator_stale_days: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
+    curator_last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, server_default=text("now()"))
+
+
+class EvolutionJob(Base):
+    __tablename__ = "evolution_jobs"
+    __table_args__ = (
+        CheckConstraint("job_type IN ('memory_review', 'skill_review', 'combined_review', 'curator')", name="ck_evolution_jobs_job_type"),
+        CheckConstraint("trigger_kind IN ('auto_threshold', 'high_signal', 'manual', 'curator_schedule')", name="ck_evolution_jobs_trigger_kind"),
+        CheckConstraint("status IN ('pending', 'running', 'completed', 'failed', 'cancelled', 'interrupted')", name="ck_evolution_jobs_status"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    run_id: Mapped[str] = mapped_column(String(36), ForeignKey("runs.id", ondelete="CASCADE"), unique=True)
+    job_type: Mapped[str] = mapped_column(String(32))
+    trigger_kind: Mapped[str] = mapped_column(String(32))
+    conversation_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("conversations.id", ondelete="SET NULL"), index=True)
+    focus_hint: Mapped[str] = mapped_column(Text, default="", server_default="")
+    status: Mapped[str] = mapped_column(String(30), default="pending", server_default="pending")
+    cursor_from: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
+    cursor_to: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
+    result_summary: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, server_default=text("now()"))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class EvolutionCursor(Base):
+    __tablename__ = "evolution_cursors"
+    __table_args__ = (
+        CheckConstraint("pending_human_turns >= 0", name="ck_evolution_cursors_pending_human_turns"),
+        CheckConstraint("pending_tool_calls >= 0", name="ck_evolution_cursors_pending_tool_calls"),
+        CheckConstraint("pending_high_signal_events >= 0", name="ck_evolution_cursors_pending_high_signal_events"),
+    )
+    conversation_id: Mapped[str] = mapped_column(String(36), ForeignKey("conversations.id", ondelete="CASCADE"), primary_key=True)
+    last_reviewed_message_id: Mapped[str | None] = mapped_column(String(36))
+    last_reviewed_run_id: Mapped[str | None] = mapped_column(String(36))
+    last_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    pending_human_turns: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    pending_tool_calls: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    pending_high_signal_events: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    active_job_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("evolution_jobs.id", ondelete="SET NULL"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, server_default=text("now()"))
+
+
+class EvolutionChange(Base):
+    __tablename__ = "evolution_changes"
+    __table_args__ = (
+        CheckConstraint("target_kind IN ('memory', 'skill')", name="ck_evolution_changes_target_kind"),
+        CheckConstraint("action IN ('create', 'update', 'patch', 'deprecate', 'merge', 'archive', 'rollback')", name="ck_evolution_changes_action"),
+        CheckConstraint("review_state IN ('applied', 'pending_review', 'approved', 'rejected', 'superseded', 'rolled_back', 'skipped_conflict')", name="ck_evolution_changes_review_state"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    job_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("evolution_jobs.id", ondelete="SET NULL"), index=True)
+    conversation_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("conversations.id", ondelete="SET NULL"), index=True)
+    target_kind: Mapped[str] = mapped_column(String(20))
+    target_id: Mapped[str | None] = mapped_column(String(128))
+    action: Mapped[str] = mapped_column(String(24))
+    review_state: Mapped[str] = mapped_column(String(24))
+    base_revision: Mapped[int | None] = mapped_column(Integer)
+    applied_revision: Mapped[int | None] = mapped_column(Integer)
+    proposal_payload: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
+    diff_summary: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
+    diff_artifact_path: Mapped[str | None] = mapped_column(Text)
+    diff_artifact_sha256: Mapped[str | None] = mapped_column(String(64))
+    evidence_refs: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
+    security_scan_result: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
+    idempotency_key: Mapped[str] = mapped_column(String(160), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, server_default=text("now()"))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ConversationMemorySnapshot(Base):
+    __tablename__ = "conversation_memory_snapshots"
+    conversation_id: Mapped[str] = mapped_column(String(36), ForeignKey("conversations.id", ondelete="CASCADE"), primary_key=True)
+    snapshot_hash: Mapped[str] = mapped_column(String(64))
+    frozen_entries: Mapped[list[dict]] = mapped_column(JSONB, default=list, server_default="[]")
+    frozen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, server_default=text("now()"))
 
 
 class KnowledgeChunkEmbedding(Base):

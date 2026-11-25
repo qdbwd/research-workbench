@@ -7,10 +7,12 @@ from test_api_worker import client as _client
 from test_api_worker import services as _services
 
 from knowledgeops_agent.app.runs.worker import execute_run
+from knowledgeops_agent.evolution.snapshots import get_or_freeze_conversation_memory
 from knowledgeops_agent.harness.context.continuation import save_snapshot
 from knowledgeops_agent.harness.context.manual import enqueue, status
 from knowledgeops_agent.harness.context.usage import context_usage
-from knowledgeops_agent.persistence.models import Run
+from knowledgeops_agent.memory.service import MemoryService
+from knowledgeops_agent.persistence.models import ConversationMemorySnapshot, Run
 
 client = _client
 services = _services
@@ -43,6 +45,11 @@ def test_manual_worker_compacts_once_and_next_run_inherits_without_fake_chat(ser
     chat, prior = seed(services)
     services.gateway.client = SummaryProvider()
     original_chat = services.jobs.messages(chat['id'])
+    with services.sessions.begin() as session:
+        before = get_or_freeze_conversation_memory(
+            session, conversation_id=chat['id'], query='历史讨论', topic='',
+        )
+    memory = MemoryService(services.sessions).create("优先显示引用", scope="global", topic="")
     pending = enqueue(services.jobs, services.gateway, chat['id'], 'compact-once')
     assert enqueue(services.jobs, services.gateway, chat['id'], 'compact-once')['id'] == pending['id']
     assert not status(services.jobs, services.gateway, chat['id'])['available']
@@ -51,6 +58,10 @@ def test_manual_worker_compacts_once_and_next_run_inherits_without_fake_chat(ser
     finished = execute_run(pending['id'], pending['generation'], services=services, worker_id='compact-worker')
     assert finished['status'] == 'completed', finished
     assert finished['outcome']['kind'] == 'context_compacted', finished
+    with services.sessions() as session:
+        row = session.get(ConversationMemorySnapshot, chat['id'])
+        assert row.snapshot_hash != before["snapshot_hash"]
+        assert memory["id"] in {entry["id"] for entry in row.frozen_entries}
     assert services.jobs.messages(chat['id'])[:-1] == original_chat
     records = services.gateway.ledger.records(root_id=pending['id'])
     assert records and all(row['purpose'] == 'context_summary' for row in records)

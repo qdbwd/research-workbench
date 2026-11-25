@@ -37,7 +37,7 @@ MAX_CUSTOM_DEFINITIONS = 20
 def options(session=None) -> dict:
     """目录来自已有工具名称和项目 Skill 元数据，不读取任意文件或连接外部服务。"""
     skills = []
-    for row in load_skills():
+    for row in (load_skills(session=session) if session is not None else load_skills()):
         if is_skill_entry(row):
             metadata = yaml.safe_load(row["content"].split("---", 2)[1])
             skills.append(present_skill({"name": row["name"], "description": metadata["description"]}))

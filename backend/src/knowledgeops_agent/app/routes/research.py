@@ -180,7 +180,10 @@ def refresh_delivery(task_id: str, delivery_id: str, request: Request):
 
 @router.post("/api/research-tasks/{task_id}/deliveries/{delivery_id}/review")
 def review_delivery(task_id: str, delivery_id: str, body: ReviewDelivery, request: Request):
-    return deliveries.review(svc(request).sessions, task_id, delivery_id, body)
+    from knowledgeops_agent.evolution.service import EvolutionService
+
+    services = svc(request)
+    return deliveries.review(services.sessions, task_id, delivery_id, body, evolution=EvolutionService(services))
 
 
 @router.post("/api/research-tasks/{task_id}/delete")

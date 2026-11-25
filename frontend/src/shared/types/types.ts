@@ -24,7 +24,7 @@ export type Run = {
   root_id: string;
   parent_id: string | null;
   conversation_id: string | null;
-  kind: 'agent' | 'material' | 'context_compaction' | 'memory_classification' | 'research_start';
+  kind: 'agent' | 'material' | 'context_compaction' | 'memory_classification' | 'evolution_review' | 'research_start';
   task: string;
   status: string;
   generation: number;

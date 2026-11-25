@@ -177,7 +177,7 @@ class MemoryCategories:
             return _view(row)
 
     def delete(self, identity: str, *, expected_revision: int) -> dict:
-        from knowledgeops_agent.memory.service import MemoryService
+        from knowledgeops_agent.memory.service import LOCKED_ERROR, MemoryService
 
         with self.sessions.begin() as session:
             lock_control(session)
@@ -192,6 +192,8 @@ class MemoryCategories:
                     .with_for_update()
                 )
             )
+            if any(row.protection_level == "locked" for row in rows if row.status != "deleted"):
+                raise ValueError(LOCKED_ERROR)
             for row in rows:
                 assign_category(session, row, None)
                 row.revision += 1

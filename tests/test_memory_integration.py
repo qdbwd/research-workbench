@@ -4,6 +4,7 @@ import json
 
 import pytest
 from langchain_core.messages import AIMessage
+from sqlalchemy import select
 from test_api_worker import client as _client
 from test_api_worker import services as _services
 from test_preferences import proposal
@@ -13,6 +14,7 @@ from test_runtime import setup_run
 from knowledgeops_agent.harness.runtime.resources import prepare_resources
 from knowledgeops_agent.knowledge.intent import ensure_publication_intent
 from knowledgeops_agent.memory.service import MemoryService
+from knowledgeops_agent.persistence.models import RunEvent
 
 client = _client
 services = _services
@@ -47,7 +49,38 @@ def test_api_unifies_legacy_preferences_and_general_memory(client, services):
     assert not services.gateway.ledger.records()
 
 
-def test_real_intent_bridge_extracts_background_with_one_mock_model_call(runtime_services):
+def _prepare_legacy_intent_snapshot(context, monkeypatch):
+    from knowledgeops_agent.knowledge import intent
+    from knowledgeops_agent.memory.categories import model_catalog
+
+    # 模拟升级前已进入 outbox 的意图 payload 和真实资源快照，升级后仍走原提取协议。
+    with context.jobs.sessions.begin() as session:
+        queued = session.scalar(
+            select(RunEvent).where(
+                RunEvent.run_id == context.run_id,
+                RunEvent.kind == "queued",
+            )
+        )
+        queued.data = {
+            **queued.data,
+            "publication_context": {
+                **queued.data["publication_context"],
+                "known_preferences": [],
+                "memory_categories": model_catalog(session),
+            },
+        }
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            intent,
+            "INTENT_PROMPT",
+            "解释发布和偏好。另有preferences数组。包含background与display_category。",
+        )
+        prepare_resources(context)
+
+
+def test_legacy_intent_bridge_extracts_background_with_one_mock_model_call(
+    runtime_services, monkeypatch
+):
     _, context, run = setup_run(runtime_services, task="我是Python后端开发者，有两年开发经验。")
 
     class Interpreter:
@@ -78,7 +111,7 @@ def test_real_intent_bridge_extracts_background_with_one_mock_model_call(runtime
             )
 
     context.gateway.client = Interpreter()
-    prepare_resources(context)
+    _prepare_legacy_intent_snapshot(context, monkeypatch)
     result = ensure_publication_intent(context)
     assert result["preferences"]["created"]
     assert MemoryService(context.jobs.sessions).list()[0]["category"] == "background"
@@ -87,7 +120,9 @@ def test_real_intent_bridge_extracts_background_with_one_mock_model_call(runtime
     assert len(context.gateway.ledger.records()) == 1
 
 
-def test_chat_extraction_classifies_in_same_request_and_replay_does_not_duplicate(runtime_services):
+def test_legacy_extraction_classifies_in_same_request_and_replay_does_not_duplicate(
+    runtime_services, monkeypatch
+):
     from knowledgeops_agent.memory.categories import MemoryCategories
 
     _, context, run = setup_run(runtime_services, task="我是 Python 后端开发者。")
@@ -126,7 +161,7 @@ def test_chat_extraction_classifies_in_same_request_and_replay_does_not_duplicat
             )
 
     context.gateway.client = Interpreter()
-    prepare_resources(context)
+    _prepare_legacy_intent_snapshot(context, monkeypatch)
     result = ensure_publication_intent(context)
     memory = MemoryService(context.jobs.sessions).get(result["preferences"]["created"][0])
     label = next(

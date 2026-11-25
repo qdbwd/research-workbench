@@ -104,6 +104,15 @@ def test_review_fixed_delivery_and_stop_autonomy(client, services, action, deliv
     assert reviewed.json()["delivery"]["status"] == delivery_status
     assert reviewed.json()["delivery"]["content"] == delivery["content"]
     assert client.get(base + "/autonomy").json() == permit
+    jobs = client.get(f"/api/evolution/jobs?conversation_id={chat}").json()
+    if action == "accept":
+        (review_job,) = jobs
+        assert review_job["job_type"] == "skill_review"
+        assert review_job["trigger_kind"] == "high_signal"
+        assert services.jobs.get_run(review_job["run_id"])["input"]["research_delivery_id"] == delivery["id"]
+        services.jobs.cancel(review_job["run_id"])
+    else:
+        assert jobs == []
     assert services.jobs.claim("no-new-research") is None
 
     if task_status == "completed":
