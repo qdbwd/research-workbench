@@ -48,9 +48,36 @@ jobs:
       - name: Production bundle build check
         run: npm run build
 
-  backend:
-    name: Backend (Ruff & Offline Pytest)
+  backend-lint:
+    name: Backend Lint (Ruff)
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync dev dependencies
+        run: uv sync --frozen --group dev
+
+      - name: Ruff lint check
+        run: uv run ruff check backend/src tests
+
+  backend:
+    name: Backend Offline Pytest (Shard ${{ matrix.shard }}/6)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
     services:
       postgres:
         image: paradedb/paradedb:0.26.1-pg17@sha256:c1c147499c6649739d7977f1e47db149578c894f35249953acdd7680ccbae75b
@@ -85,6 +112,8 @@ jobs:
       REDIS_URL: redis://localhost:6379/0
       TEST_REDIS_URL: redis://localhost:6379/15
       OPENAI_BASE_URL: https://api.deepseek.com
+      PYTEST_SHARD_INDEX: ${{ matrix.shard }}
+      PYTEST_SHARD_TOTAL: "6"
 
     steps:
       - name: Checkout repository
@@ -114,8 +143,5 @@ jobs:
           uv run alembic upgrade head
           uv run python scripts/initialize_skills.py
 
-      - name: Ruff lint check
-        run: uv run ruff check backend/src tests
-
-      - name: Offline pytest suite (zero paid model calls)
+      - name: Offline pytest suite (shard ${{ matrix.shard }}/6, zero paid model calls)
         run: uv run pytest -m "not online"

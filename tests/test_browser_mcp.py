@@ -219,9 +219,25 @@ def runner(context):
     return action
 
 
+def test_browser_executable_discovery_ignores_permission_errors(monkeypatch):
+    from knowledgeops_agent.harness.browser.settings import chromium, entrypoint
+
+    def deny(*_args, **_kwargs):
+        raise PermissionError(13, "Permission denied", "/root/.cache/ms-playwright")
+
+    monkeypatch.setattr(Path, "glob", deny)
+    monkeypatch.setattr(Path, "is_file", deny)
+    monkeypatch.setattr("knowledgeops_agent.harness.browser.settings.shutil.which", deny)
+    settings = Settings(_env_file=None)
+    assert entrypoint(settings) is None
+    assert chromium(settings) is None
+
+
 def test_browser_settings_default_revision_attach_and_admission(services):
     with TestClient(create_app(services=services, publish_jobs=False)) as client:
-        raw = client.get("/api/browser/settings").json()
+        response = client.get("/api/browser/settings")
+        assert response.status_code == 200, response.text
+        raw = response.json()
         assert raw["default_mode"] == "launch" and not raw["local_attach_enabled"]
         assert client.post("/api/browser/probe").json()["code"] == "cdp_disabled"
         chat = client.post("/api/conversations", json={"title": "测试"}).json()

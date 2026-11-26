@@ -19,9 +19,32 @@ SESSION_LOCK = 748616080
 MCP_ENTRYPOINT = "/workspace/infra/playwright-mcp/node_modules/@playwright/mcp/cli.js"
 
 
+def _safe_is_file(path: Path) -> bool:
+    """无权限访问受限父目录时返回 False，不将环境探测异常透传成业务 403。"""
+    try:
+        return path.is_file()
+    except OSError:
+        return False
+
+
+def _safe_glob(directory: Path, pattern: str) -> list[Path]:
+    """非 root 宿主（如 CI runner）无权遍历 /root 缓存目录时静默跳过。"""
+    try:
+        return sorted(directory.glob(pattern), reverse=True)
+    except OSError:
+        return []
+
+
+def _safe_which(command: Path | str) -> bool:
+    try:
+        return bool(shutil.which(command))
+    except OSError:
+        return False
+
+
 def entrypoint(settings: Settings) -> Path | None:
     path = Path(settings.browser_mcp_entrypoint or MCP_ENTRYPOINT)
-    if path.is_absolute() and path.is_file() and shutil.which(settings.browser_mcp_command):
+    if path.is_absolute() and _safe_is_file(path) and _safe_which(settings.browser_mcp_command):
         return path
     return None
 
@@ -33,10 +56,10 @@ def chromium(settings: Settings) -> Path | None:
     else:
         candidates = [
             pinned,
-            *sorted(Path("/root/.cache/ms-playwright").glob("chromium-*/chrome-linux*/chrome"), reverse=True),
+            *_safe_glob(Path("/root/.cache/ms-playwright"), "chromium-*/chrome-linux*/chrome"),
             Path("/usr/bin/chromium"), Path("/usr/bin/google-chrome"),
         ]
-    return next((path for path in candidates if path.is_absolute() and shutil.which(path)), None)
+    return next((path for path in candidates if path.is_absolute() and _safe_which(path)), None)
 
 
 def attach_available(settings: Settings) -> bool:

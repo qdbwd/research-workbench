@@ -97,7 +97,16 @@ def test_resource_snapshot_has_no_live_clients_or_secrets_and_detects_corruption
         "child_mcp",
         "subagents",
         "tool_policy",
+        "browser",
         "web_search",
+    }
+    assert set(manifest["browser"]) == {
+        "enabled",
+        "mode",
+        "local_attach_allowed",
+        "max_actions",
+        "action_timeout",
+        "settings_revision",
     }
     assert manifest["tool_policy"] == baseline_policy()
     with context.jobs.sessions.begin() as session:
