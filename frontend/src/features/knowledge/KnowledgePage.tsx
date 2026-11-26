@@ -169,6 +169,8 @@ export function ArticlePage() {
       <BackLink to="/knowledge">返回知识库</BackLink>
       <PageTitle eyebrow={`版本 V${item.version}`} title={item.title}>
         <div className="flex flex-wrap items-center gap-2">
+          {!item.deleted_at && !(latest?.archived ?? item.archived) && <Link className="text-xs font-medium text-brand hover:underline"
+            to={`/retrieval?tab=docs&asset=knowledge:${encodeURIComponent(item.id)}`}>查看分块与向量 →</Link>}
           <Button type="button" className="button-secondary" onClick={() => setShowHistory(true)}>
             <History size={16} /> 版本历史
           </Button>

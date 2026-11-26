@@ -21,7 +21,7 @@ def active_writers() -> list[dict]:
     """读/proc而非依赖镜像安装ps；只输出进程身份类别，不泄漏命令参数/密钥。"""
     markers = ('knowledgeops_agent.api', 'knowledgeops_agent.worker', 'scripts/bootstrap.sh',
                'scripts/initialize_skills.py', 'scripts/migrate_', 'scripts/reindex_',
-               'scripts/maintain_lifecycle.py', 'scripts/retire_web_originals.py', 'scripts/seed_demo.py')
+               'scripts/maintain_lifecycle.py', 'scripts/retire_web_originals.py')
     rows = []
     for path in Path('/proc').glob('[0-9]*/cmdline'):
         try:

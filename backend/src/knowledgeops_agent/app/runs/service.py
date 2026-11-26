@@ -312,6 +312,8 @@ class RunService:
                         inputs["learning_task_id"] = body["learning_task_id"]
                     if body.get("browser_mode") is not None:
                         inputs["browser_mode"] = body["browser_mode"]
+                    if body.get("rag_scope", "auto") != "auto":
+                        inputs.update(rag_scope=body["rag_scope"], collection_ids=body["collection_ids"])
                     old_inputs = normalized_inputs(prior.input_data)
                     requested = prior.details_summary.get("requested_reasoning", "default") if prior.input_fingerprint else old_inputs["reasoning"]
                     inputs["reasoning"] = body.get("reasoning_effort") or requested
@@ -421,6 +423,8 @@ class RunService:
         learning_task_id: str | None = None,
         submission_fingerprint: str | None = None,
         browser_mode: Literal["launch", "attach"] | None = None,
+        rag_scope: Literal["auto", "all", "collections"] = "auto",
+        collection_ids: list[str] | None = None,
     ) -> dict:
         """可信用户入口原子保存消息和任务；重复请求必须具有相同内容与选项。"""
         if not task.strip() or len(task) > 100000 or not 1 <= len(request_key) <= 200:
@@ -434,6 +438,15 @@ class RunService:
             "delegation": delegation,
             "source_ids": source_ids or [],
         }
+        collection_ids = list(dict.fromkeys(collection_ids or []))
+        if rag_scope == "auto" and collection_ids:
+            rag_scope = "collections"
+        if rag_scope not in {"auto", "all", "collections"} or len(collection_ids) > 10:
+            raise ValueError("无效的知识库挂载范围")
+        if rag_scope == "collections" and not collection_ids:
+            raise ValueError("按知识集检索至少需要选择一个知识集")
+        if rag_scope != "auto":
+            inputs.update(rag_scope=rag_scope, collection_ids=collection_ids)
         if browser_mode is not None:
             if browser_mode not in {"launch", "attach"}:
                 raise ValueError("invalid browser mode")
@@ -496,6 +509,13 @@ class RunService:
                 and conversation.runtime_revision != expected_runtime_revision
             ):
                 raise ValueError("会话运行设置已变化，请刷新后重试")
+            if rag_scope != "auto" and conversation.trial_case:
+                raise ValueError("试用会话不能挂载全库或知识集")
+            if collection_ids:
+                from knowledgeops_agent.persistence.models import RagCollection
+
+                if any(session.get(RagCollection, identity) is None for identity in collection_ids):
+                    raise KeyError("未找到知识集")
             from knowledgeops_agent.harness.permissions.settings import runtime_inputs
 
             inputs = {**runtime_inputs(session, conversation), **inputs}

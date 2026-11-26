@@ -15,8 +15,9 @@ import pypdfium2
 from pypdf import PdfReader
 from sqlalchemy import delete, func, select
 
-from knowledgeops_agent.persistence.models import SourceSegment, SourceVersion
+from knowledgeops_agent.persistence.models import Source, SourceSegment, SourceVersion
 from knowledgeops_agent.retrieval.index import add_source_chunks
+from knowledgeops_agent.retrieval.indexing import maybe_enqueue_asset_index
 from knowledgeops_agent.sources.service import SourceService
 
 _PDFIUM_LOCK = Lock()  # PDFium 不支持跨线程并发调用，即使处理不同文档也需保护。
@@ -53,6 +54,9 @@ def _ocr_page(data: bytes, page_index: int) -> str:
 
 def _set_status(sources: SourceService, version_id: str, status: str, error: str | None = None):
     with sources.sessions.begin() as session:
+        source = session.scalar(select(Source).join(SourceVersion).where(
+            SourceVersion.id == version_id,
+        ).with_for_update(of=Source))
         version = session.scalar(
             select(SourceVersion).where(SourceVersion.id == version_id).with_for_update()
         )
@@ -66,6 +70,12 @@ def _set_status(sources: SourceService, version_id: str, status: str, error: str
             ).order_by(SourceSegment.page.asc().nulls_first(), SourceSegment.position)))
             version.body_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
             add_source_chunks(session, version.id)
+            if source and source.trial_conversation_id is None and source.deleted_at is None:
+                latest = session.scalar(select(func.max(SourceVersion.number)).where(
+                    SourceVersion.source_id == source.id,
+                ))
+                if latest == version.number:
+                    maybe_enqueue_asset_index(session, asset_kind="source", asset_id=source.id, version_id=version.id)
 
 
 def _save_page(

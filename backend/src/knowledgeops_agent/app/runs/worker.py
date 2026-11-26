@@ -420,8 +420,20 @@ def prepare_mcp(operation_id: str, generation: int, *, services: Services | None
     return MCPManagement(services.sessions, live_check=check_live).execute(operation_id, generation)
 
 
+def index_rag_asset(job_id: str, generation: int, *, services: Services | None = None):
+    services = services or _services
+    if services is None:
+        raise RuntimeError("start the worker entry point before indexing RAG assets")
+    services.check_maintenance()
+    if _lease_connection is not None:
+        _lease_connection.check()
+    return services.vector.index_asset(job_id, generation)
+
+
 def main() -> None:
     """先取得独占租约并中断遗留运行，再启动一个根任务消费者。"""
+    from knowledgeops_agent.retrieval.indexing import recover_interrupted_rag_jobs
+
     global _services, _lease_connection
     _services = create_services(get_settings())
     try:
@@ -433,10 +445,15 @@ def main() -> None:
 
             _services.jobs.live_check = check_live
             count = _services.jobs.recover_on_startup()
+            interrupted = recover_interrupted_rag_jobs(_services.sessions)
+            logger.warning("worker startup: %s interrupted RAG jobs await manual retry", interrupted)
             logger.warning("worker startup: %s unfinished runs await explicit resume", count)
             # 顶层 -m 薄入口调用本模块 main；显式注册这里已初始化依赖的函数，
             # 避免入口包装或另一种导入路径意外取得独立的 worker 实例。
-            app = create_queue(_services.settings.celery_broker_url, handler=execute_run, mcp_handler=prepare_mcp)
+            app = create_queue(
+                _services.settings.celery_broker_url, handler=execute_run, mcp_handler=prepare_mcp,
+                rag_index_handler=index_rag_asset,
+            )
             stop_watchdog = Event()
 
             def watch_lease():

@@ -313,6 +313,9 @@ export function SourcePage() {
       </BackLink>
       <PageTitle eyebrow={`版本 V${source.version}`} title={source.title}>
         <Badge status={source.status} />
+        {!source.deleted && source.status === 'ready' && (source.independently_saved || savedId === source.id || source.ownership_known === false) &&
+          <Link className="text-xs font-medium text-brand hover:underline"
+            to={`/retrieval?tab=docs&asset=source:${encodeURIComponent(source.id)}`}>查看分块与向量 →</Link>}
       </PageTitle>
       <ErrorBox message={saveError} />
       {source.independently_saved || savedId === source.id ? (

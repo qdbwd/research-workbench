@@ -4,6 +4,7 @@ from langchain.tools import ToolRuntime, tool
 
 from knowledgeops_agent.harness.runtime.state import RunContext
 from knowledgeops_agent.harness.tools.access import allowed_local_ids
+from knowledgeops_agent.retrieval.collections import mounted_reference_scope
 from knowledgeops_agent.retrieval.references import ReferenceScope
 from knowledgeops_agent.retrieval.references import search_references as find_references
 
@@ -39,10 +40,11 @@ def search_references(
         scope = "material"
     elif not include_material:
         scope = "knowledge"
-    source_ids = root["input"].get("source_ids") or None
+    with context.jobs.sessions() as session:
+        document_ids, source_ids = mounted_reference_scope(session, root["input"])
     candidates = find_references(
         context.knowledge, context.sources, query, root_id=context.root_id, scope=scope,
-        source_ids=source_ids, limit=_CANDIDATES, vector=context.vector,
+        source_ids=source_ids, document_ids=document_ids, limit=_CANDIDATES, vector=context.vector,
     )
     context.jobs.append_event(context.run_id, "reference_search", {
         "tool_call_id": runtime.tool_call_id,

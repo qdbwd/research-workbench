@@ -10,13 +10,15 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import Counter
 from collections.abc import Callable
 from itertools import zip_longest
 
-from sqlalchemy import cast, delete, func, literal, select, text
+from sqlalchemy import Float, cast, delete, func, literal, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import sessionmaker
 
+from knowledgeops_agent.app.runs.control import lock_control
 from knowledgeops_agent.persistence.models import (
     EmbeddingProfile,
     KnowledgeChunkEmbedding,
@@ -24,6 +26,8 @@ from knowledgeops_agent.persistence.models import (
     KnowledgeSearchChunk,
     KnowledgeVersion,
     PgVector,
+    RagCollection,
+    RagIndexJob,
     RagSettings,
     Source,
     SourceChunkEmbedding,
@@ -68,20 +72,20 @@ def rrf_fuse(
     k = max(1, int(k))
     scores: dict[tuple, float] = {}
     items: dict[tuple, dict] = {}
-    sources: dict[tuple, set[str]] = {}
+    lanes: dict[tuple, dict] = {}
 
     for rank, item in enumerate(lexical_hits, start=1):
         key = key_fn(item)
         scores[key] = scores.get(key, 0.0) + 1.0 / (k + rank)
         items.setdefault(key, item)
-        sources.setdefault(key, set()).add("bm25")
+        lanes.setdefault(key, {}).update(bm25_score=item.get("score"), bm25_rank=rank)
 
     for rank, item in enumerate(vector_hits, start=1):
         key = key_fn(item)
         scores[key] = scores.get(key, 0.0) + 1.0 / (k + rank)
         # 优先保留词法命中（其 excerpt 围绕关键词锚点），词法未命中时使用向量命中。
         items.setdefault(key, item)
-        sources.setdefault(key, set()).add("vector")
+        lanes.setdefault(key, {}).update(vector_score=item.get("score"), vector_rank=rank)
 
     ordered = sorted(scores.items(), key=lambda pair: (-pair[1], pair[0]))
     fused: list[dict] = []
@@ -89,10 +93,10 @@ def rrf_fuse(
         hit = dict(items[key])
         hit["rrf_score"] = round(rrf_score, 6)
         hit["score"] = float(rrf_score)
-        hit_sources = sources[key]
-        hit["retrieval_mode"] = (
-            "hybrid" if len(hit_sources) == 2 else ("vector" if "vector" in hit_sources else "bm25")
-        )
+        hit.update(dict.fromkeys(("bm25_score", "bm25_rank", "vector_score", "vector_rank")))
+        hit.update(lanes[key])
+        lexical, vector = hit["bm25_rank"], hit["vector_rank"]
+        hit["retrieval_mode"] = "hybrid" if lexical and vector else "vector" if vector else "bm25"
         fused.append(hit)
     return fused
 
@@ -101,6 +105,7 @@ def _serialize_settings(row: RagSettings | None) -> dict:
     if row is None:
         return {
             "hybrid_enabled": False,
+            "auto_index_enabled": True,
             "rerank_enabled": False,
             "contextual_embedding_enabled": True,
             "rrf_k": 60,
@@ -111,6 +116,7 @@ def _serialize_settings(row: RagSettings | None) -> dict:
         }
     return {
         "hybrid_enabled": bool(row.hybrid_enabled),
+        "auto_index_enabled": bool(row.auto_index_enabled),
         "rerank_enabled": bool(row.rerank_enabled),
         "contextual_embedding_enabled": bool(row.contextual_embedding_enabled),
         "rrf_k": int(row.rrf_k),
@@ -149,6 +155,7 @@ class VectorRetrievalService:
         *,
         expected_revision: int,
         hybrid_enabled: bool | None = None,
+        auto_index_enabled: bool | None = None,
         rerank_enabled: bool | None = None,
         contextual_embedding_enabled: bool | None = None,
         rrf_k: int | None = None,
@@ -166,6 +173,8 @@ class VectorRetrievalService:
                 session.flush()
             if hybrid_enabled is not None:
                 row.hybrid_enabled = bool(hybrid_enabled)
+            if auto_index_enabled is not None:
+                row.auto_index_enabled = auto_index_enabled
             if rerank_enabled is not None:
                 row.rerank_enabled = bool(rerank_enabled)
             if contextual_embedding_enabled is not None:
@@ -192,9 +201,24 @@ class VectorRetrievalService:
             row.updated_at = utcnow()
         return self.status()
 
+    def index_asset(self, job_id: str, generation: int) -> dict | None:
+        from knowledgeops_agent.retrieval.indexing import index_asset
+
+        return index_asset(self.sessions, self.embedding_provider, job_id, generation)
+
+    def hit_test(self, knowledge, sources, **options):
+        from knowledgeops_agent.retrieval.hit_testing import hit_test
+
+        return hit_test(self, knowledge, sources, **options)
+
     def status(self) -> dict:
         """返回 pgvector 扩展、分块覆盖率、档案列表、Provider 状态与当前实际检索模式。"""
         with self.sessions() as session:
+            index_queue = dict.fromkeys(("pending", "indexing", "ready", "failed"), 0)
+            index_queue.update(session.execute(select(
+                RagIndexJob.status, func.count(),
+            ).group_by(RagIndexJob.status)).all())
+            collections_count = session.scalar(select(func.count(RagCollection.id)))
             ext_version = session.scalar(
                 text("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
             )
@@ -374,6 +398,8 @@ class VectorRetrievalService:
                 "ratio": min(1.0, round(embedded_chunks / total_chunks, 4)) if total_chunks > 0 else 1.0,
             },
             "profiles": profiles,
+            "index_queue": index_queue,
+            "collections_count": collections_count,
         }
 
     # ------------------------------------------------------------------
@@ -393,6 +419,7 @@ class VectorRetrievalService:
             raise EmbeddingError("嵌入服务未启用或未配置，无法构建向量索引")
 
         started = time.perf_counter()
+        build_started_at = utcnow()
         spec = self.embedding_provider.spec
         rag_settings = self.get_settings()
         use_contextual = (
@@ -476,6 +503,8 @@ class VectorRetrievalService:
                 source_items.append(
                     {
                         "segment_id": chunk.segment_id,
+                        "source_id": source.id,
+                        "version_id": segment.source_version_id,
                         "chunk_index": chunk.chunk_index,
                         "text": ctx_text,
                         "sha256": embedding_content_hash(
@@ -555,6 +584,7 @@ class VectorRetrievalService:
         written_k = 0
         written_s = 0
         with self.sessions.begin() as session:
+            lock_control(session)
             live_k_chunks: set[tuple[str, int, str]] = set()
             if pending_k:
                 k_doc_ids = list({item["document_id"] for item in pending_k})
@@ -682,6 +712,22 @@ class VectorRetrievalService:
                 rag.revision = int(rag.revision) + 1
                 rag.updated_at = now
 
+            from knowledgeops_agent.retrieval.collections import chunk_query, live_asset
+            from knowledgeops_agent.retrieval.indexing import record_rebuilt_asset
+
+            covered = Counter(
+                (kind, item[key], item["version_id"])
+                for kind, key, items in (
+                    ("knowledge", "document_id", knowledge_items), ("source", "source_id", source_items),
+                )
+                for item in items
+            )
+            for (kind, identity, version), count in sorted(covered.items()):
+                target = live_asset(session, kind, identity, library_only=False)
+                if target and target[1].id == version and len(session.execute(chunk_query(kind, version)).all()) == count:
+                    record_rebuilt_asset(session, kind=kind, identity=identity, version=version,
+                                         profile_id=profile_id, chunks=count, started=build_started_at)
+
         elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
         return {
             "profile_id": profile_id,
@@ -730,16 +776,22 @@ class VectorRetrievalService:
         *,
         profile_id: str,
         root_id: str | None = None,
+        document_ids: list[str] | None = None,
+        min_similarity: float | None = None,
         limit: int = 10,
     ) -> list[dict]:
         """按与 KnowledgeService.search 相同的版本/归档/试用过滤查询 pgvector 候选。"""
         from knowledgeops_agent.research.trial import run_trial_owner
 
+        if document_ids == []:
+            return []
         parsed = LexicalQuery.parse(query)
         vec_literal = format_pgvector(query_vector)
         emb = KnowledgeChunkEmbedding
         chunk = KnowledgeSearchChunk
-        distance = emb.embedding.op("OPERATOR(public.<=>)")(cast(literal(vec_literal), PgVector()))
+        distance = emb.embedding.op("OPERATOR(public.<=>)", return_type=Float())(
+            cast(literal(vec_literal), PgVector())
+        )
 
         with self.sessions() as session:
             trial_owner = run_trial_owner(session, root_id)
@@ -766,6 +818,9 @@ class VectorRetrievalService:
                 .where(
                     emb.profile_id == profile_id,
                     emb.version_id == chunk.version_id,
+                    chunk.enabled.is_(True),
+                    True if document_ids is None else chunk.document_id.in_(document_ids),
+                    True if min_similarity is None else distance <= 1 - min_similarity,
                     KnowledgeDocument.current_version_id == chunk.version_id,
                     KnowledgeDocument.deleted_at.is_(None),
                     KnowledgeDocument.trial_conversation_id == trial_owner,
@@ -814,16 +869,21 @@ class VectorRetrievalService:
         root_id: str | None = None,
         conversation_id: str | None = None,
         source_ids: list[str] | None = None,
+        min_similarity: float | None = None,
         limit: int = 10,
     ) -> list[dict]:
         """按与 SourceService.search 相同的 _search_scope 权限过滤查询 pgvector 材料候选。"""
         from knowledgeops_agent.sources.service import _search_scope
 
+        if source_ids == []:
+            return []
         parsed = LexicalQuery.parse(query)
         vec_literal = format_pgvector(query_vector)
         emb = SourceChunkEmbedding
         chunk = SourceSearchChunk
-        distance = emb.embedding.op("OPERATOR(public.<=>)")(cast(literal(vec_literal), PgVector()))
+        distance = emb.embedding.op("OPERATOR(public.<=>)", return_type=Float())(
+            cast(literal(vec_literal), PgVector())
+        )
 
         with self.sessions() as session:
             statement = (
@@ -837,6 +897,8 @@ class VectorRetrievalService:
                 .join(Source, Source.id == SourceVersion.source_id)
                 .where(
                     emb.profile_id == profile_id,
+                    chunk.enabled.is_(True),
+                    True if min_similarity is None else distance <= 1 - min_similarity,
                     *_search_scope(
                         session,
                         root_id=root_id,
@@ -857,6 +919,7 @@ class VectorRetrievalService:
                         "version_id": version.id,
                         "version": version.number,
                         "segment_id": segment.id,
+                        "chunk_index": row.chunk_index,
                         "title": source.title,
                         "page": segment.page,
                         "start": segment.start_offset + hit.start,
@@ -877,9 +940,10 @@ class VectorRetrievalService:
         sources,
         query: str,
         *,
-        root_id: str,
+        root_id: str | None,
         scope: str = "all",
         source_ids: list[str] | None = None,
+        document_ids: list[str] | None = None,
         limit: int = 10,
         use_rerank: bool | None = None,
     ) -> list[dict]:
@@ -899,7 +963,7 @@ class VectorRetrievalService:
         k_lexical = (
             [
                 {"kind": "knowledge", "asset_id": item["document_id"], **item}
-                for item in knowledge.search(query, limit=fetch_limit, root_id=root_id)
+                for item in knowledge.search(query, limit=fetch_limit, root_id=root_id, document_ids=document_ids)
             ]
             if scope != "material"
             else []
@@ -944,6 +1008,7 @@ class VectorRetrievalService:
                         query_vector,
                         profile_id=active_profile.profile_id,
                         root_id=root_id,
+                        document_ids=document_ids,
                         limit=fetch_limit,
                     )
                 ]

@@ -13,6 +13,7 @@ from knowledgeops_agent.persistence.models import (
     ModelStep,
 )
 from knowledgeops_agent.research.trial import run_trial_owner
+from knowledgeops_agent.retrieval.collections import mounted_reference_scope
 from knowledgeops_agent.sources.service import is_current_search_segment
 
 
@@ -26,12 +27,13 @@ def _current_reference(session, root, item: dict, *, verify_text: bool) -> bool:
         or row.end_offset != item.get("end")
     ):
         return False
+    document_ids, source_ids = mounted_reference_scope(session, root.input_data)
     if row.source_segment_id:
         return (
             not root.input_data.get("knowledge_only") and item.get("kind") == "material"
             and is_current_search_segment(
                 session, row.source_segment_id, root_id=root.id,
-                source_ids=root.input_data.get("source_ids") or None,
+                source_ids=source_ids,
             )
         )
     return item.get("kind") == "knowledge" and session.scalar(
@@ -40,6 +42,7 @@ def _current_reference(session, root, item: dict, *, verify_text: bool) -> bool:
         .where(
             KnowledgeVersion.id == row.knowledge_version_id, KnowledgeVersion.archived.is_(False),
             KnowledgeDocument.current_version_id == KnowledgeVersion.id,
+            True if document_ids is None else KnowledgeDocument.id.in_(document_ids),
             KnowledgeDocument.deleted_at.is_(None),
             KnowledgeDocument.trial_conversation_id == run_trial_owner(session, root.id),
         )

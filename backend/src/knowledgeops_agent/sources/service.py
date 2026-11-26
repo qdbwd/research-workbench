@@ -27,6 +27,7 @@ from knowledgeops_agent.persistence.models import (
     utcnow,
 )
 from knowledgeops_agent.retrieval.index import add_source_chunks
+from knowledgeops_agent.retrieval.indexing import maybe_enqueue_asset_index
 from knowledgeops_agent.retrieval.search import LexicalQuery, excerpt, search_expressions
 from knowledgeops_agent.sources.ownership import (
     claim_source,
@@ -180,6 +181,8 @@ class SourceService:
                     )
                 session.flush()
                 add_source_chunks(session, version.id)
+                if source.trial_conversation_id is None:
+                    maybe_enqueue_asset_index(session, asset_kind="source", asset_id=source.id, version_id=version.id)
             return self._version_view(session, source, version)
 
     def register_pdf(self, title: str, data: bytes, *, conversation_id: str | None = None,
@@ -313,7 +316,7 @@ class SourceService:
                source_ids=None, limit: int = 10) -> list[dict]:
         """只查询当前可读的材料版本；候选不会写入已读证据或扩大归属。"""
         parsed = LexicalQuery.parse(query)
-        if not parsed.terms or limit <= 0:
+        if not parsed.terms or limit <= 0 or source_ids == []:
             return []
         chunk = SourceSearchChunk
         match, score = search_expressions(chunk, parsed)
@@ -324,7 +327,7 @@ class SourceService:
                 .join(SourceVersion, SourceVersion.id == SourceSegment.source_version_id)
                 .join(Source, Source.id == SourceVersion.source_id)
                 .where(
-                    match, *_search_scope(
+                    match, chunk.enabled.is_(True), *_search_scope(
                         session, root_id=root_id, conversation_id=conversation_id, source_ids=source_ids,
                     ),
                 )
@@ -338,7 +341,7 @@ class SourceService:
                     "source_id": source.id, "version_id": version.id, "version": version.number,
                     "segment_id": segment.id, "title": source.title, "page": segment.page,
                     "start": segment.start_offset + hit.start, "end": segment.start_offset + hit.end,
-                    "snippet": hit.text, "score": float(relevance),
+                    "snippet": hit.text, "score": float(relevance), "chunk_index": row.chunk_index,
                 })
             return results
 

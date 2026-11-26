@@ -1,4 +1,5 @@
 import type { BrowserMode } from '../../tools/browserSettings';
+import type { RagScope } from '../../tools/retrieval/types';
 
 /** 浏览器草稿的事务边界。正文版本与请求回执分别维护，任何网络请求都在事务之外。 */
 export type DraftData = {
@@ -12,6 +13,8 @@ export type DraftData = {
   researchMode?: true;
   trialCase?: string;
   browserMode?: BrowserMode;
+  ragScope?: RagScope;
+  collectionIds?: string[];
 };
 
 export const emptyDraft = (): DraftData => ({ content: '', selected: [], mode: 'ask', knowledgeOnly: false,
@@ -20,6 +23,7 @@ export const emptyDraft = (): DraftData => ({ content: '', selected: [], mode: '
 export type MessageBody = {
   content: string; source_ids: string[]; publication_mode: DraftData['mode']; knowledge_only: boolean;
   delegation: boolean; reasoning_effort: string; request_key: string; browser_mode?: BrowserMode;
+  rag_scope?: RagScope; collection_ids?: string[];
 };
 export type PendingSubmission = {
   id: string;
@@ -61,6 +65,16 @@ export function normalizeDraft(raw: unknown): DraftData {
   if (value.browserMode === 'attach' || value.browserMode === 'launch') result.browserMode = value.browserMode;
   if (value.researchMode === true) result.researchMode = true;
   if (typeof value.trialCase === 'string' && /^[a-z0-9-]{1,80}$/.test(value.trialCase)) result.trialCase = value.trialCase;
+  if (!result.trialCase) {
+    const ids = Array.isArray(value.collectionIds) ? [...new Set(value.collectionIds.filter(
+      (id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 36,
+    ))].slice(0, 10) : [];
+    if (value.ragScope === 'all') result.ragScope = 'all';
+    if (value.ragScope === 'collections' && ids.length) {
+      result.ragScope = 'collections';
+      result.collectionIds = ids;
+    }
+  }
   return result;
 }
 
@@ -205,6 +219,9 @@ export class DraftStore {
           knowledge_only: data.knowledgeOnly, delegation: data.delegation,
           reasoning_effort: data.reasoning, request_key: crypto.randomUUID(),
           ...(!data.knowledgeOnly && !data.trialCase && data.browserMode ? { browser_mode: data.browserMode } : {}),
+          ...(!data.trialCase && data.ragScope && data.ragScope !== 'auto' ? {
+            rag_scope: data.ragScope, collection_ids: data.ragScope === 'collections' ? data.collectionIds ?? [] : [],
+          } : {}),
         },
         needsSettings: !row.conversationId, stage: row.conversationId ? 'message' : 'creation',
         state: 'unknown', uncertain: false, error: '' };
@@ -244,7 +261,7 @@ export class DraftStore {
       const sent = row.pending;
       // 只退休实际发送的正文版本；之后输入以及其他标签的冲突副本不受影响。
       if (sent.intent !== 'materials' && row.revision === sent.revision && sameDraft(row.data, sent.data)) {
-        row.data = { ...row.data, content: '', selected: [], researchMode: undefined, trialCase: undefined, browserMode: undefined };
+        row.data = { ...row.data, content: '', selected: [], researchMode: undefined, trialCase: undefined, browserMode: undefined, ragScope: undefined, collectionIds: undefined };
         row.revision += 1;
       }
       row.lastAccepted = { id, runId, intent: sent.intent };

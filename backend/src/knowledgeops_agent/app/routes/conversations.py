@@ -231,7 +231,10 @@ def conversation_context_usage(conversation_id: str, request: Request):
 @router.post("/api/conversations/{conversation_id}/messages", status_code=202)
 def send_message(conversation_id: str, body: MessageInput, request: Request):
     dependencies = svc(request)
-    payload = body.model_dump(exclude={"browser_mode"} if body.browser_mode is None else None)
+    excluded = {"browser_mode"} if body.browser_mode is None else set()
+    if body.rag_scope == "auto":
+        excluded.update(("rag_scope", "collection_ids"))
+    payload = body.model_dump(exclude=excluded)
     accepted = dependencies.jobs.lookup_submission(conversation_id, body.request_key, body=payload)
     if accepted is not None:
         return accepted
@@ -254,6 +257,8 @@ def send_message(conversation_id: str, body: MessageInput, request: Request):
         inherit_reasoning=body.reasoning_effort is None,
         expected_runtime_revision=defaults["revision"],
         source_ids=body.source_ids,
+        rag_scope=body.rag_scope,
+        collection_ids=body.collection_ids,
         budgets=body.budgets.model_dump(),
         learning_task_id=body.learning_task_id,
         submission_fingerprint=fingerprint([conversation_id, payload]),

@@ -141,10 +141,14 @@ class AssetCleaner:
                 owner = self._owner(conversation_id)
                 session.execute(delete(db.SourceUse).where(db.SourceUse.source_id == identity,
                     db.SourceUse.owner_kind == owner[0], db.SourceUse.owner_id == owner[1]))
+                from knowledgeops_agent.retrieval.indexing import remove_rag_asset
+
                 if owner[0] == "library":
                     row.ownership_known = True
+                    remove_rag_asset(session, "source", identity, remove_job=False)
                 if not session.scalar(select(db.SourceUse.source_id).where(db.SourceUse.source_id == identity).limit(1)):
                     row.deleted_at = self.jobs.now()
+                    remove_rag_asset(session, "source", identity)
                     row.identity_key = f"deleted:{row.id}:{row.identity_key}"
             else:
                 row.deleted_at = self.jobs.now()

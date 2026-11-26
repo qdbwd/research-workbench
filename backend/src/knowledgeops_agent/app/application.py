@@ -42,6 +42,7 @@ from knowledgeops_agent.app.runs.queue import OutboxPublisher, create_queue
 from knowledgeops_agent.app.services import Services, create_services
 from knowledgeops_agent.core.config import get_settings
 from knowledgeops_agent.persistence.maintenance import MaintenanceLease, MaintenanceLost
+from knowledgeops_agent.retrieval.indexing import RagIndexPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,7 @@ def create_app(*, services: Services | None = None, publish_jobs: bool = True) -
             queue = create_queue(dependencies.settings.celery_broker_url)
             publisher = OutboxPublisher(dependencies.sessions, queue)
             mcp_publisher = MCPPreparationPublisher(dependencies.sessions, queue)
+            rag_publisher = RagIndexPublisher(dependencies.sessions, queue)
             while not stop.is_set():
                 try:
                     await asyncio.to_thread(dependencies.check_maintenance)
@@ -83,6 +85,10 @@ def create_app(*, services: Services | None = None, publish_jobs: bool = True) -
                     await asyncio.to_thread(mcp_publisher.publish_due)
                 except Exception as exc:
                     logger.warning("MCP preparation publisher unavailable (%s)", type(exc).__name__)
+                try:
+                    await asyncio.to_thread(rag_publisher.publish_due)
+                except Exception as exc:
+                    logger.warning("RAG index publisher unavailable (%s)", type(exc).__name__)
                 if dependencies.settings.research_experiment_exchange:
                     try:
                         await asyncio.to_thread(tick_experiments, dependencies.jobs)

@@ -359,6 +359,17 @@ class RuntimeControlMiddleware(AgentMiddleware):
             if context.resources is not None
             else {},
         }
+        mount_mode = root["input"].get("rag_scope")
+        if mount_mode in {"all", "collections"}:
+            from knowledgeops_agent.retrieval.collections import collection_names
+
+            with context.jobs.sessions() as session:
+                names = collection_names(session, root["input"].get("collection_ids", []))
+            controls["mounted_knowledge"] = {
+                "mode": mount_mode, "collections": names,
+                "instruction": "用户已显式挂载知识库。回答事实性或资料相关问题前优先调用 search_references "
+                               "执行混合检索并附带固定版本引用；若检索无结果须明确说明资料不足。",
+            }
         if root["input"].get("trial_case"):
             controls["trial_scope"] = "本会话使用运维试点模拟资料的独立副本。资料问答优先联合检索，并引用实际读到的固定版本。研究结论写入所属研发任务。"
         system = request.system_message.text if request.system_message else ""

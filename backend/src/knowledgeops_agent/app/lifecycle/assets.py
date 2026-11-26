@@ -100,6 +100,9 @@ def _remove_version(session, version):
     session.flush()
     if not session.scalar(select(db.SourceVersion.id).where(db.SourceVersion.source_id == source_id).limit(1)):
         session.execute(delete(db.AssetReference).where(db.AssetReference.target_node == "source:" + source_id))
+        from knowledgeops_agent.retrieval.indexing import remove_rag_asset
+
+        remove_rag_asset(session, "source", source_id)
         session.execute(delete(db.Source).where(db.Source.id == source_id))
     return original
 

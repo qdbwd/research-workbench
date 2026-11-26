@@ -19,6 +19,8 @@ import { useWorkspace } from '../../shared/state/workspace';
 import { ExecutionApprovals } from '../permissions/ExecutionApprovals';
 import { ContextUsage } from './ContextUsage';
 import { ComposerControls } from './ComposerControls';
+import { MountedKnowledgeChips, type MountProps } from './KnowledgeMount';
+import { basePath as retrievalPath, type Collection } from '../tools/retrieval/types';
 import { useComposerDraft } from './useComposerDraft';
 import { ComposerRecovery } from './ComposerRecovery';
 import type { DraftData } from './drafts/store';
@@ -102,10 +104,21 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
   const composer = useComposerDraft(conversationId, searchParams.get('draft') ?? undefined,
     !conversationId && draftProject && /^[0-9a-f-]{36}$/.test(draftProject) ? draftProject : undefined);
   const { state: composerState, session: composerSession } = composer;
-  const { content, selected, mode, knowledgeOnly, delegation, reasoning, permission, researchMode, trialCase, browserMode } = composerState.data;
+  const { content, selected, mode, knowledgeOnly, delegation, reasoning, permission, researchMode, trialCase, browserMode, ragScope, collectionIds } = composerState.data;
   const trial = useResource<TrialCatalog | null>(conversationId
     ? `/api/conversations/${encodeURIComponent(conversationId)}/trial` : '/api/research-trial');
   const trialCatalog = trial.data?.prompts?.length ? trial.data : null;
+  const isTrial = Boolean(conversationId ? trialCatalog : trialCase);
+  const ragGroups = useResource<Collection[]>(isTrial ? null : retrievalPath + '/collections', version);
+  const knowledgeMount: MountProps = {
+    scope: ragScope ?? 'auto', ids: collectionIds ?? [], groups: ragGroups.data ?? [],
+    loading: ragGroups.loading, error: ragGroups.error, trial: isTrial,
+    disabled: !composerState.ready || Boolean(composerState.record?.deleted || composerState.record?.pending || researchMode),
+    onChange: (scope, ids) => composerSession.edit({
+      ragScope: scope === 'auto' ? undefined : scope,
+      collectionIds: scope === 'collections' ? ids : undefined,
+    }),
+  };
   const researchGoalInvalid = Boolean(researchMode && Array.from(content.trim()).length > 2000);
   const edit = <K extends keyof DraftData>(key: K, value: DraftData[K]) => composerSession.edit({ [key]: value });
   const setContent = (value: string) => edit('content', value);
@@ -114,7 +127,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
     if (!trialCatalog || conversationId || composerState.record?.pending) return;
     const untouched = trialCatalog.prompts.some((candidate) => candidate.text === content);
     const draft = content.trim() && !untouched ? `${prompt.text}\n\n${content}` : prompt.text;
-    composerSession.edit({ content: draft, trialCase: trialCatalog.key,
+    composerSession.edit({ content: draft, trialCase: trialCatalog.key, ragScope: undefined, collectionIds: undefined,
       researchMode: prompt.mode === 'research' ? true : undefined });
     messageInput.current?.focus();
   }
@@ -614,6 +627,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
             void submit();
           }}
         >
+          {!researchMode && <MountedKnowledgeChips {...knowledgeMount} />}
           <label className="sr-only" htmlFor="message">
             发送给研发助手的消息
           </label>
@@ -643,7 +657,8 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
           <ComposerControls
             conversationId={conversationId}
             snapshotEligible={Boolean(conversationId && messages.data?.length)}
-            trial={Boolean(conversationId ? trialCatalog : trialCase)}
+            trial={isTrial}
+            knowledgeMount={knowledgeMount}
             onViewResearch={researchTask ? () => selectResearchTab(true) : undefined}
             researchLoading={research.loading}
             onActivateResearch={!researchBound && !researchMode && composerState.ready && !composerState.record?.pending

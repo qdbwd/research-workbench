@@ -37,6 +37,7 @@ from knowledgeops_agent.persistence.models import (
     utcnow,
 )
 from knowledgeops_agent.retrieval.index import add_knowledge_index
+from knowledgeops_agent.retrieval.indexing import maybe_enqueue_asset_index, remove_rag_asset
 from knowledgeops_agent.retrieval.search import (
     LexicalQuery,
     excerpt,
@@ -886,6 +887,10 @@ class KnowledgeService:
                 session.execute(delete(SearchEntry).where(SearchEntry.document_id == doc.id))
                 if not version.archived:
                     add_knowledge_index(session, version)
+                    if doc.trial_conversation_id is None:
+                        maybe_enqueue_asset_index(session, asset_kind="knowledge", asset_id=doc.id, version_id=version.id)
+                else:
+                    remove_rag_asset(session, "knowledge", doc.id, remove_members=False)
                 version_ids.append(version.id)
                 session.flush()
             result = {
@@ -1095,7 +1100,8 @@ class KnowledgeService:
 
         return export_markdown(self.sessions, include_archived=include_archived)
 
-    def search(self, query: str, *, limit: int = 10, root_id: str | None = None) -> list[dict]:
+    def search(self, query: str, *, limit: int = 10, root_id: str | None = None,
+               document_ids: list[str] | None = None) -> list[dict]:
         """先搜正文片段，再按文章去重；长文章不会因重复命中挤走其他候选。
 
         默认只查已发布的当前非归档版本。历史版本仍可按ID读取，检索片段不是
@@ -1104,7 +1110,7 @@ class KnowledgeService:
         from knowledgeops_agent.research.trial import run_trial_owner
 
         parsed = LexicalQuery.parse(query)
-        if not parsed.terms:
+        if not parsed.terms or document_ids == []:
             return []
         with self.sessions() as session:
             trial_owner = run_trial_owner(session, root_id)
@@ -1127,7 +1133,8 @@ class KnowledgeService:
             .join(KnowledgeDocument, KnowledgeDocument.id == chunk.document_id)
             .join(KnowledgeVersion, KnowledgeVersion.id == chunk.version_id)
             .where(
-                match,
+                match, chunk.enabled.is_(True),
+                True if document_ids is None else chunk.document_id.in_(document_ids),
                 KnowledgeDocument.current_version_id == chunk.version_id,
                 KnowledgeDocument.deleted_at.is_(None),
                 KnowledgeDocument.trial_conversation_id == trial_owner,

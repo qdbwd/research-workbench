@@ -8,11 +8,13 @@ import type { Source } from '../../shared/types/types';
 import { useResource } from '../../shared/api/api';
 import { type BrowserMode, type BrowserSettings, browserSettingsPath, effectiveBrowserMode } from '../tools/browserSettings';
 import { ConversationMemorySnapshot } from './ConversationMemorySnapshot';
+import { KnowledgeMount, type MountProps } from './KnowledgeMount';
 
 type Props = {
   conversationId?: string;
   snapshotEligible?: boolean;
   trial?: boolean;
+  knowledgeMount?: MountProps;
   onManageMaterials: () => void;
   onOrganizeKnowledge: () => void;
   composerReady: boolean;
@@ -108,7 +110,7 @@ export function ComposerControls(props: Props) {
         </div>
       )}
       <div className="composer-toolbar mt-2.5 flex items-center justify-between gap-2 max-md:flex-wrap max-md:gap-[3px]">
-        <div className="composer-toolbar-left flex shrink-0 items-center gap-2 max-md:gap-[3px]">
+        <div className="composer-toolbar-left flex min-w-0 flex-wrap items-center gap-2 max-md:gap-[3px]">
           <div ref={container} className="composer-menu relative">
             <Button
               ref={trigger}
@@ -257,6 +259,7 @@ export function ComposerControls(props: Props) {
               </Dialog>
             )}
           </div>
+          {props.knowledgeMount && <KnowledgeMount {...props.knowledgeMount} />}
           <label
             className="composer-permission m-0 flex-row items-center gap-[3px] max-md:[&>svg]:hidden"
             title="请求批准：逐次确认修改操作。替我审批：独立模型审查具体动作，共享任务预算；不确定时仍询问你。"

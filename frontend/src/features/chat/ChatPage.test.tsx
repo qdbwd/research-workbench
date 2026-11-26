@@ -6,6 +6,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ChatPage } from './ChatPage';
+import { WorkspaceContext } from '../../shared/state/workspace';
 import { LearningPage } from '../learning/LearningPage';
 
 let namespace: string;
@@ -24,6 +25,31 @@ afterEach(() => {
   vi.unstubAllGlobals();
   localStorage.clear();
   sessionStorage.clear();
+});
+
+it('reloads knowledge collections when the workspace version changes', async () => {
+  let name = '原知识集';
+  configureFetch(async (url) => {
+    if (url === '/api/retrieval/collections') return Response.json([{ id: 'group', name,
+      asset_count: 1, chunks_embedded: 1, chunks_total: 1 }]);
+    return Response.json(url.includes('/page') ? { items: [], next_cursor: null } : []);
+  });
+  const view = (version: number) => (
+    <MemoryRouter><WorkspaceContext.Provider value={{ version, refresh: () => {} }}>
+      <ChatPage />
+    </WorkspaceContext.Provider></MemoryRouter>
+  );
+  const { rerender } = render(view(0));
+  const mount = screen.getByRole('button', { name: '挂载知识库' });
+  await waitFor(() => expect(mount).toBeEnabled());
+  await userEvent.click(mount);
+  await userEvent.click(screen.getByRole('button', { name: '按知识集多选' }));
+  await screen.findByText('原知识集');
+
+  name = '更新后的知识集';
+  rerender(view(1));
+  expect(await screen.findByText('更新后的知识集')).toBeVisible();
+  expect(screen.queryByText('原知识集')).not.toBeInTheDocument();
 });
 
 it('prefills a trial draft without creating a conversation until submission', async () => {

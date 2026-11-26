@@ -169,6 +169,7 @@ class SourceSearchChunk(Base):
     """可重建的材料片段索引，偏移相对于不可变的来源片段。"""
 
     __tablename__ = "source_search_chunks"
+    enabled: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
     segment_id: Mapped[str] = mapped_column(
         ForeignKey("source_segments.id", ondelete="CASCADE"), primary_key=True
     )
@@ -289,6 +290,7 @@ class KnowledgeSearchChunk(Base):
     """当前正文的可重建段落索引；删除旧索引时级联，原版本始终保留。"""
 
     __tablename__ = "knowledge_search_chunks"
+    enabled: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
     document_id: Mapped[str] = mapped_column(
         ForeignKey("search_entries.document_id", ondelete="CASCADE"), primary_key=True
     )
@@ -1753,6 +1755,7 @@ class RagSettings(Base):
     """RAG 运行时开关配置（单行指针 + 乐观并发修订）；凭据与端点仍仅由环境变量注入。"""
 
     __tablename__ = "rag_settings"
+    auto_index_enabled: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
     __table_args__ = (
         CheckConstraint("rrf_k >= 1 AND rrf_k <= 1000", name="ck_rag_settings_rrf_k"),
         CheckConstraint("rerank_top_k >= 1 AND rerank_top_k <= 100", name="ck_rag_settings_rerank_top_k"),
@@ -1770,6 +1773,64 @@ class RagSettings(Base):
     )
     revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RagCollection(Base):
+    __tablename__ = "rag_collections"
+    __table_args__ = (
+        CheckConstraint("revision >= 1", name="ck_rag_collections_revision"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(120), unique=True)
+    description: Mapped[str] = mapped_column(String(500), server_default="")
+    revision: Mapped[int] = mapped_column(Integer, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
+
+
+class RagCollectionItem(Base):
+    __tablename__ = "rag_collection_items"
+    __table_args__ = (
+        CheckConstraint("asset_kind IN ('knowledge', 'source')", name="ck_rag_collection_items_kind"),
+        Index("ix_rag_collection_items_asset", "asset_kind", "asset_id"),
+    )
+
+    collection_id: Mapped[str] = mapped_column(String(36), ForeignKey("rag_collections.id", ondelete="CASCADE"), primary_key=True)
+    asset_kind: Mapped[str] = mapped_column(String(20), primary_key=True)
+    asset_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
+
+
+class RagIndexJob(Base):
+    __tablename__ = "rag_index_jobs"
+    __table_args__ = (
+        CheckConstraint("asset_kind IN ('knowledge', 'source')", name="ck_rag_index_jobs_kind"),
+        CheckConstraint("status IN ('pending', 'indexing', 'ready', 'failed')", name="ck_rag_index_jobs_status"),
+        CheckConstraint("generation >= 1", name="ck_rag_index_jobs_generation"),
+        CheckConstraint("attempts >= 0", name="ck_rag_index_jobs_attempts"),
+        CheckConstraint("max_attempts >= 1", name="ck_rag_index_jobs_max_attempts"),
+        UniqueConstraint("asset_kind", "asset_id", name="uq_rag_index_jobs_asset"),
+        Index("ix_rag_index_jobs_due", "status", "next_attempt_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    asset_kind: Mapped[str] = mapped_column(String(20))
+    asset_id: Mapped[str] = mapped_column(String(36))
+    version_id: Mapped[str] = mapped_column(String(36))
+    profile_id: Mapped[str | None] = mapped_column(String(160))
+    status: Mapped[str] = mapped_column(String(20))
+    generation: Mapped[int] = mapped_column(Integer, server_default="1")
+    attempts: Mapped[int] = mapped_column(Integer, server_default="0")
+    max_attempts: Mapped[int] = mapped_column(Integer, server_default="3")
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    chunks_total: Mapped[int] = mapped_column(Integer, server_default="0")
+    chunks_embedded: Mapped[int] = mapped_column(Integer, server_default="0")
+    last_error: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
 
 
 class EvolutionSettings(Base):

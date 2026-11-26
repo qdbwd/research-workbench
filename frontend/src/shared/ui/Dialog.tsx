@@ -13,6 +13,7 @@ export function Dialog({
   onClose,
   busy = false,
   placement = 'center',
+  scrollBody = true,
 }: {
   title: string;
   children: ReactNode;
@@ -20,6 +21,7 @@ export function Dialog({
   onClose: () => void;
   busy?: boolean;
   placement?: 'center' | 'side';
+  scrollBody?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -89,7 +91,7 @@ export function Dialog({
       }`}
     >
       <header className="flex shrink-0 items-center justify-between gap-4 border-b border-line px-6 py-4 max-md:px-4">
-        <h2 id={titleId} className="m-0 text-lg font-semibold">
+        <h2 id={titleId} className="m-0 min-w-0 break-words text-lg font-semibold">
           {title}
         </h2>
         <button
@@ -102,7 +104,9 @@ export function Dialog({
           <X size={20} />
         </button>
       </header>
-      <div className={`min-h-0 overflow-y-auto overscroll-contain px-6 py-5 max-md:px-4 ${placement === 'side' ? 'grow' : ''}`}>
+      <div className={scrollBody
+        ? `min-h-0 overflow-y-auto overscroll-contain px-6 py-5 max-md:px-4 ${placement === 'side' ? 'grow' : ''}`
+        : 'flex min-h-0 flex-1 flex-col overflow-hidden'}>
         {children}
       </div>
       {footer && (

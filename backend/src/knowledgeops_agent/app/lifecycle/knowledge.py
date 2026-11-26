@@ -92,7 +92,10 @@ class KnowledgeCleaner:
                 raise ValueError("文章或引用状态已变化，请重新核对删除范围。")
             if not preview["eligible"]:
                 raise ValueError("；".join(preview["blockers"]))
+            from knowledgeops_agent.retrieval.indexing import remove_rag_asset
+
             doc.deleted_at = self.jobs.now()
+            remove_rag_asset(session, "knowledge", identity)
             session.execute(delete(db.SearchEntry).where(db.SearchEntry.document_id == identity))
             job = self.jobs.create(session, "knowledge", identity)
             self.jobs.advance_in(job, phase="knowledge_files", cursor={"files": [working] if working else []},

@@ -17,6 +17,7 @@ def search_references(
     root_id: str,
     scope: ReferenceScope = "all",
     source_ids: list[str] | None = None,
+    document_ids: list[str] | None = None,
     limit: int = 10,
     vector=None,
     use_rerank: bool | None = None,
@@ -30,6 +31,7 @@ def search_references(
             root_id=root_id,
             scope=scope,
             source_ids=source_ids,
+            document_ids=document_ids,
             limit=limit,
             use_rerank=use_rerank,
         )
@@ -40,7 +42,7 @@ def search_references(
     limit = min(limit, 30)
     knowledge_hits = [
         {"kind": "knowledge", "asset_id": item["document_id"], **item}
-        for item in knowledge.search(query, limit=limit, root_id=root_id)
+        for item in knowledge.search(query, limit=limit, root_id=root_id, document_ids=document_ids)
     ] if scope != "material" else []
     material_hits = [
         {"kind": "material", "asset_id": item["source_id"], **item}

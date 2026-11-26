@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from knowledgeops_agent.app.runs.service import Budgets
 from knowledgeops_agent.memory.service import MemoryCategory, MemorySlot, ProtectionLevel
@@ -115,8 +115,22 @@ class MessageInput(InputModel):
     delegation: bool = True
     reasoning_effort: str | None = Field(default=None, min_length=1, max_length=32)
     source_ids: list[str] = Field(default_factory=list, max_length=30)
+    rag_scope: Literal["auto", "all", "collections"] = "auto"
+    collection_ids: list[Annotated[str, StringConstraints(min_length=1, max_length=36)]] = Field(
+        default_factory=list, max_length=10,
+    )
     budgets: Budgets = Field(default_factory=Budgets)
     learning_task_id: str | None = Field(default=None, min_length=1, max_length=36)
+
+
+    @model_validator(mode="after")
+    def normalize_rag_scope(self):
+        if self.rag_scope == "auto" and self.collection_ids:
+            self.rag_scope = "collections"
+        if self.rag_scope == "collections" and not self.collection_ids:
+            raise ValueError("按知识集检索至少需要选择一个知识集")
+        self.collection_ids = list(dict.fromkeys(self.collection_ids))
+        return self
 
 
 class MCPInput(InputModel):

@@ -92,3 +92,30 @@ it.each([{ snapshotEligible: false }, { trial: true }])(
     expect(fetch).not.toHaveBeenCalled();
   },
 );
+
+
+it('mounts the library or selected collections and disables mounting for a trial', async () => {
+  const onChange = vi.fn();
+  const group = { id: 'ops', name: '运维规范', description: '', revision: 1, asset_count: 2,
+    knowledge_count: 1, source_count: 1, chunks_total: 8, chunks_embedded: 8, updated_at: '' };
+  const mount = { scope: 'auto' as const, ids: [], groups: [group], onChange };
+  const { rerender } = render(<MemoryRouter><ComposerControls {...props} knowledgeMount={mount} /></MemoryRouter>);
+  await userEvent.click(screen.getByRole('button', { name: '挂载知识库' }));
+  const auto = screen.getByRole('button', { name: /按需检索/, pressed: true });
+  expect(auto).toHaveClass('bg-[#e3f1e8]', 'text-brand');
+  expect(auto).toHaveTextContent('✓');
+  expect(screen.getByRole('button', { name: /一键挂载全库/, pressed: false })).not.toHaveTextContent('✓');
+  await userEvent.click(screen.getByRole('button', { name: /一键挂载全库/ }));
+  expect(onChange).toHaveBeenLastCalledWith('all', []);
+  rerender(<MemoryRouter><ComposerControls {...props} knowledgeMount={{ ...mount, scope: 'all' }} /></MemoryRouter>);
+  await userEvent.click(screen.getByRole('button', { name: '挂载知识库' }));
+  const all = screen.getByRole('button', { name: /一键挂载全库/, pressed: true });
+  expect(all).toHaveClass('bg-[#e3f1e8]', 'text-brand');
+  expect(all).toHaveTextContent('✓');
+  expect(screen.getByRole('button', { name: /按需检索/, pressed: false })).not.toHaveTextContent('✓');
+  await userEvent.click(screen.getByRole('button', { name: '按知识集多选' }));
+  await userEvent.click(screen.getByRole('checkbox', { name: /运维规范/ }));
+  expect(onChange).toHaveBeenLastCalledWith('collections', ['ops']);
+  rerender(<MemoryRouter><ComposerControls {...props} knowledgeMount={{ ...mount, trial: true }} /></MemoryRouter>);
+  expect(screen.getByRole('button', { name: '挂载知识库' })).toBeDisabled();
+});
