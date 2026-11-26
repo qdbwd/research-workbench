@@ -19,6 +19,7 @@ def test_worker_entrypoint_uses_configured_log_level(tmp_path, monkeypatch):
     """在入口接缝替换服务与消费者，确认文件配置传到 Celery，不连接真实队列。"""
     from knowledgeops_agent.app.runs import worker as worker
     from knowledgeops_agent.core.config import Settings
+    from knowledgeops_agent.retrieval import indexing as rag_indexing
 
     path = tmp_path / ".env"
     path.write_text("APP_LOG_LEVEL=error\nMODEL_CALLS_ENABLED=false\n", encoding="utf-8")
@@ -28,12 +29,14 @@ def test_worker_entrypoint_uses_configured_log_level(tmp_path, monkeypatch):
     services = SimpleNamespace(
         settings=settings,
         engine=object(),
+        sessions=object(),
         jobs=SimpleNamespace(recover_on_startup=lambda: 0, live_check=None),
         close=lambda: None,
     )
     monkeypatch.setattr(worker, "_services", None)
     monkeypatch.setattr(worker, "get_settings", lambda: settings)
     monkeypatch.setattr(worker, "create_services", lambda _: services)
+    monkeypatch.setattr(rag_indexing, "recover_interrupted_rag_jobs", lambda _: 0)
     monkeypatch.setattr(
         worker, "worker_lease", lambda _: nullcontext(SimpleNamespace(check=lambda: None))
     )

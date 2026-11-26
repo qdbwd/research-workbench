@@ -99,13 +99,19 @@ def test_joint_search_migration_preserves_source_evidence_and_frozen_tool_policy
             assert updated["resolved_main_tools"] == ["builtin:read_knowledge"]
 
             command.upgrade(config, "0055")
+            assert connection.scalar(text(
+                "SELECT count(*) FROM source_search_chunks WHERE segment_id = 'segment'"
+            )) == 1
+            assert connection.scalar(text("SELECT trial_conversation_id FROM sources WHERE id = 'source'")) is None
+            command.downgrade(config, "0052")
+            assert connection.scalar(text("SELECT quote FROM evidence WHERE id = 'original-citation'")) == quote
+
+            # 再从 0052 完整升至 head，确认当前运行时 SourceService 可检索旧材料且保留原引用。
+            command.upgrade(config, "head")
             sources = SourceService(sessions, tmp_path)
             [hit] = sources.search("紧急变更 负责人")
             assert (hit["segment_id"], hit["version_id"], hit["snippet"]) == ("segment", "version", quote)
             assert sources.get_evidence("original-citation")["text"] == quote
-            assert connection.scalar(text("SELECT trial_conversation_id FROM sources WHERE id = 'source'")) is None
-            command.downgrade(config, "0052")
-            assert connection.scalar(text("SELECT quote FROM evidence WHERE id = 'original-citation'")) == quote
             connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
     finally:
         engine.dispose()

@@ -35,20 +35,25 @@ def add_knowledge_chunks(session, version: KnowledgeVersion) -> int:
     """将当前版本正文分段；标题/摘要只提供排序背景，读取偏移始终指向body。"""
     metadata = " ".join([*version.tags, version.summary, version.category])
     passages = split_passages(version.body)
-    for index, passage in enumerate(passages):
-        session.add(
-            KnowledgeSearchChunk(
-                document_id=version.document_id,
-                version_id=version.id,
-                chunk_index=index,
-                start=passage.start,
-                end=passage.end,
-                body_tokens=tokenize(passage.text),
-                title_tokens=tokenize(version.title),
-                metadata_tokens=tokenize(metadata),
-            )
-        )
-    return len(passages)
+    title_tokens = tokenize(version.title)
+    metadata_tokens = tokenize(metadata)
+    rows = [
+        {
+            "document_id": version.document_id,
+            "version_id": version.id,
+            "chunk_index": index,
+            "start": passage.start,
+            "end": passage.end,
+            "body_tokens": tokenize(passage.text),
+            "title_tokens": title_tokens,
+            "metadata_tokens": metadata_tokens,
+        }
+        for index, passage in enumerate(passages)
+    ]
+    if rows:
+        # 使用 Core INSERT 仅写入 0017 起的稳定列，避免历史迁移 0017 回填时触发未来列 RETURNING。
+        session.execute(insert(KnowledgeSearchChunk).values(rows))
+    return len(rows)
 
 
 def add_history_chunks(session, scope: str, row: dict) -> int:
