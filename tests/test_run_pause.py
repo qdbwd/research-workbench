@@ -193,3 +193,94 @@ def test_concurrent_pause_during_resource_freeze_never_deadlocks(client, service
     assert not errors, f"unexpected concurrent error: {errors!r}"
     assert pause_result["status_code"] == 200
     assert pause_result["body"]["pause_requested"] is True
+
+
+def test_concurrent_pause_during_learning_resource_freeze_never_deadlocks(
+    client, services, monkeypatch, tmp_path
+):
+    """带学习任务的 Run 冻结资源必须复用外层控制锁连接，既不单线程自锁也不与暂停死锁。"""
+    from knowledgeops_agent.harness.runtime import resources as resources_mod
+    from knowledgeops_agent.harness.runtime.state import RunContext
+    from knowledgeops_agent.learning.tasks import LearningTaskService
+    from knowledgeops_agent.persistence.files import FileStore
+
+    services.sessions.configure(info={"file_store": FileStore(tmp_path)})
+    conversation = services.jobs.create_conversation("学习并发冻结")
+    tasks = LearningTaskService(services.sessions)
+    task = tasks.create(
+        conversation_id=conversation["id"],
+        request_key="learn-freeze-pause",
+        title="事务隔离学习",
+        goal="理解锁序与连接复用",
+        topic="数据库",
+        units=[{"key": "locks", "title": "锁序", "goal": "解释死锁与咨询锁"}],
+    )
+    tasks.select(task["id"])
+    created = client.post(
+        f"/api/conversations/{conversation['id']}/messages",
+        json={"content": "开始讲解锁序", "request_key": "learn-freeze-pause-msg"},
+    )
+    assert created.status_code == 202
+    run = created.json()
+    assert run["learning_task_id"] == task["id"]
+    claimed = services.jobs.claim("freeze-learning-worker", run_id=run["id"], generation=run["generation"])
+    assert claimed is not None
+
+    entered_freeze = Event()
+    release_freeze = Event()
+    original_loader = resources_mod.load_knowledge_policy
+
+    def gated_loader():
+        entered_freeze.set()
+        release_freeze.wait(timeout=5)
+        return original_loader()
+
+    monkeypatch.setattr(resources_mod, "load_knowledge_policy", gated_loader)
+    context = RunContext(
+        run_id=run["id"],
+        root_id=run["id"],
+        worker_id="freeze-learning-worker",
+        jobs=services.jobs,
+        knowledge=services.knowledge,
+        sources=services.sources,
+        gateway=services.gateway,
+    )
+    errors: list[BaseException] = []
+    frozen_manifest: dict = {}
+
+    def freeze_worker():
+        try:
+            frozen_manifest["value"] = resources_mod.prepare_resources(context)
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    worker_thread = Thread(target=freeze_worker, daemon=True)
+    worker_thread.start()
+    assert entered_freeze.wait(timeout=5)
+
+    pause_result: dict = {}
+
+    def pause_caller():
+        try:
+            resp = client.post(f"/api/runs/{run['id']}/pause")
+            pause_result["status_code"] = resp.status_code
+            pause_result["body"] = resp.json()
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    pause_thread = Thread(target=pause_caller, daemon=True)
+    pause_thread.start()
+    pause_thread.join(timeout=0.15)
+    release_freeze.set()
+    worker_thread.join(timeout=10)
+    pause_thread.join(timeout=10)
+
+    assert not worker_thread.is_alive(), "learning resource freeze hung (possible nested lock_control self-lock)"
+    assert not pause_thread.is_alive(), "pause request hung waiting for control lock"
+    assert not errors, f"unexpected concurrent error: {errors!r}"
+    assert pause_result["status_code"] == 200
+    assert pause_result["body"]["pause_requested"] is True
+    assert len(frozen_manifest["value"]["learning"]["profiles"]["profiles"]) == 2
+    snapshot = resources_mod.ResourceService(services.sessions).read(run["id"])
+    assert snapshot is not None
+    assert len(snapshot["content"]["learning"]["profiles"]["profiles"]) == 2

@@ -167,8 +167,11 @@ class ResourceService:
                 if learning_task:
                     learning = {
                         "task": task_view(session, learning_task),
-                        "profiles": LearningProfileService(self.sessions).freeze(
-                            task_id=learning_task.id, query=root.task[:500], memory=memory
+                        "profiles": LearningProfileService(self.sessions).freeze_in(
+                            session,
+                            task_id=learning_task.id,
+                            query=root.task[:500],
+                            memory=memory,
                         ),
                     }
                 from knowledgeops_agent.harness.skills.management import SkillManagement

@@ -237,17 +237,28 @@ class LearningProfileService:
             preview.applied_revision = row.revision
             return result
 
-    def freeze(self, *, task_id: str | None = None, query: str, memory: dict | None = None) -> dict:
-        """有效角色由默认说明+两层人工配置+有来源的自动条目组成，无额外模型调用。"""
-        with self.sessions.begin() as session:
-            task = session.get(LearningTask, task_id) if task_id else None
-            if task_id and task is None:
-                raise KeyError("学习任务不存在")
-            profiles = [self._view(session, self._ensure(session))]
-            if task_id:
-                profiles.append(self._view(session, self._ensure(session, task_id)))
-            topic = task.topic if task else ""
-        selected = memory or MemoryService(self.sessions).freeze(query[:500], topic=topic)
+    def freeze_in(
+        self,
+        session,
+        *,
+        task_id: str | None = None,
+        query: str,
+        memory: dict | None = None,
+    ) -> dict:
+        """在调用方既有事务内冻结学习配置，复用外层连接与控制锁，避免嵌套连接自锁。"""
+        task = session.get(LearningTask, task_id) if task_id else None
+        if task_id and task is None:
+            raise KeyError("学习任务不存在")
+        profiles = [self._view(session, self._ensure(session))]
+        if task_id:
+            profiles.append(self._view(session, self._ensure(session, task_id)))
+        topic = task.topic if task else ""
+        if memory is not None:
+            selected = memory
+        else:
+            from knowledgeops_agent.memory.retrieval import freeze as freeze_memory
+
+            selected = freeze_memory(session, query[:500], topic=topic)
         active = {p["task_id"]: p for p in profiles if p["enabled"]}
         automatic = []
         for item in selected["selected"]:
@@ -263,6 +274,11 @@ class LearningProfileService:
             "automatic": automatic,
             "memory_ids": [r["id"] for r in automatic],
         }
+
+    def freeze(self, *, task_id: str | None = None, query: str, memory: dict | None = None) -> dict:
+        """有效角色由默认说明+两层人工配置+有来源的自动条目组成，无额外模型调用。"""
+        with self.sessions.begin() as session:
+            return self.freeze_in(session, task_id=task_id, query=query, memory=memory)
 
     def effective(self, frozen: dict) -> dict:
         """恢复沿用正文；动态撤回只移除对应部分，避免另一份自动摘要重新带回。"""
