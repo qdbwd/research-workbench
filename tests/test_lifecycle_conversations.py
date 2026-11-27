@@ -67,6 +67,33 @@ def test_preview_is_read_only_and_pending_or_unknown_work_blocks_delete(conversa
     assert len(runs.messages(chat["id"])) == 3
 
 
+def test_declined_question_on_cancelled_run_allows_conversation_deletion(conversation_case):
+    cleaner, runs, _, chat, _ = conversation_case
+    late = runs.enqueue(chat["id"], "取消并暂不回答的测试", request_key=db.new_id())
+    with cleaner.sessions.begin() as session:
+        question = db.RunQuestion(
+            root_id=late["id"], run_id=late["id"], tool_call_id="call_declined",
+            round=0, kind="clarification", authority_epoch=0, status="pending",
+            request={"question": "请补充"},
+        )
+        session.add(question)
+        session.flush()
+        question_id = question.id
+    runs.cancel(late["id"])
+    # 模拟取消前或等待态中问题尚未解决（pending）：必须继续拦住删除。
+    with cleaner.sessions.begin() as session:
+        session.get(db.RunQuestion, question_id).status = "pending"
+    blocked = cleaner.preview(chat["id"])
+    assert not blocked["eligible"] and any("question:" in reason for reason in blocked["blockers"])
+    # 用户点击「暂不回答」后状态为 declined，属于终态，不应永久阻塞删除已取消会话。
+    with cleaner.sessions.begin() as session:
+        session.get(db.RunQuestion, question_id).status = "declined"
+    ready = cleaner.preview(chat["id"])
+    assert ready["eligible"], ready["blockers"]
+    job = cleaner.admit(chat["id"], expected_version=ready["version"])
+    assert drain_conversation(cleaner, job["id"])["status"] == "completed"
+
+
 def test_delete_removes_chat_copies_but_keeps_sources_memory_and_learning(conversation_case):
     cleaner, runs, run, chat, store = conversation_case
     sessions = cleaner.sessions

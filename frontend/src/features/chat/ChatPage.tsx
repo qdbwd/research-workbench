@@ -310,7 +310,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
       researchGoalInvalid || (researchMode && researchBound) ||
       busy ||
       settingBusy ||
-      !composerState.ready || !composerState.persisted || composerState.record?.pending ||
+      !composerState.ready || (!composerState.persisted && !composerState.saving) || Boolean(composerState.storageError) || composerState.record?.pending ||
       composerState.record?.deleted || Boolean(composerState.record?.conflicts.length) ||
       (conversationId && (!defaults.data || defaults.loading))
     )
@@ -439,7 +439,8 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
               variant={active.kind === 'agent' && !active.input?.research && active.status !== 'waiting_children'
                 ? 'inline' : 'card'} onOpenEvidence={openEvidence} />}
             {runs.data
-              .filter((run) => ['paused', 'waiting_input'].includes(run.status))
+              // waiting_input 且下方已有补问交互卡时，不再在上方重复画一张白色任务卡。
+              .filter((run) => run.status === 'paused' || (run.status === 'waiting_input' && (!run.question_count || Boolean(run.outcome.answer))))
               .map((run) => (
                 <section
                   className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5"
@@ -547,7 +548,9 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
             {!active && latestExecution && (
               <div className="run-summary mt-2.5 mb-5 flex flex-wrap items-center gap-[9px] text-xs [&>p]:m-0 [&>p]:w-full [&>p]:text-[#8c594b]">
                 <Badge status={latestExecution.status} />
-                <RunOutcome run={latestExecution} refreshKey={version} />
+                {latestExecution.outcome.kind !== latestExecution.status && (
+                  <RunOutcome run={latestExecution} refreshKey={version} />
+                )}
                 {(latestExecution.tool_calls > 0 || latestExecution.active_ms > 0) && <span>
                   {latestExecution.tool_calls} 步工具 · {(latestExecution.active_ms / 1000).toFixed(1)}s
                 </span>}
@@ -646,11 +649,13 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
             value={content}
             onChange={(e) => setContent(e.target.value)}
             onKeyDown={(event) => {
-              // 普通 Enter 保留换行；中文输入法选字期间不能误发送。
+              // Enter 直接发送，Shift+Enter 换行；中文输入法选字期间（isComposing / keyCode 229）不误发送。
               if (
                 event.key === 'Enter' &&
-                (event.ctrlKey || event.metaKey) &&
-                !event.nativeEvent.isComposing
+                !event.shiftKey &&
+                !event.altKey &&
+                !event.nativeEvent.isComposing &&
+                event.keyCode !== 229
               ) {
                 event.preventDefault();
                 if (!busy && content.trim()) void submit();
@@ -695,7 +700,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
             disabled={
               busy || settingBusy || Boolean(conversationId && defaults.loading) || !content.trim() ||
               researchGoalInvalid || Boolean(researchMode && researchBound) ||
-              !composerState.ready || !composerState.persisted || Boolean(composerState.record?.pending) ||
+              !composerState.ready || (!composerState.persisted && !composerState.saving) || Boolean(composerState.storageError) || Boolean(composerState.record?.pending) ||
               Boolean(composerState.record?.deleted) || Boolean(composerState.record?.conflicts.length)
             }
             context={

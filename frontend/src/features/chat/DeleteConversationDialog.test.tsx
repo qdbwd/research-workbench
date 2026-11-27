@@ -44,6 +44,7 @@ it('returns immediately after accepted deletion without a cleaning page', async 
   vi.stubGlobal('fetch', requests);
   const onDeleted = show();
   await screen.findByText(/以下内容会保留/);
+  expect(screen.queryByText(/将回收/)).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: '确认删除会话' }));
   await waitFor(() => expect(onDeleted).toHaveBeenCalledOnce());
   expect(requests.mock.calls.find(([, options]) => options?.method === 'DELETE')?.[1]?.body).toBe(
@@ -73,6 +74,7 @@ it('keeps a changed preview open without resubmitting deletion', async () => {
   vi.stubGlobal('fetch', requests);
   const onDeleted = show();
   await screen.findByText(/以下内容会保留/);
+  expect(screen.queryByText(/将回收/)).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: '确认删除会话' }));
   await screen.findByText('请重新预览');
   expect(onDeleted).not.toHaveBeenCalled();

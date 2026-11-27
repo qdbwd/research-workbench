@@ -1,7 +1,7 @@
-"""隔离真实PG/保存器/文件验证：删除会话释放临时资产，保留独立和共享依赖。"""
+"""隔离真实PG/保存器/文件验证：路线 A2 删会话秒解绑，后台 AssetCleaner 精准回收无主临时资产。"""
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from test_lifecycle_conversations import (
     checkpoint_case as checkpoint_case,
 )
@@ -22,6 +22,8 @@ from test_lifecycle_conversations import (
 )
 
 from knowledgeops_agent.app.lifecycle import assets
+from knowledgeops_agent.app.lifecycle.asset_cleanup import AssetCleaner
+from knowledgeops_agent.app.lifecycle.catalog import CATALOG_STATE
 from knowledgeops_agent.persistence import models as db
 from knowledgeops_agent.persistence.files import FileStore
 from knowledgeops_agent.sources.service import SourceService
@@ -40,7 +42,34 @@ def sources_for(cleaner, store):
     return SourceService(cleaner.sessions, source_store.root)
 
 
-def test_delete_temporary_assets_preserves_independent_and_other_chat_citations(conversation_case):
+def asset_cleaner_for(cleaner) -> AssetCleaner:
+    return AssetCleaner(cleaner.sessions, cleaner.jobs, batch_size=cleaner.batch_size,
+                        eligibility=cleaner.details.eligibility)
+
+
+def drain_asset_job(asset_cleaner: AssetCleaner, job_id: str) -> dict:
+    for _ in range(100):
+        result = asset_cleaner.get_job(job_id)
+        if result["status"] in {"failed", "completed"}:
+            return result
+        asset_cleaner.step(identity=job_id)
+    pytest.fail("asset cleanup job did not converge")
+
+
+def reconcile_and_drain(cleaner) -> list[dict]:
+    asset_cleaner = asset_cleaner_for(cleaner)
+    asset_cleaner.reconcile(limit=100)
+    with cleaner.sessions() as session:
+        job_ids = list(session.scalars(select(db.CleanupJob.id).where(
+            db.CleanupJob.target_kind.in_(["source", "draft", "delivery"]),
+            db.CleanupJob.status != "completed",
+        ).order_by(db.CleanupJob.id)))
+    return [drain_asset_job(asset_cleaner, job_id) for job_id in job_ids]
+
+
+def test_cold_catalog_conversation_delete_and_background_reconcile_preserve_independent_and_citations(
+    conversation_case,
+):
     cleaner, jobs, run, chat, store = conversation_case
     sources = sources_for(cleaner, store)
     private = sources.import_text("临时附件", "私人临时正文", conversation_id=chat["id"])
@@ -57,21 +86,26 @@ def test_delete_temporary_assets_preserves_independent_and_other_chat_citations(
         session.add_all([temporary, independent])
         session.flush()
         temporary_id, independent_id = temporary.id, independent.id
-    ready(cleaner)
+        # 模拟冷库（引用目录尚未回填完成）：路线 A2 删会话不应被 asset_reference_index_pending 阻断。
+        session.execute(delete(db.MaintenanceState).where(db.MaintenanceState.name == CATALOG_STATE))
     preview = cleaner.preview(chat["id"])
-    assert preview["assets"] == {"versions_delete": 1, "versions_keep": 2, "drafts_delete": 1, "drafts_keep": 1, "ready": True}
-    assert preview["eligible"]
+    assert preview["eligible"] and "assets" not in preview
+    assert "asset_reference_index_pending" not in preview["blockers"]
     with cleaner.sessions() as session:
         private_key = session.get(db.SourceVersion, private["version_id"]).storage_key
     result = drain_conversation(cleaner, cleaner.admit(chat["id"], expected_version=preview["version"])["id"])
     assert result["status"] == "completed", result
-    assert result["summary"]["versions_deleted"] == 1 and result["summary"]["drafts_deleted"] == 1
+    with cleaner.sessions() as session:
+        assert not list(session.scalars(select(db.SourceUse).where(db.SourceUse.owner_id == chat["id"])))
+    # 后台完成引用目录回填后，巡检自动回收无主无引用的临时材料及已删会话临时草稿。
+    ready(cleaner)
+    asset_results = reconcile_and_drain(cleaner)
+    assert asset_results and all(item["status"] == "completed" for item in asset_results), asset_results
     with cleaner.sessions() as session:
         assert session.get(db.Source, private["id"]) is None
         assert session.get(db.Evidence, unused_evidence["evidence_id"]) is None
         assert session.get(db.ChangeSet, temporary_id) is None
         assert session.get(db.ChangeSet, independent_id) is not None
-        assert not list(session.scalars(select(db.SourceUse).where(db.SourceUse.owner_id == chat["id"])))
     assert not (sources.storage_root / private_key).exists()
     assert sources.get_version(cited["version_id"])["body_hash"] == cited["body_hash"]
     assert sources.get_source(saved["id"])["id"] == saved["id"]
@@ -82,17 +116,20 @@ def test_shared_blob_and_changed_preview_are_protected(conversation_case):
     sources = sources_for(cleaner, store)
     private = sources.import_text("第一份", "相同物理原件", origin="a", conversation_id=chat["id"])
     kept = sources.import_text("第二份", "相同物理原件", origin="b")
-    ready(cleaner)
     before = cleaner.preview(chat["id"])
-    # 预览后保存意图变化，不能用旧预览直接删除。
-    sources.save_source(private["id"])
+    # 预览后会话状态变化（新入队运行），旧预览必须被 409 拒绝。
+    late = jobs.enqueue(chat["id"], "并发新任务", request_key=db.new_id())
     with pytest.raises(ValueError, match="状态已变化"):
         cleaner.admit(chat["id"], expected_version=before["version"])
-    with cleaner.sessions.begin() as session:
-        session.delete(session.get(db.SourceUse, (private["id"], "library", "default")))
+    jobs.cancel(late["id"])
     preview = cleaner.preview(chat["id"])
     result = drain_conversation(cleaner, cleaner.admit(chat["id"], expected_version=preview["version"])["id"])
     assert result["status"] == "completed", result
+    ready(cleaner)
+    asset_results = reconcile_and_drain(cleaner)
+    assert asset_results and all(item["status"] == "completed" for item in asset_results)
+    with cleaner.sessions() as session:
+        assert session.get(db.Source, private["id"]) is None
     assert sources.original(kept["version_id"])[0].decode() == "相同物理原件"
 
 
@@ -100,9 +137,15 @@ def test_source_file_cleanup_retries_after_unlink_without_reopening_removed_meta
     cleaner, _, _, chat, store = conversation_case
     sources = sources_for(cleaner, store)
     private = sources.import_text("重试附件", "只应删除一次", conversation_id=chat["id"])
-    ready(cleaner)
     preview = cleaner.preview(chat["id"])
-    job = cleaner.admit(chat["id"], expected_version=preview["version"])
+    assert drain_conversation(cleaner, cleaner.admit(chat["id"], expected_version=preview["version"])["id"])["status"] == "completed"
+    ready(cleaner)
+    asset_cleaner = asset_cleaner_for(cleaner)
+    assert asset_cleaner.reconcile(limit=100)["scheduled"] == 1
+    with cleaner.sessions() as session:
+        job_id = session.scalar(select(db.CleanupJob.id).where(
+            db.CleanupJob.target_kind == "source", db.CleanupJob.target_id == private["id"],
+        ))
     original = assets._unlink
 
     def fail_after_unlink(*args):
@@ -110,15 +153,15 @@ def test_source_file_cleanup_retries_after_unlink_without_reopening_removed_meta
         raise OSError("simulated crash")
 
     monkeypatch.setattr(assets, "_unlink", fail_after_unlink)
-    failed = drain_conversation(cleaner, job["id"])
-    assert failed["status"] == "failed" and failed["phase"] == "conversation_asset_files", failed
+    failed = drain_asset_job(asset_cleaner, job_id)
+    assert failed["status"] == "failed" and failed["phase"] == "asset_files", failed
     with cleaner.sessions() as session:
         assert session.get(db.SourceVersion, private["version_id"]) is None
     # 重试窗口中重新导入相同内容是新身份；旧文件作业不能删除它重新使用的原件。
     replacement = sources.import_text("重新保存", "只应删除一次")
     monkeypatch.setattr(assets, "_unlink", original)
-    cleaner.retry(job["id"])
-    assert drain_conversation(cleaner, job["id"])["status"] == "completed"
+    asset_cleaner.retry(job_id)
+    assert drain_asset_job(asset_cleaner, job_id)["status"] == "completed"
     assert sources.original(replacement["version_id"])[0].decode() == "只应删除一次"
 
 
@@ -131,11 +174,13 @@ def test_fixed_citation_keeps_only_used_version_and_later_versions_remain_monoto
     other = jobs.create_conversation("保留新版引用")
     with cleaner.sessions.begin() as session:
         session.add(db.ChatMessage(conversation_id=other["id"], run_id=run["id"], role="assistant", content=evidence["citation"]))
-    ready(cleaner)
     preview = cleaner.preview(chat["id"])
-    assert preview["assets"]["versions_delete"] == 1 and preview["assets"]["versions_keep"] == 1
+    assert preview["eligible"]
     result = drain_conversation(cleaner, cleaner.admit(chat["id"], expected_version=preview["version"])["id"])
     assert result["status"] == "completed", result
+    ready(cleaner)
+    asset_results = reconcile_and_drain(cleaner)
+    assert asset_results and all(item["status"] == "completed" for item in asset_results)
     with pytest.raises(KeyError):
         sources.get_version(first["version_id"])
     assert sources.get_version(second["version_id"])["version"] == 2

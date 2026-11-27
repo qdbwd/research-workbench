@@ -110,11 +110,14 @@ def install_reference_tracking(sessions) -> None:
     ORM创建/编辑的资产在flush后已有稳定ID和文件版本；引用与资产一起提交或
     回滚。原有Core批量历史、材料入口仍显式维护引用，不能依赖ORM事件覆盖它们。
     """
-    if event.contains(sessions, "before_flush", _capture_changes):
+    # 不能用 event.contains(sessions, ...)：SQLAlchemy 2.1 对已销毁 sessionmaker 的
+    # 全局事件注册表键不会随对象回收清理，内存地址复用时会误报 True 并跳过监听安装。
+    if getattr(sessions, "_lifecycle_reference_tracking_installed", False):
         return
     event.listen(sessions, "before_flush", _capture_changes)
     event.listen(sessions, "after_flush_postexec", _track_changes)
     event.listen(sessions, "after_soft_rollback", _discard_changes)
+    sessions._lifecycle_reference_tracking_installed = True
 
 
 def _capture_changes(session, _context, _instances):

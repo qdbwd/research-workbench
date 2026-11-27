@@ -27,7 +27,7 @@ def test_http_delete_requires_current_preview_and_remains_queryable(client, serv
     assert client.get(base + "/messages").status_code == 404
     assert client.get("/api/conversations").json() == []
     assert client.post(base + "/deletion/retry").status_code == 202
-    # 冷目录需先分批回填，再继续资产阶段；每一步必须有持久进展，不能空转。
+    # 路线 A2 下会话删除解耦引用目录回填，直接分阶段推进且每步必有持久进展。
     seen = set()
     for _ in range(100):
         state = client.get(base + "/deletion").json()

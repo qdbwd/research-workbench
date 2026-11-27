@@ -26,7 +26,9 @@ export function BrowserSettingsRow() {
       description={loadError ? '读取浏览器配置失败' : settings.loading && !settings.data
         ? '正在读取部署状态…' : ready
           ? '适用于普通聊天与研发模式，任务中可选择已启用的浏览器'
-          : '当前部署未启用或组件尚未就绪'}
+          : data && !data.deployment.browser_enabled
+            ? '部署默认关闭，可在 .env 设置 BROWSER_ENABLED=true 启用'
+            : '容器缺少 Playwright MCP 或 Chromium 组件'}
       icon={<Globe2 size={17} aria-hidden="true" />}
     >
       {!settings.loading && !loadError && (
@@ -129,7 +131,13 @@ export function BrowserSettingsDialog({ initial, onClose, onSaved }: {
     >
       <div className="min-w-0 space-y-4 text-sm">
         <p className="m-0 rounded-lg border border-line bg-sidebar px-3 py-2 text-control" role="status">
-          <strong>{launchReady ? '容器隔离模式已就绪' : '容器隔离模式未就绪'}</strong>
+          <strong>
+            {launchReady
+              ? '容器隔离模式已就绪'
+              : !deployment.browser_enabled
+                ? '部署未开启浏览器取证（需在 .env 配置 BROWSER_ENABLED=true）'
+                : '容器隔离组件未就绪（缺少 Chromium 或 Playwright MCP）'}
+          </strong>
           {' · '}{deployment.local_attach_available ? '部署已开放本机 CDP' : '部署未开放本机 CDP'}
           {deployment.attach_busy ? ' · 本机窗口正在使用' : ''}
         </p>

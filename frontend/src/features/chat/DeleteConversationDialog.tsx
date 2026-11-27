@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { messageOf, send, useResource } from '../../shared/api/api';
 import { useWorkspace } from '../../shared/state/workspace';
 import { Button } from '../../shared/ui/Button';
@@ -16,17 +15,8 @@ type Preview = {
   blockers: string[];
   counts: { messages: number; runs: number; research_tasks?: number };
   preserved: string[];
-  assets?: {
-    versions_delete: number;
-    versions_keep: number;
-    drafts_delete: number;
-    drafts_keep: number;
-    ready: boolean;
-  };
 };
 function blockerText(reason: string) {
-  if (reason === 'asset_reference_index_pending')
-    return '正在核对已有内容的引用关系，请稍后重新预览。';
   if (reason.includes('unknown') || reason.includes('ledger_unavailable'))
     return '有执行结果尚未核实，需先完成核对。';
   if (reason.includes('run_cleanup_in_progress'))
@@ -104,25 +94,10 @@ export function DeleteConversationDialog({
             次运行的执行详情。删除后不能恢复这段聊天。
           </p>
           <p>
-            以下内容会保留：{preview.preserved.join('、')}。学习任务将解除会话关联并停止自动推进。
+            以下内容会保留：{preview.preserved.join('、')}。学习任务将解除会话关联并停止自动推进；仅属本会话的未保存临时附件和临时草稿将由后台自动清理。
           </p>
           {!!preview.counts.research_tasks && (
             <p>关联的研发任务会解除会话绑定。你仍可在研发工作台查看简报和版本历史。</p>
-          )}
-          {preview.assets?.ready && (
-            <div className="my-4 rounded-lg bg-canvas p-4 text-sm">
-              <p>
-                将回收：{preview.assets.versions_delete} 个材料版本、{preview.assets.drafts_delete}{' '}
-                份临时草稿。
-              </p>
-              <p>
-                继续保留：{preview.assets.versions_keep} 个材料版本、{preview.assets.drafts_keep}{' '}
-                份草稿。它们有独立保存意图、仍被引用，或属于归属待核对的旧数据。
-              </p>
-              <Link to={`/sources?conversation_id=${conversationId}`} onClick={onClose}>
-                查看会话材料并选择独立保存
-              </Link>
-            </div>
           )}
           {!preview.eligible && (
             <div role="status">

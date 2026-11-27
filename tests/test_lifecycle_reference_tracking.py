@@ -108,3 +108,25 @@ def test_imported_source_link_split_at_segment_boundary_still_retains_original(b
             db.ArtifactRetentionReference.owner_kind == "asset",
             db.ArtifactRetentionReference.owner_id.like("source-segment:%"),
         )))) == 2
+
+
+def test_install_reference_tracking_survives_sessionmaker_address_reuse():
+    """新建 sessionmaker 复用已回收地址时，不能因 SQLAlchemy 全局事件键误判而跳过安装。"""
+    from sqlalchemy.orm import sessionmaker
+
+    seen_ids: set[int] = set()
+    reused = False
+    for _ in range(30):
+        factory = sessionmaker()
+        if id(factory) in seen_ids:
+            reused = True
+        seen_ids.add(id(factory))
+        install_reference_tracking(factory)
+        install_reference_tracking(factory)  # 同一个工厂重复装配仍保持幂等。
+        session = factory()
+        assert len(session.dispatch.before_flush) == 1
+        assert len(session.dispatch.after_flush_postexec) == 1
+        assert len(session.dispatch.after_soft_rollback) == 1
+        session.close()
+        del session, factory
+    assert reused

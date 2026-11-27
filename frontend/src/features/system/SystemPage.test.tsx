@@ -52,7 +52,7 @@ it('shows layered readiness, refreshes on a bounded interval and lists backup re
   render(<MemoryRouter><SystemPage /></MemoryRouter>);
   await act(async () => {});
 
-  expect(screen.getByText(/基础就绪，执行未就绪/)).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: /总体状态：基础就绪，执行未就绪/ })).toBeInTheDocument();
   expect(screen.getByText(/迁移版本表缺失/)).toBeInTheDocument();
   expect(screen.getByText(/Worker 未启动或已停止/)).toBeInTheDocument();
   expect(screen.getByText('2 个')).toBeInTheDocument();
@@ -64,4 +64,22 @@ it('shows layered readiness, refreshes on a bounded interval and lists backup re
 
   await act(() => vi.advanceTimersByTimeAsync(5000));
   expect(fetcher).toHaveBeenCalledTimes(4);
+});
+
+it('displays idle heartbeat neutrally instead of error when worker is ready with no active runs', async () => {
+  const readyPayload = {
+    ...payload,
+    status: 'ready',
+    layers: {
+      ...payload.layers,
+      foundation: { ...payload.layers.foundation, migration: { ok: true, current: '0065', head: '0065' } },
+      execution: { ...payload.layers.execution, state: 'ready', worker_lease: true, active_runs: 0, heartbeat_seconds: null },
+    },
+  };
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string) =>
+    Response.json(String(url).includes('/api/readiness') ? readyPayload : backups)));
+  render(<MemoryRouter><SystemPage /></MemoryRouter>);
+  expect(await screen.findByText('当前无在途任务（空闲正常）')).toBeInTheDocument();
+  expect(screen.getByText('空闲')).toBeInTheDocument();
+  expect(screen.queryByText('未就绪')).not.toBeInTheDocument();
 });

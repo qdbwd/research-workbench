@@ -122,6 +122,15 @@ def collect_source_files(session, originals):
             _unlink(store, key, digest)
 
 
+def detach_conversation_assets(session, conversation_id) -> None:
+    """解除会话及其运行对材料的归属关系；无主无引用的临时副本交由后台 AssetCleaner 回收。"""
+    session.execute(delete(db.SourceUse).where(or_(
+        (db.SourceUse.owner_kind == "conversation") & (db.SourceUse.owner_id == conversation_id),
+        (db.SourceUse.owner_kind == "run") & db.SourceUse.owner_id.in_(select(db.Run.id).where(
+            db.Run.conversation_id == conversation_id)),
+    )))
+
+
 def collect_conversation_assets(session, conversation_id, *, limit):
     """每次先删一批无依赖草稿，再重算材料可达性，最后解除该会话的使用关系。
 
@@ -150,9 +159,5 @@ def collect_conversation_assets(session, conversation_id, *, limit):
             originals.append(original)
     if versions:
         return {"more": True, "drafts_deleted": 0, "versions_deleted": len(versions), "originals": originals}
-    session.execute(delete(db.SourceUse).where(or_(
-        (db.SourceUse.owner_kind == "conversation") & (db.SourceUse.owner_id == conversation_id),
-        (db.SourceUse.owner_kind == "run") & db.SourceUse.owner_id.in_(select(db.Run.id).where(
-            db.Run.conversation_id == conversation_id)),
-    )))
+    detach_conversation_assets(session, conversation_id)
     return {"more": False, "drafts_deleted": 0, "versions_deleted": 0}

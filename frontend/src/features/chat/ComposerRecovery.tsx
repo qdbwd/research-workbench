@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '../../shared/ui/Button';
 import { Dialog } from '../../shared/ui/Dialog';
@@ -9,9 +9,25 @@ import type { ComposerSession, ComposerState } from './drafts/session';
 /** 普通保存用轻量状态；有冲突或未知提交时才展开恢复操作，不把请求键暴露给用户。 */
 export function ComposerRecovery({ state, session }: { state: ComposerState; session: ComposerSession }) {
   const [discarding, setDiscarding] = useState<number | null>(null);
+  // 正常 IndexedDB 写入仅需数毫秒；延迟显示“正在保存草稿…”，避免每次按键造成状态栏与按钮闪烁。
+  const isSaving = state.saving > 0;
+  const [showSaving, setShowSaving] = useState(false);
+  useEffect(() => {
+    if (!isSaving) {
+      setShowSaving(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setShowSaving(true), 400);
+    return () => window.clearTimeout(timer);
+  }, [isSaving]);
   const row = state.record;
   const pending = row?.pending;
   const occupied = Boolean(state.data.content || state.data.selected.length);
+  const statusLabel = showSaving
+    ? '正在保存草稿…'
+    : state.persisted || state.saving
+      ? '草稿已保存到本浏览器'
+      : '草稿暂未保存';
   return <div className="mb-2 max-h-[35dvh] overflow-y-auto text-xs" aria-label="草稿与提交状态">
     <ErrorBox message={state.storageError || state.error} />
     {!state.ready && <p role="status">正在恢复草稿…</p>}
@@ -39,8 +55,8 @@ export function ComposerRecovery({ state, session }: { state: ComposerState; ses
         </div>)}
       </section>}
       {state.ready && occupied && <div className="flex items-center justify-between gap-2 text-muted">
-        <span role="status">{state.saving ? '正在保存草稿…' : state.persisted ? '草稿已保存到本浏览器' : '草稿暂未保存'}</span>
-        {!pending && <Button className="button-quiet text-xs" disabled={state.busy || Boolean(state.saving) || !row} onClick={() => setDiscarding(row!.change)}>放弃草稿</Button>}
+        <span role="status">{statusLabel}</span>
+        {!pending && <Button className="button-quiet text-xs" disabled={state.busy || !row} onClick={() => setDiscarding(row!.change)}>放弃草稿</Button>}
       </div>}
     </>}
     {discarding !== null && <Dialog title="放弃草稿" onClose={() => setDiscarding(null)} footer={<>

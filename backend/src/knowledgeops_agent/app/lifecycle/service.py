@@ -57,7 +57,7 @@ class LifecycleService:
             (db.FileOperation, db.FileOperation.root_id == root.id,
              {"succeeded", "failed", "skipped"}, "file_operation"),
             (db.RunQuestion, db.RunQuestion.root_id == root.id,
-             {"answered", "stale", "invalidated", "cancelled"}, "question"),
+             {"answered", "declined", "stale", "invalidated", "cancelled"}, "question"),
             (db.MCPCall, db.MCPCall.run_id.in_(ids),
              {"succeeded", "failed", "denied", "invalidated"}, "mcp_call"),
             (db.MessageDelivery, or_(db.MessageDelivery.target_root_id == root.id,

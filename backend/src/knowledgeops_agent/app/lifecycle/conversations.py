@@ -6,9 +6,8 @@ import json
 from sqlalchemy import case, delete, func, select, update
 
 from knowledgeops_agent.app.lifecycle.assets import (
-    asset_plan,
-    collect_conversation_assets,
     collect_source_files,
+    detach_conversation_assets,
 )
 from knowledgeops_agent.app.lifecycle.jobs import job_view
 from knowledgeops_agent.app.lifecycle.materials import RunRetentionCleaner
@@ -78,27 +77,23 @@ class ConversationCleaner:
                 db.ResearchTask.home_conversation_id == conversation_id,
             )),
         }
-        assets = asset_plan(session, conversation_id)
-        if not assets["ready"]:
-            blockers.append("asset_reference_index_pending")
         tasks = list(session.execute(select(db.LearningTask.id, db.LearningTask.revision).where(db.LearningTask.conversation_id == conversation_id).order_by(db.LearningTask.id)))
         version = hashlib.sha256(json.dumps([row.id, row.deletion_state, row.user_sequence, row.runtime_revision,
-            row.latest_snapshot_id, counts, assets, [tuple(task) for task in tasks],
+            row.latest_snapshot_id, counts, [tuple(task) for task in tasks],
             [(r.id, r.status, r.generation, r.event_sequence, r.lifecycle_state) for r in roots], sorted(set(blockers))], sort_keys=True).encode()).hexdigest()
         return {"conversation_id": row.id, "title": row.title if row.deletion_state == "active" else "已删除会话",
                 "state": row.deletion_state, "version": version, "eligible": not blockers,
                 "blockers": sorted(set(blockers)), "counts": counts,
-                "preserved": [*PRESERVED, "研发简报与版本"] if counts["research_tasks"] else PRESERVED,
-                "assets": {key: value for key, value in assets.items() if key != "fingerprint"}}
+                "preserved": [*PRESERVED, "研发简报与版本"] if counts["research_tasks"] else PRESERVED}
 
     def preview(self, conversation_id):
-        with workspace_lock(self.sessions), self.sessions.begin() as session:
+        with self.sessions.begin() as session:
             lock_control(session)
             return self._preview(session, conversation_id)
 
     def admit(self, conversation_id, *, expected_version):
         """预览版本只是乐观校验；实际执行仍在消息/恢复共用控制锁下重查。"""
-        with workspace_lock(self.sessions), self.sessions.begin() as session:
+        with self.sessions.begin() as session:
             lock_control(session)
             conversation = session.get(db.Conversation, conversation_id)
             if conversation is None:
@@ -122,7 +117,7 @@ class ConversationCleaner:
             detach_conversation(session, conversation_id)
             conversation.selected_learning_task_id, conversation.latest_snapshot_id = None, None
             job = self.jobs.create(session, "conversation", conversation_id)
-            job.phase, job.summary = "conversation_detach", {"counts": preview["counts"], "assets": preview["assets"], "preserved": preview["preserved"]}
+            job.phase, job.summary = "conversation_detach", {"counts": preview["counts"], "preserved": preview["preserved"]}
             return job_view(job)
 
     def retry(self, identity):
@@ -138,11 +133,6 @@ class ConversationCleaner:
         if claim is None:
             return None
         try:
-            if claim["phase"] == "conversation_assets":
-                indexed = self.retained.catalog.step(limit=self.batch_size)
-                if not indexed["complete"]:
-                    self.jobs.advance(claim["id"], claim["claim_token"], phase=claim["phase"])
-                    return self.jobs.get(claim["id"])
             if claim["phase"] == "conversation_runs":
                 self._runs_step(claim)
             else:
@@ -166,8 +156,9 @@ class ConversationCleaner:
                     elif job.phase == "conversation_assets":
                         self._assets(session, conversation, job)
                     elif job.phase == "conversation_asset_files":
-                        collect_source_files(session, job.cursor["originals"])
-                        self.jobs.advance_in(job, phase="conversation_assets")
+                        # 兼容升级前已在途的旧清理作业：收尾已登记文件后直接进入最终阶段。
+                        collect_source_files(session, job.cursor.get("originals", []))
+                        self.jobs.advance_in(job, phase="conversation_finalize")
                     elif job.phase == "conversation_finalize":
                         self._finalize(session, conversation, job)
         except Exception as error:
@@ -249,13 +240,9 @@ class ConversationCleaner:
                           cursor={"after": cursor["root"]} if child["status"] == "completed" else cursor)
 
     def _assets(self, session, conversation, job):
-        result = collect_conversation_assets(session, conversation.id, limit=self.batch_size)
-        summary = dict(job.summary)
-        for key in ("drafts_deleted", "versions_deleted"):
-            summary[key] = summary.get(key, 0) + result[key]
-        phase = "conversation_asset_files" if result.get("originals") else "conversation_assets" if result["more"] else "conversation_finalize"
-        self.jobs.advance_in(job, phase=phase, summary=summary,
-                             cursor={"originals": result["originals"]} if result.get("originals") else {})
+        """会话删除仅解绑材料归属；无主且无引用的临时材料与草稿由后台 AssetCleaner 巡检回收。"""
+        detach_conversation_assets(session, conversation.id)
+        self.jobs.advance_in(job, phase="conversation_finalize")
 
     def _finalize(self, session, conversation, job):
         query = select(db.Run).where(db.Run.id.in_(self._runs(conversation.id)))

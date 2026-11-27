@@ -1,6 +1,7 @@
 """暂停真实流/图/worker，不用延时模拟供应商，也不产生付费请求。"""
 
 import json
+from threading import Event, Thread
 
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
@@ -129,3 +130,66 @@ def test_paused_guidance_is_saved_and_old_tool_proposal_never_runs(client, servi
     values = saver.get({"configurable": {"thread_id": run["checkpoint_id"]}})["channel_values"]
     assert any(isinstance(m, HumanMessage) and m.content == "不要写文件了，只解释原方案" for m in values["messages"])
     assert any(isinstance(m, ToolMessage) and m.tool_call_id == "pause-write" and m.status == "error" for m in values["messages"])
+
+
+def test_concurrent_pause_during_resource_freeze_never_deadlocks(client, services, monkeypatch):
+    """复现冻结资源期间并发点击暂停的真实窗口，确保锁序统一不会触发 PG AB-BA 死锁。"""
+    from knowledgeops_agent.harness.runtime import resources as resources_mod
+    from knowledgeops_agent.harness.runtime.state import RunContext
+
+    _, run, _ = enqueue(client)
+    claimed = services.jobs.claim("freeze-worker", run_id=run["id"], generation=run["generation"])
+    assert claimed is not None
+
+    entered_freeze = Event()
+    release_freeze = Event()
+    original_loader = resources_mod.load_knowledge_policy
+
+    def gated_loader():
+        entered_freeze.set()
+        release_freeze.wait(timeout=5)
+        return original_loader()
+
+    monkeypatch.setattr(resources_mod, "load_knowledge_policy", gated_loader)
+    context = RunContext(
+        run_id=run["id"],
+        root_id=run["id"],
+        worker_id="freeze-worker",
+        jobs=services.jobs,
+        knowledge=services.knowledge,
+        sources=services.sources,
+        gateway=services.gateway,
+    )
+    errors: list[BaseException] = []
+
+    def freeze_worker():
+        try:
+            resources_mod.prepare_resources(context)
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    worker_thread = Thread(target=freeze_worker)
+    worker_thread.start()
+    assert entered_freeze.wait(timeout=5)
+
+    pause_result: dict = {}
+
+    def pause_caller():
+        try:
+            resp = client.post(f"/api/runs/{run['id']}/pause")
+            pause_result["status_code"] = resp.status_code
+            pause_result["body"] = resp.json()
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    pause_thread = Thread(target=pause_caller)
+    pause_thread.start()
+    # 给 pause 线程留足时间推进到锁等待，再放行冻结事务完成 flush 与提交。
+    pause_thread.join(timeout=0.15)
+    release_freeze.set()
+    worker_thread.join(timeout=10)
+    pause_thread.join(timeout=10)
+
+    assert not errors, f"unexpected concurrent error: {errors!r}"
+    assert pause_result["status_code"] == 200
+    assert pause_result["body"]["pause_requested"] is True

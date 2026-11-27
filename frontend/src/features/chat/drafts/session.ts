@@ -147,11 +147,23 @@ export class ComposerSession {
       if (!this.store || !this.state.record) throw new Error('浏览器存储尚未就绪。');
       const record = await this.store.save(this.state.record.scope, this.editingRevision, data, this.writer);
       this.editingRevision = record.revision;
-      this.apply(record, true);
-      if (this.editEpoch === epoch) this.publish({ persisted: true, storageError: '' });
+      const done = this.editEpoch === epoch;
+      // 单次写入完成合并为一次状态发布，避免连续键入时多次重渲染整个聊天页。
+      this.publish({
+        record,
+        data: record.deleted ? emptyDraft() : this.state.data,
+        persisted: done ? true : this.state.persisted,
+        storageError: done ? '' : this.state.storageError,
+        saving: Math.max(0, this.state.saving - 1),
+      });
       this.notify();
-    }).catch((failure) => this.storageFailure(failure))
-      .finally(() => this.publish({ saving: Math.max(0, this.state.saving - 1) }));
+    }).catch((failure) => {
+      this.publish({
+        persisted: false,
+        saving: Math.max(0, this.state.saving - 1),
+        storageError: `草稿尚未保存，当前输入仍在本页。发送前需恢复保存：${messageOf(failure)}`,
+      });
+    });
   };
 
   refresh = async (checkServer = false) => {

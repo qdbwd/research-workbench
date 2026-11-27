@@ -52,6 +52,30 @@ it('reloads knowledge collections when the workspace version changes', async () 
   expect(screen.queryByText('原知识集')).not.toBeInTheDocument();
 });
 
+it('submits on Enter while keeping Shift+Enter for newline', async () => {
+  const posts: string[] = [];
+  configureFetch(async (url, options) => {
+    if (options?.method === 'POST') {
+      posts.push(url);
+      return Response.json({ id: url === '/api/conversations' ? 'enter-chat' : 'enter-run' });
+    }
+    if (url.endsWith('/runtime-settings')) return Response.json({ permission_mode: 'ask', reasoning_effort: 'default', revision: 0 });
+    return Response.json(url.includes('/page') ? { items: [], next_cursor: null } : []);
+  });
+  const user = userEvent.setup();
+  render(<MemoryRouter><Routes>
+    <Route path="/" element={<ChatPage />} />
+    <Route path="/chat/:conversationId" element={<ChatPage />} />
+  </Routes></MemoryRouter>);
+  const input = screen.getByRole('textbox', { name: '发送给研发助手的消息' });
+  await waitFor(() => expect(input).toBeEnabled());
+  await user.type(input, '第一行{Shift>}{Enter}{/Shift}第二行');
+  expect(input).toHaveValue('第一行\n第二行');
+  expect(posts).toHaveLength(0);
+  await user.type(input, '{Enter}');
+  await waitFor(() => expect(posts).toEqual(['/api/conversations', '/api/conversations/enter-chat/messages']));
+});
+
 it('prefills a trial draft without creating a conversation until submission', async () => {
   const mutations: { url: string; body: Record<string, unknown> }[] = [];
   configureFetch(async (url, options) => {

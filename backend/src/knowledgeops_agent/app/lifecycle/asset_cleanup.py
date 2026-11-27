@@ -224,7 +224,7 @@ class AssetCleaner:
         elif job.target_kind == "draft":
             row = session.get(db.ChangeSet, identity)
             owner = session.get(db.Run, row.root_id) if row else None
-            kept = int(bool(row and (not owner or owner.lifecycle_state not in {"cleaning", "expired"}
+            kept = int(bool(row and (not owner or owner.lifecycle_state not in {"cleaning", "expired", "deleted"}
                 or row.retention_intent != "temporary" or row.status == "published" or session.scalar(
                 select(graph.c.node).where(graph.c.node == "draft:" + identity)))))
             if row and not kept:
@@ -262,7 +262,7 @@ class AssetCleaner:
                     db.DeliveredFile.deleted_at.is_not(None), ~(literal("delivery:") + db.DeliveredFile.id).in_(nodes)),
                 select((literal("draft:") + db.ChangeSet.id).label("node")).where(
                     db.ChangeSet.retention_intent == "temporary", db.ChangeSet.status != "published", ~(literal("draft:") + db.ChangeSet.id).in_(nodes),
-                    db.ChangeSet.root_id.in_(select(db.Run.id).where(db.Run.lifecycle_state.in_(["cleaning", "expired"]))),
+                    db.ChangeSet.root_id.in_(select(db.Run.id).where(db.Run.lifecycle_state.in_(["cleaning", "expired", "deleted"]))),
                 )).subquery()
             query = select(candidates.c.node).order_by(candidates.c.node).limit(limit + 1)
             if after:

@@ -78,7 +78,11 @@ class MCPCalls:
 
     def decide(self, receipt_id: str, *, expected_hash: str, approve: bool) -> dict:
         """真人HTTP入口使用，工具列表不暴露此方法；批准只针对一次精确输入。"""
+        from knowledgeops_agent.app.runs.control import lock_control
+
         with self.context.jobs.sessions.begin() as session:
+            # 写事件会触发 before_flush 引用追踪的控制锁，须先于 runs 行锁获取以杜绝 AB-BA 死锁。
+            lock_control(session)
             root = session.scalar(
                 select(Run).where(Run.id == self.context.root_id).with_for_update()
             )

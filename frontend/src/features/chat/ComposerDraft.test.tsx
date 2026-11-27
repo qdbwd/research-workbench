@@ -4,7 +4,9 @@ import { StrictMode, useEffect } from 'react';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { useComposerDraft } from './useComposerDraft';
-import type { ComposerSession } from './drafts/session';
+import { ComposerRecovery } from './ComposerRecovery';
+import type { ComposerSession, ComposerState } from './drafts/session';
+import { emptyDraft } from './drafts/store';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
@@ -31,4 +33,27 @@ it('keeps the same editor when its allocated draft identity is written to the UR
   expect(editor).toBe(original);
   await waitFor(() => expect(editor.snapshot().persisted).toBe(true));
   expect(screen.getByRole('textbox')).toHaveValue('地址变化期间的输入');
+});
+
+it('avoids flickering draft status text and discard button during fast saves', () => {
+  vi.useFakeTimers();
+  const baseState: ComposerState = {
+    data: { ...emptyDraft(), content: '正在输入的文字' },
+    record: {
+      key: 'ns::new:1', namespace: 'ns', kind: 'draft', scope: 'new:1', revision: 1, change: 1, deleted: false,
+      data: { ...emptyDraft(), content: '正在输入的文字' }, conflicts: [], pending: null, updatedAt: 0,
+    },
+    ready: true, saving: 1, busy: false, persisted: false, error: '', storageError: '', completed: null,
+  };
+  const session = {} as ComposerSession;
+  const { rerender } = render(<ComposerRecovery state={baseState} session={session} />);
+  expect(screen.getByRole('status')).toHaveTextContent('草稿已保存到本浏览器');
+  expect(screen.getByRole('button', { name: '放弃草稿' })).toBeEnabled();
+
+  act(() => { vi.advanceTimersByTime(450); });
+  expect(screen.getByRole('status')).toHaveTextContent('正在保存草稿…');
+
+  rerender(<ComposerRecovery state={{ ...baseState, saving: 0, persisted: true }} session={session} />);
+  expect(screen.getByRole('status')).toHaveTextContent('草稿已保存到本浏览器');
+  vi.useRealTimers();
 });

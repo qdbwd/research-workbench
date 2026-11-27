@@ -110,7 +110,11 @@ class ResourceService:
         self.sessions = sessions
 
     def ensure(self, context) -> dict:
+        from knowledgeops_agent.app.runs.control import lock_control
+
         with self.sessions.begin() as session:
+            # 与 jobs._locked 及 before_flush 引用追踪保持同一锁序（先控制锁再 runs 行锁），避免与暂停/取消死锁。
+            lock_control(session)
             root = session.scalar(select(Run).where(Run.id == context.root_id).with_for_update())
             if root is None:
                 raise KeyError("root not found")
