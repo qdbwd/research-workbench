@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
+import time
 from dataclasses import replace
+from urllib.parse import urlsplit, urlunsplit
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -11,6 +14,7 @@ from langgraph.types import Command
 
 from knowledgeops_agent.app.runs.guidance import applied_messages
 from knowledgeops_agent.app.runs.service import SteeringPending
+from knowledgeops_agent.evolution.security import redact_credentials
 from knowledgeops_agent.harness.browser.names import BROWSER_NAMES
 from knowledgeops_agent.harness.models.validation import current_length_limit
 from knowledgeops_agent.harness.permissions.approvals import (
@@ -29,6 +33,81 @@ from knowledgeops_agent.memory.service import MemoryService
 from knowledgeops_agent.vendor.deerflow.task_continuity_state import (
     normalize_task_notes,
 )
+
+_SUMMARY_KEYS = {
+    **dict.fromkeys(("search_references", "search_knowledge", "search_web", "memory_search", "history_search"), ("query",)),
+    **dict.fromkeys(("read_file", "write_file", "edit_file", "import_file", "present_files"), ("path", "file_path")),
+    **dict.fromkeys(("read_knowledge", "knowledge_history"), ("document_id", "title", "version")),
+    **dict.fromkeys(("read_source", "inspect_material"), ("source_id", "segment_id")),
+    **dict.fromkeys(("prepare_changes", "publish_changes", "read_changeset", "revise_changeset", "reject_changeset"), ("changeset_id",)),
+    **dict.fromkeys(("read_research_map", "update_research_map", "set_research_focus", "submit_research_delivery",
+                     "propose_research_experiment"), ("focus", "node_id", "title", "summary")),
+    "execute": ("command",),
+    "read_web": ("url",),
+    "task": ("description", "task"),
+    "start_async_task": ("description", "task"),
+}
+_AUTH_HEADER = re.compile(r"\b(?:Bearer|Basic)\s+[^\s\"'<>;,]+", re.IGNORECASE)
+_INLINE_CREDENTIAL = re.compile(
+    r"""\b(?:[\w-]*[_-])?(?:api[_-]?key|access[_-]?token|secret|password|token)"""
+    r"""\s*(?:[=:]\s*|(?<=\s)\s*)(?:"[^"]*"|'[^']*'|[^\s;&|,]+)""",
+    re.IGNORECASE,
+)
+_URL_USERINFO = re.compile(r"(://)[^\s/]+@", re.IGNORECASE)
+
+
+def _summarize_tool_args(tool_name: str, args: object, redact) -> str | None:
+    """仅展示内建工具的白名单标量，先清除凭据再截断，避免留下密钥前缀。"""
+    if not isinstance(args, dict) or tool_name in BROWSER_NAMES or tool_name not in _SUMMARY_KEYS:
+        return None
+
+    def clean(value, limit=120):
+        if type(value) not in (str, int):
+            return ""
+        safe = redact(str(value))
+        safe = _AUTH_HEADER.sub("[REDACTED]", safe)
+        safe = _URL_USERINFO.sub(r"\1", safe)
+        safe = _INLINE_CREDENTIAL.sub("[REDACTED]", safe)
+        text = " ".join(redact_credentials(safe).split())
+        return text if len(text) <= limit else text[:limit - 1] + "…"
+
+    keys = _SUMMARY_KEYS[tool_name]
+    if tool_name == "read_web":
+        url = args.get("url")
+        if not isinstance(url, str):
+            return None
+        try:
+            parts = urlsplit(url)
+            if parts.scheme not in {"https", "http"} or not parts.hostname:
+                return None
+            host = parts.netloc.rsplit("@", 1)[-1]
+            return clean(urlunsplit((parts.scheme, host, parts.path, "", ""))) or None
+        except ValueError:
+            return None
+
+    limit = 100 if tool_name == "execute" else 60 if tool_name in {"task", "start_async_task"} or keys[0] == "focus" else 120
+    target = next((text for key in keys if (text := clean(args.get(key), limit))), "")
+    labels = [target]
+    if keys == ("query",):
+        collections = args.get("collection_ids")
+        if isinstance(collections, list) and collections:
+            labels.append(f"{len(collections)} 个知识集")
+        if args.get("mode") in ("lexical", "vector", "hybrid", "all", "collections"):
+            labels.append(args["mode"])
+    elif keys == ("path", "file_path") and not target:
+        paths = args.get("paths")
+        if isinstance(paths, list) and paths:
+            labels.append(clean(paths[0]) if len(paths) == 1 else f"{len(paths)} 个路径")
+    elif keys == ("source_id", "segment_id"):
+        start, end = clean(args.get("start"), 24), clean(args.get("end"), 24)
+        if start and end:
+            labels.append(f"{start}–{end}")
+    elif keys == ("changeset_id",) and not target and isinstance(args.get("operations"), list):
+        labels.append(f"{len(args['operations'])} 项操作")
+    elif tool_name in {"task", "start_async_task"}:
+        labels.insert(0, clean(args.get("subagent_type"), 48) or clean(args.get("role"), 48))
+    summary = " · ".join(filter(None, labels))
+    return (summary if len(summary) <= 120 else summary[:119] + "…") or None
 
 
 class RuntimeControlMiddleware(AgentMiddleware):
@@ -59,6 +138,9 @@ class RuntimeControlMiddleware(AgentMiddleware):
                 return ToolMessage(content="未执行：调整焦点、更新地图和提交成果均须单独调用。",
                                    name=call["name"], tool_call_id=call["id"], status="error")
         journal, ticket = CommandJournal(context), None
+        arg_summary = _summarize_tool_args(call["name"], call.get("args"), context.gateway._redact)
+        observation = {"summary": arg_summary} if arg_summary is not None else {}
+        started_monotonic = None
         try:
             if context.resources is not None:
                 check_tool_call(context, call["name"])
@@ -97,8 +179,10 @@ class RuntimeControlMiddleware(AgentMiddleware):
                         "name": call["name"],
                         "args": ({} if call["name"] in BROWSER_NAMES
                                  else self._event_value(context, call["args"], "tool_input")),
+                        **observation,
                     },
                 )
+                started_monotonic = time.monotonic()
                 if call["name"] == "execute":
                     from knowledgeops_agent.harness.sandbox.output import output_scope
 
@@ -181,6 +265,11 @@ class RuntimeControlMiddleware(AgentMiddleware):
                 "tool_call_id": call["id"],
                 "name": call["name"],
                 **self._event_value(context, payload, "tool_event"),
+                **observation,
+                "duration_ms": (
+                    max(0, int((time.monotonic() - started_monotonic) * 1000))
+                    if started_monotonic is not None else 0
+                ),
             },
         )
         return result

@@ -1,5 +1,5 @@
 import { Button } from '../../shared/ui/Button';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { RotateCcw } from 'lucide-react';
 import { messageOf, send, terminal, useResource } from '../../shared/api/api';
@@ -14,9 +14,41 @@ import { TaskActivity } from './TaskActivity';
 import { useRunDetails } from './useRunDetails';
 import { RunOutcome } from './RunOutcome';
 import { DeleteRunButton, RemovedRun } from './DeleteRun';
+import { runKindLabels } from './runPresentation';
 
 
 export { ActivityRunsPage as RunsPage } from '../activity/ActivityRunsPage';
+
+function RunResult({ answer }: { answer: string }) {
+  const body = useRef<HTMLDivElement>(null);
+  const [overflowing, setOverflowing] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    // 观察正文自身的自然高度，展开/收起只约束外层阅读区。
+    const content = body.current?.firstElementChild;
+    if (!content) return;
+    const measure = () => setOverflowing(content.scrollHeight > 300);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [answer]);
+  return <section className="mb-5 min-w-0 rounded-xl border border-line bg-white p-5 max-md:p-4">
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <h2 className="m-0 text-base font-semibold">本次结果</h2>
+      {overflowing && <Button className="button-quiet text-xs" aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}>
+        {expanded ? '收起为定高滚动' : '展开全高'}
+      </Button>}
+    </div>
+    <div ref={body} className={`min-w-0 [&_pre]:overflow-x-auto ${overflowing
+      ? `rounded-lg border border-line bg-[#fafbf9] p-4 ${expanded ? '' : 'scrollbar-subtle max-h-[300px] overflow-y-auto overscroll-contain'}`
+      : ''}`} tabIndex={overflowing && !expanded ? 0 : undefined}>
+      <Markdown text={answer} />
+    </div>
+  </section>;
+}
 
 function ResumeControls({ run, onChanged }: { run: Run; onChanged: () => void }) {
   const [limits, setLimits] = useState<Budgets>(run.budgets);
@@ -143,26 +175,27 @@ export function RunPage() {
       </PageTitle>
       <ErrorBox message={error || result.error} />
       {run.status === 'queued' && <RunBlocking runId={run.id} />}
-      <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
-        <div className="row flex items-center gap-3 wrap flex-wrap">
-          <Badge status={run.status} />
-          <RunOutcome run={run} refreshKey={detailsKey} />
-          {run.conversation_id && <Link to={`/chat/${run.conversation_id}`}>回到对话 →</Link>}
-          {run.outcome.source_id && (
-            <Link to={`/sources/${run.outcome.source_id}`}>查看来源材料 →</Link>
-          )}
+      <section className="mb-5 min-w-0 rounded-xl border border-line bg-white p-5 max-md:p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge status={run.status} />
+            <RunOutcome run={run} refreshKey={detailsKey} />
+            <span className="rounded bg-canvas px-2 py-1 text-control">{runKindLabels[run.kind]}</span>
+            <time dateTime={run.created_at} className="text-muted">{new Date(run.created_at).toLocaleString()}</time>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            {run.conversation_id && <Link to={`/chat/${run.conversation_id}`}>回到对话 →</Link>}
+            {run.outcome.source_id && (
+              <Link to={`/sources/${run.outcome.source_id}`}>查看来源材料 →</Link>
+            )}
+          </div>
         </div>
-        <h2 className="run-task mt-5.5 text-[17px] whitespace-pre-wrap">{run.task}</h2>
-        {run.kind === 'material' ? (
-          <p className="muted text-muted">
-            材料下载与解析不调用大模型 · 已运行 {(run.active_ms / 1000).toFixed(1)} 秒
-          </p>
-        ) : (
-          <div className="metrics my-[25px] grid grid-cols-4 gap-4.5 max-md:grid-cols-2 [&>div]:border-l-2 [&>div]:border-[#d7e4cd] [&>div]:pl-3.5 [&_strong]:block [&_strong]:text-[26px] [&_strong]:font-semibold [&_strong]:text-[#345332] [&_strong_small]:text-[11px] [&_strong_small]:font-normal [&_strong_small]:text-[#8c9e83] [&_span]:text-[11px] [&_span]:text-[#8a9b81]">
+        <h2 className="my-4 text-[17px] font-semibold whitespace-pre-wrap [overflow-wrap:anywhere]">{run.task}</h2>
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-4 [&>div]:min-w-0 [&>div]:rounded-lg [&>div]:bg-canvas [&>div]:px-3 [&>div]:py-2 [&_strong]:block [&_strong]:text-xl [&_strong]:font-semibold [&_strong]:text-brand [&_small]:text-xs [&_small]:font-normal [&_small]:text-control [&_span]:text-xs [&_span]:text-muted">
             <div>
               <strong>
                 {run.model_usage?.root_used ?? '—'}
-                <small> / {run.budgets.model_requests}</small>
+                {run.kind !== 'material' && <small> / {run.budgets.model_requests}</small>}
               </strong>
               <span>模型请求</span>
             </div>
@@ -187,8 +220,8 @@ export function RunPage() {
               </strong>
               <span>活跃执行时间</span>
             </div>
-          </div>
-        )}
+        </div>
+        {run.kind === 'material' && <p className="mt-2 mb-0 text-xs text-muted">材料下载与解析不调用大模型。</p>}
         {run.stop_reason && (
           <p className="notice border-l-[3px] border-[#c0a76b] bg-[#f5f0e0] px-4 py-3 text-[13px] [overflow-wrap:anywhere]">
             停止原因：{run.stop_reason}
@@ -220,12 +253,7 @@ export function RunPage() {
         !['waiting_approval', 'execution_unknown'].includes(run.outcome.kind ?? '') && (
           <ResumeControls key={`${run.id}:${run.generation}`} run={run} onChanged={refresh} />
         )}
-      {run.outcome.answer && (
-        <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
-          <h2>本次结果</h2>
-          <Markdown text={run.outcome.answer} />
-        </section>
-      )}
+      {run.outcome.answer && <RunResult key={run.id} answer={run.outcome.answer} />}
       <TaskActivity key={`activity:${run.id}`} run={run} refreshKey={detailsKey} />
     </>
   );

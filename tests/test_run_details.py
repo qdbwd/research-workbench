@@ -1,13 +1,14 @@
 """摘要不读取完整诊断，过期与删除继续遵守原资产/访问合同。"""
 
 import json
+from datetime import timedelta
 
 from test_api_worker import client as _client
 from test_api_worker import enqueue
 from test_api_worker import services as _services
 
 from knowledgeops_agent.harness.runtime.resources import ResourceService
-from knowledgeops_agent.persistence.models import Conversation, Run, new_id
+from knowledgeops_agent.persistence.models import Conversation, Run, new_id, utcnow
 from knowledgeops_agent.sources.deliveries import DeliveryService
 
 client, services = _client, _services
@@ -36,6 +37,30 @@ def test_summary_projects_tool_state_without_loading_diagnostic_payloads(client,
     assert len(json.dumps(body, ensure_ascii=False)) < 2000
     assert "完整内部工具结果" not in result.text
     assert all(row["display_name"] != row["name"] for row in body["tools"])
+    assert all(row["arg_summary"] is None for row in body["tools"])
+
+
+def test_summary_prefers_recorded_duration_and_falls_back_to_paired_timestamps(client, services, monkeypatch):
+    _, run, _ = enqueue(client)
+    jobs = services.jobs
+    at = utcnow()
+    monkeypatch.setattr(jobs, "now", lambda: at)
+    jobs.claim("summary", run_id=run["id"], generation=run["generation"])
+    for identity in ("legacy", "current", "pending"):
+        jobs.append_event(run["id"], "tool_started", {
+            "tool_call_id": identity, "name": "read_source", "summary": "固定材料" * 100,
+        })
+    at += timedelta(milliseconds=420)
+    jobs.append_event(run["id"], "tool_finished", {"tool_call_id": "legacy", "name": "read_source"})
+    jobs.append_event(run["id"], "tool_finished", {
+        "tool_call_id": "current", "name": "read_source", "summary": "最新目标", "duration_ms": 15,
+    })
+    tools = client.get(f"/api/runs/{run['id']}/summary").json()["tools"]
+    assert [(row["id"], row["duration_ms"]) for row in tools] == [
+        ("current", 15), ("legacy", 420), ("pending", None),
+    ]
+    assert tools[0]["arg_summary"] == "最新目标"
+    assert tools[1]["arg_summary"] == ("固定材料" * 100)[:140]
 
 
 def test_expired_summary_keeps_independent_files_and_live_drafts_but_no_internal_output(client, services, tmp_path):

@@ -1,10 +1,10 @@
 # Research Workbench 项目上下文
 
-更新：2026-11-26。开发对象：本 Git 仓库。历史批次交付流水已无损归档至 [历史上下文归档](docs/history/project-context-archive-20261124.md)，本文只维护当前接续状态与核心基线。
+更新：2026-11-27。开发对象：本 Git 仓库。历史批次交付流水已无损归档至 [历史上下文归档](docs/history/project-context-archive-20261124.md)，本文只维护当前接续状态与核心基线。
 
 ## 一、当前接续状态
 
-- **最新迁移与数据库基线（2026-11-26）**：代码迁移与开发部署的正式业务库 `knowledgeops` 均已推进至 `0065`（冲刺包 1：RAG 向量知识库自动化与管理 UI 已通过独立审查、5 项修补复验与桌面/390px 视觉验收；正式库升级前已完成受保护备份 `artifacts/backups/26b65aeca540` 与 11/11 项隔离恢复校验 `restore-verification-0be267604fff.json`）。
+- **最新迁移与数据库基线（2026-11-27）**：代码迁移与开发部署的正式业务库 `knowledgeops` 均保持在 `0065`（冲刺包 1 提交 `3eb1fd7` + CI 修复 `4cdddb3` 已推至 `origin/main`；冲刺包 2 阶段 1 为 0 数据库迁移）。
 - **阶段收口已完成项**：
   - 通用辅助模型工具 `call_model` 与 `auxiliary` 工具组已彻底下线（迁移 `0057`，见 [决策 0032](docs/decisions/0032-retire-auxiliary-call-model.md)），应用内部单次调用及历史兼容保留。
   - 工程治理与 CI（2026-11-24）：新增 [数据库总览与核心状态机](docs/database-and-state-machines.md)（7 大表群、5 条 DB 红线、五轨状态机）；[AGENTS.md](AGENTS.md) 将 OpenAI Codex 列入长期参考对象；已新增离线零付费 GitHub CI（[.github/workflows/ci.yml](.github/workflows/ci.yml)），CD 镜像发布暂缓。
@@ -20,16 +20,19 @@
   - 智能体设置的技能页可从已验收运维案例生成带证据的方法提案。人工查看差异后可发布或驳回，实际发布沿用原 Skill 管理和运行冻结。隔离环境已验收；正式技能包尚无此发布。[方法提案验收](docs/progress.md#2026-11-25从已验收运维试点形成技能提案)
   - **主线 A（Hermes 完整在线自进化体系，`0062`–`0063`，已通过隔离验收与独立代码审查）**：已落地在线六大支柱（双槽记忆与硬容量上限、工具白名单隔离后台复盘与高信号/阈值/验收合并触发、会话级 Prompt Cache 冻结快照与 `revocation_epoch` 撤回穿透、确定性安全扫描与 `Pin/Lock` 保护、Skill 不可变快照回滚 + 持久遥测 + 零付费 Curator 整理与安全归档、Learning Journey 统一时间线与单项回滚），前台意图 `v6` 已剥离旧自动记忆提取（兼容 `v5` 历史冻结）；前端沉淀 5 个共用组件并打通长期记忆页、智能体设置→技能页与聊天「本次任务设置」快照刷新，通过桌面与 390px Chromium 截图验收。[0062 复核](artifacts/verification/hermes-evolution-0062-review/summary.md) · [0063 验收](artifacts/verification/hermes-evolution-0063/summary.md)
   - **主线 B（Playwright MCP 动态浏览器取证，`0064`，已通过隔离验收与独立代码审查）**：参考 DeepSeek Harness（DSH）浏览器子系统设计，预装锁版本 `@playwright/mcp@0.0.86` 于容器内；落地正常聊天与研发模式共用的 7 个只读内建工具（`browser` 工具组，子 Agent 暂不开放）、容器 HTTP/CONNECT 出站代理与公网 DNS/SSRF 校验、`launch`（容器无头隔离，默认）+ `attach`（本机可见浏览器 CDP，默认关闭、PG advisory lock 跨 worker 独占、退出不关窗）双模式、不可变 `SourceVersion(playwright-mcp-rendered-v1)` 与内容寻址 PNG `FileStore`/`RunArtifact` 归档及受控预览接口、Windows 专用调试窗口启动脚本 `scripts/start-local-browser.ps1`；前端接入工具页配置弹窗、聊天「本次任务设置」模式选择与运行截图预览，通过桌面与 390px 真实截图验收。[0064 交付](artifacts/verification/playwright-mcp-0064/summary.md) · [0064 复核](artifacts/verification/playwright-mcp-0064-review/summary.md)
-  - **冲刺包 1（RAG 向量知识库自动化与管理 UI，`0065`，✅ 已通过独立审查并封板升级）**：复用现有 `pgvector` 与单一正文真相源，借鉴 Dify / RAGFlow 落地入库自动 Celery 异步向量化（`rag_index_jobs` 事务外盒、按版本/代次防过期回写、重启等待人工恢复、批量/单篇重试统一提供方门禁）、轻量逻辑知识集（`rag_collections` / `rag_collection_items`）、只读 Chunk 分块预览 + RAGFlow 式单块启停开关（`enabled`）、只读在线召回测试 Hit Testing（BM25 名次交错 / 向量 / RRF / 重排防呆与分阶段耗时）、以及聊天底栏一键挂载「全库 / 知识集」（`rag_scope` / `collection_ids` 同步收敛检索与证据复核，默认保持旧幂等指纹兼容）；并清理了过时根目录 `demo/` 与 `scripts/seed_demo.py`。[0065 交付](artifacts/verification/rag-workbench-0065/summary.md) · [0065 复核](artifacts/verification/rag-workbench-0065-review/summary.md)
-  - **下一步接续重点（2026-11-26 生产收口与面试对齐期）**：按 [roadmap-2026-11.md](docs/plans/roadmap-2026-11.md) 推进剩余 3 个高 ROI 冲刺包：**② 冲刺包 2（下一立即启动）**：先出 HTML 预览确认「聊天普通问答流式/思考/步骤展示去重卡片化 + 任务详情/诊断页易读性精修」，再重启容器用真实 DeepSeek 跑通研发全流程（含本机 Chrome CDP 实测）并产出 30–50 题 RAG 对比评测报告与 5 类故障注入可靠性报告 → **③ 冲刺包 3**：最小 JWT 鉴权/资源越权隔离/Redis 限流 + `ModelGateway` 429 重试/Fallback → **④ 冲刺包 4**：重写 `README.md` + 图文 `SHOWCASE.md` 后正式封箱转入面试。
+  - **冲刺包 1（RAG 向量知识库自动化与管理 UI，`0065`，✅ 已封板推送 `3eb1fd7` + CI 修复 `4cdddb3` 且正式库升级至 `0065`）**：复用现有 `pgvector` 与单一正文真相源，借鉴 Dify / RAGFlow 落地入库自动 Celery 异步向量化（`rag_index_jobs` 事务外盒、按版本/代次防过期回写、重启等待人工恢复、批量/单篇重试统一提供方门禁）、轻量逻辑知识集（`rag_collections` / `rag_collection_items`）、只读 Chunk 分块预览 + RAGFlow 式单块启停开关（`enabled`）、只读在线召回测试 Hit Testing（BM25 名次交错 / 向量 / RRF / 重排防呆与分阶段耗时）、以及聊天底栏一键挂载「全库 / 知识集」（`rag_scope` / `collection_ids` 同步收敛检索与证据复核，默认保持旧幂等指纹兼容）；并清理了过时根目录 `demo/` 与 `scripts/seed_demo.py`。[0065 交付](artifacts/verification/rag-workbench-0065/summary.md) · [0065 复核](artifacts/verification/rag-workbench-0065-review/summary.md)
+  - **冲刺包 2 · 阶段 1（聊天流式体验与任务/诊断页重构，0 迁移，✅ 已通过独立审查并封板）**：普通聊天改为无边框流式 Markdown + 思考过程自动收折（尊重用户手动切换）+ 可展开脱敏工具/命令步骤与耗时；研发与后台任务保留结构化状态卡；任务详情消除空交付噪音，长结果改为清晰内滚+一键展开全高，工具活动支持正/倒序、仅出错筛选与脱敏目标/耗时展示；诊断页扁平化四格 KPI 速跳、统一不定长列表限高内滚并默认隐藏流式 `delta` 碎片（不影响分页与全量导出）。[验收与 10 张截图](artifacts/verification/chat-runs-ux/summary.md)
+  - **下一步接续重点（2026-11-27 生产收口与面试对齐期）**：按 [roadmap-2026-11.md](docs/plans/roadmap-2026-11.md) 推进：**② 冲刺包 2 · 阶段 2（下一立即启动）**：重启开发容器使 `0061`–`0065` + 新 UI 生效，用真实 DeepSeek 跑通研发全流程（含 Windows 本机 Chrome CDP 实测）并产出 30–50 题 RAG 对比评测报告与 5 类故障注入可靠性报告 → **③ 冲刺包 3**：最小 JWT 鉴权/资源越权隔离/Redis 限流 + `ModelGateway` 429 重试/Fallback + Dependabot 高危清理 → **④ 冲刺包 4**：重写 `README.md` + 图文 `SHOWCASE.md` 后正式封箱转入面试。
 - **既有未闭环工程项**：2026-10-31 APP-02～APP-05 独立验收仍有未通过项，记录在 [复核报告](docs/delivery/app02-app05-acceptance-20261031.md) 与 `docs/development-issues.md`（`DEV-121`），APP-01/06/07 继续暂缓。
 
 ## 二、当前技术栈与运行基线
 
 - **后端**：Python 3.12 / FastAPI / SQLAlchemy / Alembic / LangChain `create_agent` / LangGraph / Deep Agents 0.7.23 / Celery + Redis / PostgreSQL 17（`pg_search`）。
 - **前端**：React + TypeScript + Vite + Tailwind CSS v4（保留 SPA）。
-- **运行模式**：
-  - 开发模式：`compose.dev.yaml` 只启 `dev` / `postgres` / `redis`，容器内用根 `.venv`（`/workspace/.venv/bin/python`）通过 `python scripts/dev.py` 统一启动 API、worker 和 Vite；单独测试/脚本用 `python scripts/dev.py --run ...`。
+- **运行模式与固定容器清单（严禁另起临时 DB/Redis 容器）**：
+  - 开发模式（`compose.dev.yaml`）复用既有容器：`knowledgeops-agent-dev-1`（应用与测试执行容器）、`knowledgeops-agent-postgres-1`（PG 17 + `pg_search` + `pgvector`）、`knowledgeops-agent-redis-1`（Redis 7.4），以及按需启停的 GPU 嵌入容器 `knowledgeops-agent-tei-embedding-1`（离线测试不依赖）。
+  - 测试统一使用现有 Postgres 内的 `knowledgeops_test`（含临时 schema，用后清理）与现有 Redis 的 15 号逻辑库（`redis://redis:6379/15`）；若既有容器处于停止态仅允许启动并复用，严禁 `docker run` 新建临时数据库或 Redis 容器。
+  - 容器内用根 `.venv`（`/workspace/.venv/bin/python`）通过 `python scripts/dev.py` 统一启动 API、worker 和 Vite；单独测试/脚本用 `python scripts/dev.py --run ...`（Pytest/Vitest/Playwright 严禁并行，Vitest 必须 `--maxWorkers=1`）。
   - 生产部署：`compose.yaml` 拆分为 `api`、`worker`、`web`（Nginx 静态托管 + 反代）、`postgres`、`redis` 与一次性 `init`。
 - **数据与存储分工**：
   - PG 三库隔离：`knowledgeops`（业务 + LangGraph 检查点）、`knowledgeops_accounting`（独立模型账本）、`knowledgeops_test`（测试库）。

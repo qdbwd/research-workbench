@@ -29,9 +29,10 @@
 
 ## 三、架构、运行环境与存储边界
 
-1. **容器与开发环境**：
-   - 只支持 Docker 部署；开发、安装与测试统一在本项目 `dev` 容器内使用根 `.venv`（`/workspace/.venv/bin/python`），不使用 Windows/Conda Python 或共享容器。
-   - 开发模式（`compose.dev.yaml`）只启 `dev` / `postgres` / `redis`，容器内执行 `python scripts/dev.py` 统一启停 API、worker、Vite（`worker` 不自动热重启）；单独调试或测试用 `python scripts/dev.py --run ...`。生产模式（`compose.yaml`）拆分 `api`、`worker`、`web` 容器，普通配置变更通过重建容器生效。
+1. **容器与开发环境（严禁另起临时容器）**：
+   - 只支持 Docker 部署；开发、安装与测试统一在本项目既有 `knowledgeops-agent-dev-1` 容器内使用根 `.venv`（`/workspace/.venv/bin/python`）执行，不使用 Windows/Conda Python 或其他项目的共享容器。
+   - 开发模式（`compose.dev.yaml`）复用固定容器：`knowledgeops-agent-dev-1`、`knowledgeops-agent-postgres-1`、`knowledgeops-agent-redis-1`（以及按需启停的 GPU 向量容器 `knowledgeops-agent-tei-embedding-1`）。测试隔离通过既有 Postgres 内的 `knowledgeops_test` 库（含临时 schema，用后清理）和既有 Redis 的 15 号测试逻辑库（`redis://redis:6379/15`）实现；**严禁私自 `docker run` 或另起临时 Postgres / Redis 容器**，若既有容器处于停止状态，仅允许启动并复用原容器。
+   - 容器内执行 `python scripts/dev.py` 统一启停 API、worker、Vite（`worker` 不自动热重启）；单独调试或测试用 `python scripts/dev.py --run ...`。在 `dev` 容器内执行 Pytest、Vitest、Playwright 须**串行运行**，Vitest 必须加 `--maxWorkers=1`（防止与 GPU 容器叠加内存耗尽）。生产模式（`compose.yaml`）拆分 `api`、`worker`、`web` 容器，普通配置变更通过重建容器生效。
 2. **PG 为事实源，Redis 为轻量加速层**：
    - 后台任务使用 Celery + Redis broker（决策 0008），PG 通过 `run_dispatches` 事务外盒、运行状态与检查点保存事实。重复投递不等于重做授权，**服务重启一律等待用户手动恢复**。
    - Redis 另用于 SSE 实时事件桥与确定检查点的可丢弃缓存（决策 0021）：事件在 PG 提交后发布，缺口回 PG；`latest` 与 `pending_writes` 不缓存。

@@ -435,7 +435,9 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
             ))}
             {messages.newer && <div className="my-4 text-center"><Button className="button-quiet text-xs" disabled={messages.loading}
               onClick={() => void messages.loadNewer()}>加载更新的消息</Button></div>}
-            {active && <LiveRunPanel key={active.id} initial={active} onChanged={onChanged} />}
+            {active && <LiveRunPanel key={active.id} initial={active} onChanged={onChanged}
+              variant={active.kind === 'agent' && !active.input?.research && active.status !== 'waiting_children'
+                ? 'inline' : 'card'} onOpenEvidence={openEvidence} />}
             {runs.data
               .filter((run) => ['paused', 'waiting_input'].includes(run.status))
               .map((run) => (
@@ -546,6 +548,9 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
               <div className="run-summary mt-2.5 mb-5 flex flex-wrap items-center gap-[9px] text-xs [&>p]:m-0 [&>p]:w-full [&>p]:text-[#8c594b]">
                 <Badge status={latestExecution.status} />
                 <RunOutcome run={latestExecution} refreshKey={version} />
+                {(latestExecution.tool_calls > 0 || latestExecution.active_ms > 0) && <span>
+                  {latestExecution.tool_calls} 步工具 · {(latestExecution.active_ms / 1000).toFixed(1)}s
+                </span>}
                 <Link to={`/runs/${latestExecution.id}`}>任务详情 →</Link>
                 {runs.data[0].stop_reason && <p>{runs.data[0].stop_reason}</p>}
               </div>
@@ -717,6 +722,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
         activeRun={active}
         onRunChanged={onChanged}
         onOpenChat={() => selectResearchTab(false)}
+        onOpenEvidence={openEvidence}
         onChanged={researchChanged}
       />
     </div>}

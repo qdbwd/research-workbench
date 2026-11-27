@@ -110,4 +110,44 @@ it('streams collapsible reasoning and preserves multi-step tool timeline without
   expect(screen.queryByTestId('reasoning-stream')).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: '思考过程' }));
   expect(screen.getByTestId('reasoning-stream')).toBeVisible();
+  expect(screen.getByLabelText('实时执行进度')).toHaveClass('border');
+});
+
+it.each([false, true])('streams full Markdown and honors manual reasoning choice: %s', async (manual) => {
+  vi.stubGlobal('EventSource', FakeEventSource);
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json([])));
+  const openEvidence = vi.fn();
+  const user = userEvent.setup();
+  render(<MemoryRouter><LiveRunPanel initial={baseRun} variant="inline"
+    onChanged={vi.fn()} onOpenEvidence={openEvidence} /></MemoryRouter>);
+  const source = FakeEventSource.instances[0];
+  function emit(sequence: number, kind: string, data: object) {
+    act(() => source.emit('progress', { sequence, kind, data, created_at: '2026-11-24T09:00:00Z' }));
+  }
+  emit(1, 'reasoning_delta', { text: '核对材料中' });
+  expect(screen.getByTestId('reasoning-stream')).toBeVisible();
+  const reasoning = screen.getByRole('button', { name: /思考过程/ });
+  if (manual) {
+    await user.click(reasoning);
+    await user.click(reasoning);
+  }
+  emit(2, 'model_delta', { text: '' });
+  expect(screen.getByTestId('reasoning-stream')).toBeVisible();
+  emit(3, 'tool_started', { name: 'execute', tool_call_id: 'exec', summary: 'pwd', args: { command: 'pwd' } });
+  emit(4, 'tool_finished', { name: 'execute', tool_call_id: 'exec', duration_ms: 260,
+    content: '/workspace\nAuthorization: Bearer offline-test-token' });
+  emit(5, 'model_delta', { text: '## 核对结论\n\n**执行成功**\n\n[固定证据](/api/evidence/e-1)' });
+  expect(screen.getByLabelText('实时执行进度')).not.toHaveClass('border');
+  expect(screen.getByRole('heading', { name: '核对结论' }).closest('.markdown')?.parentElement)
+    .not.toHaveClass('max-h-[180px]');
+  expect(screen.getByText('执行成功').tagName).toBe('STRONG');
+  expect(Boolean(screen.queryByTestId('reasoning-stream'))).toBe(manual);
+  await user.click(screen.getByRole('link', { name: '固定证据' }));
+  expect(openEvidence).toHaveBeenCalledWith('e-1', '固定证据', expect.any(HTMLAnchorElement));
+  const command = screen.getByRole('button', { name: /执行工作区命令.*pwd.*260ms/ });
+  await user.click(command);
+  expect(screen.getByText(/\/workspace/).closest('pre')).toHaveClass('bg-[#18251f]');
+  expect(screen.getByLabelText('终端输出预览')).not.toHaveTextContent('offline-test-token');
+  await user.click(screen.getByRole('button', { name: /已执行 1 个步骤/ }));
+  expect(screen.queryByRole('list', { name: '执行步骤' })).not.toBeInTheDocument();
 });

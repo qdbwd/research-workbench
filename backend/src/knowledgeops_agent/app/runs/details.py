@@ -16,11 +16,19 @@ def task_details(sessions, run_id: str) -> dict:
         tools = []
         if active:
             call_id = RunEvent.data["tool_call_id"].astext
+            summary = func.nullif(func.left(RunEvent.data["summary"].astext, 140), "")
             # 每个动作取最后一个已观测事件，数据库不向应用传输结果大字段。
             latest = select(
                 call_id.label("call_id"), RunEvent.sequence, RunEvent.kind,
                 RunEvent.data["name"].astext.label("name"),
                 RunEvent.data["status"].astext.label("status"), RunEvent.created_at,
+                func.first_value(summary).over(
+                    partition_by=call_id, order_by=(summary.is_(None), RunEvent.sequence.desc()),
+                ).label("arg_summary"),
+                func.left(RunEvent.data["duration_ms"].astext, 24).label("duration_ms"),
+                func.min(RunEvent.created_at).filter(RunEvent.kind == "tool_started").over(
+                    partition_by=call_id,
+                ).label("started_at"),
                 func.row_number().over(partition_by=call_id, order_by=RunEvent.sequence.desc()).label("position"),
             ).where(
                 RunEvent.run_id == run.id, RunEvent.sequence <= run.event_sequence,
@@ -36,8 +44,16 @@ def task_details(sessions, run_id: str) -> dict:
                     status = "error"
                 elif status == "started" and run.status != "running":
                     status = "unsettled"
+                duration = None
+                if event["kind"] != "tool_started":
+                    recorded = event["duration_ms"]
+                    if recorded and recorded.isascii() and recorded.isdecimal():
+                        duration = int(recorded)
+                    elif event["started_at"] is not None:
+                        duration = max(0, int((event["created_at"] - event["started_at"]).total_seconds() * 1000))
                 tools.append({"id": event["call_id"], "name": event["name"],
                               "display_name": names.get(event["name"], "外部工具"), "status": status,
+                              "arg_summary": event["arg_summary"], "duration_ms": duration,
                               "created_at": event["created_at"].isoformat()})
         draft_rows = session.execute(select(
             ChangeSet.id, ChangeSet.operations[0]["title"].astext.label("title"), ChangeSet.status,

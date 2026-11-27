@@ -28,13 +28,16 @@ export type Continuation = {
 export function RuntimeResources({
   resources,
   continuation,
+  unavailable,
 }: {
   resources?: RuntimeManifest | null;
   continuation?: Continuation | null;
+  unavailable?: string;
 }) {
   return (
-    <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
-      <h2>本次运行依据</h2>
+    <section className="min-w-0 rounded-xl border border-line bg-white p-4 text-xs [overflow-wrap:anywhere]">
+      <h2 className="mt-0 mb-3 text-sm font-semibold">本次运行依据</h2>
+      {unavailable ? <p className="m-0 text-muted">{unavailable}</p> : <>
       {!resources ? (
         <p className="muted text-muted">
           此运行尚未冻结资源，或属于缺少资源清单的历史格式；不推测当时使用的配置。
@@ -45,10 +48,10 @@ export function RuntimeResources({
             模型：{resources.content.model.provider.model} · 核心知识库规则：
             {resources.content.policy.version}
           </p>
-          <p className="muted text-muted">
-            以下是首次执行时冻结的版本。普通编辑从新任务生效，撤回许可在下一相关调用前检查。
-          </p>
-          <DetailDialog className="mt-5" title="技能、偏好和服务配置">
+          <DetailDialog className="my-2" title="技能、偏好和服务配置">
+            <p className="text-muted">
+              以下是首次执行时冻结的版本。普通编辑从新任务生效，撤回许可在下一相关调用前检查。
+            </p>
             <h3>按需可读的 Skills</h3>
             <ul>
               {resources.content.skills
@@ -98,8 +101,9 @@ export function RuntimeResources({
           {continuation.covered_sequence}。本任务重新拥有独立权限与预算。
         </p>
       ) : (
-        <p className="muted text-muted">没有绑定前序延续快照。</p>
+        <p className="mb-0 text-muted">没有绑定前序延续快照。</p>
       )}
+      </>}
     </section>
   );
 }

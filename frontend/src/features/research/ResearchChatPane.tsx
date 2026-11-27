@@ -22,12 +22,14 @@ export function ResearchChatPane({
   activeRun,
   onRunChanged,
   onOpenChat,
+  onOpenEvidence,
 }: {
   task: ResearchTask;
   onChanged: (task: ResearchTask) => void;
   activeRun?: Run | null;
   onRunChanged?: () => void;
   onOpenChat?: () => void;
+  onOpenEvidence?: (id: string, label: string, trigger: HTMLAnchorElement) => void;
 }) {
   const [section, setSection] = useState<(typeof sections)[number][0]>('brief');
   const [mapFocus, setMapFocus] = useState<string>();
@@ -57,7 +59,8 @@ export function ResearchChatPane({
         aria-pressed={section === id} key={id} onClick={() => { setMapFocus(undefined); setSection(id); }}>{label}</button>)}
     </nav>
     {activeRun && onRunChanged && (
-      <LiveRunPanel key={`research-live-${activeRun.id}`} initial={activeRun} onChanged={onRunChanged} onOpenChat={onOpenChat} />
+      <LiveRunPanel key={`research-live-${activeRun.id}`} initial={activeRun} variant="card"
+        onChanged={onRunChanged} onOpenChat={onOpenChat} onOpenEvidence={onOpenEvidence} />
     )}
     {section === 'brief' && <WorkbenchPanel title="研发简报">
       <dl className="m-0 grid gap-4">

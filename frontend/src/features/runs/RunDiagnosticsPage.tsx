@@ -32,9 +32,9 @@ export function RunDiagnosticsPage() {
       {result.loading && !run && <Loading />}
       {run && (
         <>
-          <div className="flex min-w-0 flex-wrap items-start gap-3">
+          <div className="flex min-w-0 flex-wrap items-start gap-2">
             <Badge status={run.status} />
-            <p className="m-0 min-w-0 flex-1 whitespace-pre-wrap text-sm [overflow-wrap:anywhere]">
+            <p className="m-0 min-w-0 flex-1 whitespace-pre-wrap text-sm text-control [overflow-wrap:anywhere]">
               {run.task}
             </p>
           </div>
