@@ -8,14 +8,32 @@ from langchain.tools import ToolRuntime, tool
 from pydantic import Field
 
 from knowledgeops_agent.harness.runtime.state import RunContext
+from knowledgeops_agent.persistence.models import SourceSegment, SourceVersion
+from knowledgeops_agent.retrieval.collections import mounted_reference_scope
 from knowledgeops_agent.sources.search_config import SearchTimeRange, WebSearchConfig
 from knowledgeops_agent.sources.web import WebResearchService
+
+
+def _mounted_source_ids(context: RunContext) -> set[str] | None:
+    """当本次运行挂载了指定知识集时，返回允许访问的材料 ID 白名单。"""
+    root = context.jobs.get_run(context.root_id)
+    inputs = root["input"]
+    if inputs.get("rag_scope") != "collections" and not inputs.get("collection_ids"):
+        return None
+    with context.jobs.sessions() as session:
+        _, source_ids = mounted_reference_scope(session, inputs)
+    return set(source_ids or [])
 
 
 @tool
 def list_materials(runtime: ToolRuntime[RunContext]) -> list[dict]:
     """列出独立材料库及当前会话材料的 ID 和标题；正文须通过来源片段读取。"""
-    return runtime.context.sources.list_sources(root_id=runtime.context.root_id)
+    context = runtime.context
+    allowed = _mounted_source_ids(context)
+    rows = context.sources.list_sources(root_id=context.root_id)
+    if allowed is None:
+        return rows
+    return [row for row in rows if row["id"] in allowed]
 
 
 @tool
@@ -40,13 +58,25 @@ def list_evidence(runtime: ToolRuntime[RunContext], query: str = "",
 @tool
 def inspect_material(source_id: str, runtime: ToolRuntime[RunContext]) -> dict:
     """获得材料版本、页码、解析状态和可读取片段 ID；没有读取正文的副作用。"""
-    return runtime.context.sources.get_source(source_id, root_id=runtime.context.root_id)
+    context = runtime.context
+    allowed = _mounted_source_ids(context)
+    if allowed is not None and source_id not in allowed:
+        raise PermissionError("该材料不在当前挂载的知识集范围内，无法查看。")
+    return context.sources.get_source(source_id, root_id=context.root_id)
 
 
 @tool
 def read_source(segment_id: str, runtime: ToolRuntime[RunContext]) -> dict:
     """实际读取来源片段，返回正文、固定版本、页码及可直接使用的 citation 链接。"""
-    return runtime.context.sources.read_segment(segment_id, root_id=runtime.context.root_id)
+    context = runtime.context
+    allowed = _mounted_source_ids(context)
+    if allowed is not None:
+        with context.jobs.sessions() as session:
+            segment = session.get(SourceSegment, segment_id)
+            version = session.get(SourceVersion, segment.source_version_id) if segment is not None else None
+            if version is None or version.source_id not in allowed:
+                raise PermissionError("该材料不在当前挂载的知识集范围内，无法读取。")
+    return context.sources.read_segment(segment_id, root_id=context.root_id, mask_disabled=True)
 
 
 def _web_service(context: RunContext) -> WebResearchService:

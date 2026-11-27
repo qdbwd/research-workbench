@@ -13,14 +13,23 @@ export type MountProps = {
   onChange: (scope: RagScope, ids: string[]) => void;
 };
 
-export function MountedKnowledgeChips({ scope, ids, groups, trial, disabled, onChange }: MountProps) {
+export function MountedKnowledgeChips({ scope, ids, groups, loading, error, trial, disabled, onChange }: MountProps) {
   if (scope === 'auto' || trial) return null;
-  const entries = scope === 'all' ? [{ id: '', name: '全库' }] : ids.map((id) => ({
-    id, name: groups.find((group) => group.id === id)?.name ?? '知识集',
-  }));
+  const loaded = !loading && !error;
+  const entries = scope === 'all' ? [{ id: '', name: '全库', stale: false }] : ids.map((id) => {
+    const matched = groups.find((group) => group.id === id);
+    return {
+      id,
+      name: matched?.name ?? (loaded ? '已失效知识集' : '知识集'),
+      stale: loaded && !matched,
+    };
+  });
   return <div className="mb-2 flex min-w-0 flex-wrap gap-1.5" aria-label="已挂载知识库">
-    {entries.map(({ id, name }) => <button key={id} type="button" disabled={disabled}
-      className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-[#e3f1e8] px-2 py-1 text-xs text-brand disabled:opacity-50"
+    {entries.map(({ id, name, stale }) => <button key={id} type="button" disabled={disabled}
+      title={stale ? '该知识集已被删除，点击移除后再发送' : undefined}
+      className={`inline-flex max-w-full items-center gap-1.5 rounded-full px-2 py-1 text-xs disabled:opacity-50 ${
+        stale ? 'bg-[#f8e9e4] text-[#a44b40]' : 'bg-[#e3f1e8] text-brand'
+      }`}
       aria-label={`移除挂载 ${name}`} onClick={() => {
         const next = ids.filter((identity) => identity !== id);
         onChange(scope === 'collections' && next.length ? 'collections' : 'auto', scope === 'collections' ? next : []);

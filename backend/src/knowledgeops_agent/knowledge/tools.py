@@ -7,6 +7,18 @@ from typing import Any
 from langchain.tools import ToolRuntime, tool
 
 from knowledgeops_agent.harness.runtime.state import RunContext
+from knowledgeops_agent.retrieval.collections import mounted_reference_scope
+
+
+def _mounted_document_ids(context: RunContext) -> set[str] | None:
+    """当本次运行挂载了指定知识集时，返回允许访问的知识文档 ID 白名单。"""
+    root = context.jobs.get_run(context.root_id)
+    inputs = root["input"]
+    if inputs.get("rag_scope") != "collections" and not inputs.get("collection_ids"):
+        return None
+    with context.jobs.sessions() as session:
+        document_ids, _ = mounted_reference_scope(session, inputs)
+    return set(document_ids or [])
 
 
 @tool
@@ -16,27 +28,41 @@ def search_knowledge(query: str, runtime: ToolRuntime[RunContext]) -> list[dict]
     正文无需曾在聊天展示。词法候选不等于已读证据；使用document_id、version_id、
     start调用read_knowledge核对，按返回的next_start继续补读；修改前仍须从0完整读取该版本。
     """
-    return runtime.context.knowledge.search(query, root_id=runtime.context.root_id)
+    context = runtime.context
+    allowed = _mounted_document_ids(context)
+    return context.knowledge.search(
+        query,
+        root_id=context.root_id,
+        document_ids=sorted(allowed) if allowed is not None else None,
+        mask_disabled=True,
+    )
 
 
 @tool
 def list_knowledge(runtime: ToolRuntime[RunContext], include_archived: bool = False) -> list[dict]:
     """查看文章目录/当前版本。查找待恢复文章时 include_archived=true；正文须另行读取。"""
+    context = runtime.context
+    allowed = _mounted_document_ids(context)
     return [
         {key: row[key] for key in ("id", "version_id", "version", "title", "summary", "archived")}
-        for row in runtime.context.knowledge.list_documents(include_archived=include_archived, root_id=runtime.context.root_id)
+        for row in context.knowledge.list_documents(include_archived=include_archived, root_id=context.root_id)
+        if allowed is None or row["id"] in allowed
     ]
 
 
 @tool
 def knowledge_history(document_id: str, runtime: ToolRuntime[RunContext]) -> list[dict]:
     """查看文章的全部历史版本 ID/序号/归档状态，用 read_knowledge 读取具体固定版本。"""
+    context = runtime.context
+    allowed = _mounted_document_ids(context)
+    if allowed is not None and document_id not in allowed:
+        raise PermissionError("该知识文档不在当前挂载的知识集范围内。")
     return [
         {
             key: row[key]
             for key in ("document_id", "version_id", "version", "title", "action", "archived")
         }
-        for row in runtime.context.knowledge.history(document_id, root_id=runtime.context.root_id)
+        for row in context.knowledge.history(document_id, root_id=context.root_id)
     ]
 
 
@@ -54,11 +80,16 @@ def read_knowledge(
     仍需实际读取相应来源。原文更新、归档或旧规则被取代不会使固定证据链接
     自动失效。返回引用ID不等于已核对其正文，也不保证旧内容仍适用于当前问题。
     """
-    return runtime.context.knowledge.read_document(
+    context = runtime.context
+    allowed = _mounted_document_ids(context)
+    if allowed is not None and document_id not in allowed:
+        raise PermissionError("该知识文档不在当前挂载的知识集范围内，无法读取。")
+    return context.knowledge.read_document(
         document_id,
-        root_id=runtime.context.root_id,
+        root_id=context.root_id,
         version_id=version_id,
         start=start,
+        mask_disabled=True,
     )
 
 

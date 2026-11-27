@@ -424,7 +424,9 @@ class SourceService:
             )
             return self._version_view(session, source, version) if version else None
 
-    def read_segment(self, segment_id: str, *, root_id: str, session=None) -> dict:
+    def read_segment(
+        self, segment_id: str, *, root_id: str, session=None, mask_disabled: bool = False,
+    ) -> dict:
         """实际读取成功才登记证据；失败页/空片段不能作为模型已读证据。"""
         with (self.sessions.begin() if session is None else nullcontext(session)) as session:
             lock_control(session)
@@ -435,11 +437,13 @@ class SourceService:
             claim_source(session, version.source_id, root_id=root_id, allow_removed=True)
             evidence_id = self._record_segment_read(
                 session, version, segment, root_id, segment.start_offset, segment.end_offset,
+                mask_disabled=mask_disabled,
             )
             return self.get_evidence(evidence_id, session=session)
 
     def read_search_hit(
         self, segment_id: str, *, version_id: str, start: int, end: int, root_id: str, source_ids=None,
+        mask_disabled: bool = False,
     ) -> dict:
         """新检索只能读取当前有效的候选，历史引文仍走固定版本入口。"""
         with self.sessions.begin() as session:
@@ -459,14 +463,34 @@ class SourceService:
             if not segment.start_offset <= start < end <= segment.end_offset or end - start > 600:
                 raise ValueError("候选片段范围无效")
             claim_source(session, version.source_id, root_id=root_id)
-            evidence_id = self._record_segment_read(session, version, segment, root_id, start, end)
+            evidence_id = self._record_segment_read(
+                session, version, segment, root_id, start, end, mask_disabled=mask_disabled,
+            )
         return self.get_evidence(evidence_id)
 
-    def _record_segment_read(self, session, version, segment, root_id, start, end):
+    def _record_segment_read(self, session, version, segment, root_id, start, end, *, mask_disabled: bool = False):
         self._verified_body(session, version)
+        rel_start = start - segment.start_offset
+        rel_end = end - segment.start_offset
+        quote = segment.text[rel_start:rel_end]
+        if mask_disabled:
+            from knowledgeops_agent.retrieval.collections import (
+                disabled_chunk_ranges,
+                mask_disabled_text,
+            )
+
+            disabled = disabled_chunk_ranges(
+                session, "source", version_id=version.id, segment_id=segment.id,
+            )
+            if disabled:
+                quote, fully_excluded = mask_disabled_text(
+                    quote, base_offset=rel_start, disabled_ranges=disabled,
+                )
+                if fully_excluded:
+                    raise PermissionError("该材料片段已在知识库中排除检索，不可读取。")
         evidence = Evidence(
             root_id=root_id, source_segment_id=segment.id, start_offset=start, end_offset=end,
-            quote=segment.text[start - segment.start_offset:end - segment.start_offset],
+            quote=quote,
         )
         session.add(evidence)
         session.flush()

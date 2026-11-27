@@ -85,10 +85,16 @@ class ResearchExperimentProvider(ExecutionProvider):
         diagnosis = PILOT_DIAGNOSIS if self.pilot else "第一组正确片段未进入上下文；第二组正确片段已在上下文中，回答仍误用。"
         ids = [*result["evidence_ids"], result["evidence_id"]]
         if self.step == 2:
-            return "update_research_map", {"operation": {"action": "save", "node": {
-                "question": question, "criteria": "分别核对正确片段是否进入最终上下文及原回答是否正确。",
-                "status": "resolved", "reason": diagnosis, "conclusion": recommendation, "evidence_ids": ids,
-            }}, "reason": "依据固定原文与真实实验修订建议"}
+            return "update_research_map", {
+                "action": "save",
+                "question": question,
+                "criteria": "分别核对正确片段是否进入最终上下文及原回答是否正确。",
+                "status": "resolved",
+                "node_reason": diagnosis,
+                "conclusion": recommendation,
+                "evidence_ids": ids,
+                "reason": "依据固定原文与真实实验修订建议",
+            }
         if self.step == 3:
             return "submit_research_delivery", {
                 "title": "运维问答助手内部试点建议" if self.pilot else "问答错因诊断与重排建议",

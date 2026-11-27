@@ -1,10 +1,16 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { messageOf, send } from '../../../shared/api/api';
 import { ErrorBox } from '../../../shared/ui/components';
 import { basePath, inputClass, primaryClass, type AssetRef, type Collection, type GroupTag, type RagSettingsState } from './types';
 
 const modes = { bm25: '纯 BM25', vector: '纯向量', hybrid: '混合 RRF', hybrid_rerank: '混合 + 重排' };
 type Mode = keyof typeof modes;
+
+function defaultModeFor(settings?: RagSettingsState): Mode {
+  if (!settings) return 'hybrid';
+  if (!settings.hybrid_enabled) return 'bm25';
+  return settings.rerank_enabled ? 'hybrid_rerank' : 'hybrid';
+}
 type Hit = {
   rank: number; kind: 'knowledge' | 'material'; asset_id: string; version_id: string; title: string;
   segment_id: string | null; page: number | null; chunk_index: number; start: number; end: number;
@@ -26,7 +32,11 @@ export function HitTestingTab({ groups, settings, onPreview }: {
   groups: Collection[]; settings?: RagSettingsState; onPreview: (asset: AssetRef) => void;
 }) {
   const [query, setQuery] = useState('');
-  const [mode, setMode] = useState<Mode>('hybrid');
+  const [mode, setMode] = useState<Mode>(() => defaultModeFor(settings));
+  const [modeTouched, setModeTouched] = useState(false);
+  useEffect(() => {
+    if (!modeTouched && settings) setMode(defaultModeFor(settings));
+  }, [modeTouched, settings]);
   const [scope, setScope] = useState('all');
   const [top, setTop] = useState(5);
   const [rrf, setRrf] = useState<number | null>(null);
@@ -70,7 +80,7 @@ export function HitTestingTab({ groups, settings, onPreview }: {
         <legend className="mb-1 text-xs font-medium">检索算子模式</legend>
         <div className="grid grid-cols-2 gap-1.5 text-xs">
           {(Object.entries(modes) as [Mode, string][]).map(([id, label]) => <button type="button" key={id}
-            aria-pressed={id === mode} onClick={() => setMode(id)}
+            aria-pressed={id === mode} onClick={() => { setModeTouched(true); setMode(id); }}
             className={`rounded-lg border px-2 py-1.5 ${id === mode ? 'border-brand bg-[#e3f1e8] text-brand' : 'border-line text-control'}`}>{label}</button>)}
         </div>
       </fieldset>

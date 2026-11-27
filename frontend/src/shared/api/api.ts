@@ -192,4 +192,5 @@ export const statusText: Record<string, string> = {
   needs_input: '需要补充信息',
   waiting_approval: '等待操作确认',
   execution_unknown: '需要核对执行结果',
+  evolution_review: '后台复盘',
 };

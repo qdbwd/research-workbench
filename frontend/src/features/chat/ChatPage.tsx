@@ -171,20 +171,22 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
   const following = useRef(true);
   const messages = useMessageHistory(conversationId, version, anchor, scrollArea, following);
   const runs = usePagedResource<Run>(
-    conversationId ? `/api/runs/page?conversation_id=${conversationId}&roots_only=true` : null,
+    conversationId
+      ? `/api/runs/page?conversation_id=${conversationId}&roots_only=true&exclude_kind=evolution_review`
+      : null,
     version,
     true,
   );
   const running = useResource<CollectionPage<Run>>(
     conversationId
-      ? `/api/runs/page?conversation_id=${conversationId}&roots_only=true&status=running`
+      ? `/api/runs/page?conversation_id=${conversationId}&roots_only=true&status=running&exclude_kind=evolution_review`
       : null,
     version,
   );
   // 与分页历史分开读取，刷新历史时不能卸载等待中的 SSE 并反复重播旧事件。
   const waitingChildren = useResource<CollectionPage<Run>>(
     conversationId
-      ? `/api/runs/page?conversation_id=${conversationId}&roots_only=true&status=waiting_children`
+      ? `/api/runs/page?conversation_id=${conversationId}&roots_only=true&status=waiting_children&exclude_kind=evolution_review`
       : null,
     version,
   );
@@ -304,17 +306,22 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
       setBusy(false);
     }
   }
+  const submitDisabled =
+    busy ||
+    settingBusy ||
+    Boolean(conversationId && (!defaults.data || defaults.loading)) ||
+    !content.trim() ||
+    researchGoalInvalid ||
+    Boolean(researchMode && researchBound) ||
+    !composerState.ready ||
+    (!composerState.persisted && !composerState.saving) ||
+    Boolean(composerState.storageError) ||
+    Boolean(composerState.record?.pending) ||
+    Boolean(composerState.record?.deleted) ||
+    Boolean(composerState.record?.conflicts.length);
+
   async function submit() {
-    if (
-      !content.trim() ||
-      researchGoalInvalid || (researchMode && researchBound) ||
-      busy ||
-      settingBusy ||
-      !composerState.ready || (!composerState.persisted && !composerState.saving) || Boolean(composerState.storageError) || composerState.record?.pending ||
-      composerState.record?.deleted || Boolean(composerState.record?.conflicts.length) ||
-      (conversationId && (!defaults.data || defaults.loading))
-    )
-      return;
+    if (submitDisabled) return;
     setBusy(true);
     setError('');
     try {
@@ -329,21 +336,22 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
     }
   }
   // 分别查询 running/waiting 时，任务可能正处于两次响应之间的 queued 阶段。
-  // 保留列表中未终结的观察者，直到获取终态；否则会同时丢掉 SSE 和轮询。
+  // 过滤后台 evolution_review 复盘运行，避免覆盖主回答的工具时间线与失败状态。
+  const userRuns = runs.data.filter((run) => run.kind !== 'evolution_review');
   const active =
-    running.data?.items?.[0] ??
-    waitingChildren.data?.items?.[0] ??
-    runs.data.find((run) => ['running', 'waiting_children', 'queued'].includes(run.status));
+    running.data?.items?.find((run) => run.kind !== 'evolution_review') ??
+    waitingChildren.data?.items?.find((run) => run.kind !== 'evolution_review') ??
+    userRuns.find((run) => ['running', 'waiting_children', 'queued'].includes(run.status));
   const guideTarget =
     (active?.kind === 'agent' ? active : undefined) ??
-    runs.data.find(
+    userRuns.find(
       (run) =>
         run.kind === 'agent' &&
         (['paused', 'waiting_input'].includes(run.status) ||
           (run.status === 'interrupted' && run.outcome.kind === 'waiting_approval')),
     );
-  const hasQueued = runs.data.some((run) => run.status === 'queued');
-  const latestExecution = runs.data.find((run) => run.kind !== 'research_start');
+  const hasQueued = userRuns.some((run) => run.status === 'queued');
+  const latestExecution = userRuns.find((run) => run.kind !== 'research_start');
   const activeResearch = guideTarget?.input?.research;
   const workingElsewhere = researchTask && activeResearch?.task_id === researchTask.id
     && activeResearch.branch_id !== (researchTask.write_branch_id ?? researchTask.main_branch_id);
@@ -438,7 +446,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
             {active && <LiveRunPanel key={active.id} initial={active} onChanged={onChanged}
               variant={active.kind === 'agent' && !active.input?.research && active.status !== 'waiting_children'
                 ? 'inline' : 'card'} onOpenEvidence={openEvidence} />}
-            {runs.data
+            {userRuns
               // waiting_input 且下方已有补问交互卡时，不再在上方重复画一张白色任务卡。
               .filter((run) => run.status === 'paused' || (run.status === 'waiting_input' && (!run.question_count || Boolean(run.outcome.answer))))
               .map((run) => (
@@ -458,7 +466,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
                   {run.outcome.answer && <Markdown text={run.outcome.answer} onOpenEvidence={openEvidence} />}
                 </section>
               ))}
-            {runs.data
+            {userRuns
               .filter((run) => run.question_count)
               .map((run) => (
                 <RunQuestions
@@ -468,7 +476,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
                   onChanged={refresh}
                 />
               ))}
-            {runs.data
+            {userRuns
               .filter((run) => run.child_count)
               .map((run) => (
                 <RunChildren
@@ -478,7 +486,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
                   onChanged={refresh}
                 />
               ))}
-            {runs.data
+            {userRuns
               .filter(
                 (run) =>
                   ['waiting_approval', 'execution_unknown'].includes(run.outcome.kind ?? '') &&
@@ -489,8 +497,8 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
                   <ExecutionApprovals run={run} refreshKey={version} onChanged={refresh} />
                 </div>
               ))}
-            {runs.data
-              .filter((run) => run.status === 'queued')
+            {userRuns
+              .filter((run) => run.status === 'queued' && run.id !== active?.id)
               .map((run) => (
                 <p className="muted text-muted small text-xs" key={run.id}>
                   排队任务：{run.task.slice(0, 80)} · <Link to={`/runs/${run.id}`}>查看</Link>
@@ -537,7 +545,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
                   )}
                 </p>
               ))}
-            {runs.data
+            {userRuns
               .filter((run) => run.outcome.kind === 'guidance')
               .map((run) => (
                 <p className="muted text-muted small text-xs" key={run.id}>
@@ -555,7 +563,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
                   {latestExecution.tool_calls} 步工具 · {(latestExecution.active_ms / 1000).toFixed(1)}s
                 </span>}
                 <Link to={`/runs/${latestExecution.id}`}>任务详情 →</Link>
-                {runs.data[0].stop_reason && <p>{runs.data[0].stop_reason}</p>}
+                {latestExecution.stop_reason && <p>{latestExecution.stop_reason}</p>}
               </div>
             )}
             {pending.map((draft) => (
@@ -658,7 +666,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
                 event.keyCode !== 229
               ) {
                 event.preventDefault();
-                if (!busy && content.trim()) void submit();
+                if (!submitDisabled) void submit();
               }
             }}
           />
@@ -697,12 +705,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
             selected={selected}
             setSelected={setSelected}
             busy={busy}
-            disabled={
-              busy || settingBusy || Boolean(conversationId && defaults.loading) || !content.trim() ||
-              researchGoalInvalid || Boolean(researchMode && researchBound) ||
-              !composerState.ready || (!composerState.persisted && !composerState.saving) || Boolean(composerState.storageError) || Boolean(composerState.record?.pending) ||
-              Boolean(composerState.record?.deleted) || Boolean(composerState.record?.conflicts.length)
-            }
+            disabled={submitDisabled}
             context={
               conversationId ? (
                 <ContextUsage

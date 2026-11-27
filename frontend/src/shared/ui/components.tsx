@@ -43,6 +43,30 @@ const MarkdownAnchor: NonNullable<Components['a']> = ({ href, children }) => {
     : <a href={href} target="_blank" rel="noreferrer noopener">{children}</a>;
 };
 
+/** 防止 GFM 自动链接贪婪吞并紧随裸 URL 后的中文字符与全角标点，保留代码块与显式链接不变。 */
+function isolateBareUrls(source: string): string {
+  // 按围栏代码块（``` / ~~~） / 行内代码 / 已有 Markdown 或尖括号链接切片，仅处理纯文本段里的裸 URL。
+  const token = /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]+`|\[[^\]]*\]\([^)\n]+\)|<https?:\/\/[^>\s]+>)/g;
+  return source
+    .split(token)
+    .map((part, idx) => {
+      if (idx % 2 === 1) return part;
+      return part.replace(/https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+/g, (raw) => {
+        let url = raw;
+        let trail = '';
+        while (url.length > 0 && /[.,;:!?'")\]"]$/.test(url)) {
+          const ch = url.at(-1)!;
+          if (ch === ')' && (url.match(/\(/g)?.length ?? 0) >= (url.match(/\)/g)?.length ?? 0)) break;
+          if (ch === ']' && (url.match(/\[/g)?.length ?? 0) >= (url.match(/\]/g)?.length ?? 0)) break;
+          trail = ch + trail;
+          url = url.slice(0, -1);
+        }
+        return `<${url}>${trail}`;
+      });
+    })
+    .join('');
+}
+
 /** 保留正文内联引用和独立阅读入口；材料中的原始 HTML 不执行。 */
 export function Markdown({
   text,
@@ -67,7 +91,7 @@ export function Markdown({
           ),
         }}
       >
-        {text}
+        {isolateBareUrls(text)}
       </ReactMarkdown>
     </div></MarkdownLinks.Provider>
   );

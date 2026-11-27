@@ -399,11 +399,20 @@ class DisabledRerankerProvider:
 class TEIRerankerProvider:
     """HuggingFace TEI /rerank 可选重排客户端。"""
 
-    def __init__(self, *, base_url: str, model: str = "", timeout_seconds: float = 10.0, api_key: str = ""):
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        model: str = "",
+        timeout_seconds: float = 10.0,
+        api_key: str = "",
+        max_batch_size: int = 16,
+    ):
         self._base_url = base_url.rstrip("/")
         self._model = model.strip() or "tei-reranker"
         self._timeout = float(timeout_seconds)
         self._api_key = api_key.strip()
+        self._max_batch_size = max(1, int(max_batch_size))
 
     @property
     def enabled(self) -> bool:
@@ -415,30 +424,34 @@ class TEIRerankerProvider:
         if not documents:
             return []
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
-        try:
-            with httpx.Client(timeout=self._timeout) as client:
-                response = client.post(
-                    f"{self._base_url}/rerank",
-                    json={"query": query, "texts": list(documents), "truncate": True},
-                    headers=headers,
-                )
-                response.raise_for_status()
-                payload = response.json()
-        except Exception as exc:
-            raise RerankerError(f"TEI 重排请求失败: {type(exc).__name__}") from exc
-        if not isinstance(payload, list):
-            raise RerankerError("TEI /rerank 返回格式异常")
+        docs = list(documents)
         ranked: list[tuple[int, float]] = []
-        try:
-            for item in payload:
-                if not isinstance(item, dict):
-                    continue
-                idx = int(item.get("index", -1))
-                score = float(item["score"])
-                if 0 <= idx < len(documents) and math.isfinite(score):
-                    ranked.append((idx, score))
-        except (KeyError, TypeError, ValueError) as exc:
-            raise RerankerError(f"TEI /rerank 响应项格式异常: {type(exc).__name__}") from exc
+        with httpx.Client(timeout=self._timeout) as client:
+            # 按客户端批上限分段调用 /rerank 再合并全局排序，避免候选数大于 TEI max-client-batch-size 时触发 422。
+            for offset in range(0, len(docs), self._max_batch_size):
+                batch = docs[offset : offset + self._max_batch_size]
+                try:
+                    response = client.post(
+                        f"{self._base_url}/rerank",
+                        json={"query": query, "texts": batch, "truncate": True},
+                        headers=headers,
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                except Exception as exc:
+                    raise RerankerError(f"TEI 重排请求失败: {type(exc).__name__}") from exc
+                if not isinstance(payload, list):
+                    raise RerankerError("TEI /rerank 返回格式异常")
+                try:
+                    for item in payload:
+                        if not isinstance(item, dict):
+                            continue
+                        local_idx = int(item.get("index", -1))
+                        score = float(item["score"])
+                        if 0 <= local_idx < len(batch) and math.isfinite(score):
+                            ranked.append((offset + local_idx, score))
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise RerankerError(f"TEI /rerank 响应项格式异常: {type(exc).__name__}") from exc
         ranked.sort(key=lambda pair: (-pair[1], pair[0]))
         return ranked[:top_n] if top_n is not None else ranked
 

@@ -1,6 +1,6 @@
 """仅给已绑定研发的主图提供经过验证的研究焦点转换。"""
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from langchain.tools import ToolRuntime, tool
 from pydantic import Field
@@ -12,10 +12,14 @@ from knowledgeops_agent.research.autonomy import active_permit
 from knowledgeops_agent.research.contracts import (
     DeliveryContent,
     Identity,
-    MapOperation,
+    NodeStatus,
+    RemoveResearchNode,
     ResearchCapability,
+    ResearchNode,
     ResearchPhase,
+    ResearchRelation,
     RetrievalDataset,
+    SaveResearchNode,
 )
 from knowledgeops_agent.research.execution import active_binding
 from knowledgeops_agent.research.methods import canonical_capabilities
@@ -92,13 +96,26 @@ def read_research_map(
 
 @tool
 def update_research_map(
-    operation: MapOperation,
+    action: Literal["save", "remove"],
     reason: Annotated[str, Field(min_length=1, max_length=1000)],
     runtime: ToolRuntime[Any],
+    node_id: Identity | None = None,
+    parent_id: Identity | None = None,
+    question: Annotated[str | None, Field(min_length=3, max_length=300)] = None,
+    criteria: Annotated[str | None, Field(min_length=1, max_length=1200)] = None,
+    status: NodeStatus = "open",
+    conclusion: Annotated[str, Field(max_length=4000)] = "",
+    details: Annotated[str, Field(max_length=4000)] = "",
+    node_reason: Annotated[str, Field(max_length=1200)] = "",
+    evidence_ids: Annotated[list[Identity] | None, Field(max_length=12)] = None,
+    required: bool = True,
+    related: Annotated[list[ResearchRelation] | None, Field(max_length=12)] = None,
 ) -> dict:
-    """更新主线的一个主题。单独调用，按当前固定地图提供完整节点字段。
+    """更新主线的一个主题。必须单独调用，直接传平铺参数（切勿外包 operation 或 node 嵌套对象）。
 
-    问题写具体，结束标准应可核对。已解决节点必须给出理由、结论及本任务的已读证据 ID。
+    新增或修改主题传 action="save"，并填写 question、criteria、status 及本次更新 reason；
+    修改既有主题需传 node_id；挂载子节点传 parent_id；删除主题传 action="remove" 与 node_id。
+    已解决节点（status="resolved"）必须给出 node_reason、conclusion 及本任务的已读 evidence_ids。
     与父主题无关的可选探索将 required 设为 false。保存后返回新版本，其他动作按新版重新判断。
     """
     from knowledgeops_agent.app.lifecycle.asset_references import replace_asset_references
@@ -110,6 +127,29 @@ def update_research_map(
     reason = reason.strip()
     if context.run_id != context.root_id or not runtime.tool_call_id or not reason:
         raise ValueError("仅主运行可更新研究地图，并须说明理由。")
+    if action == "remove":
+        if not node_id:
+            raise ValueError("删除研究主题必须提供 node_id。")
+        operation = RemoveResearchNode(action="remove", node_id=node_id)
+    else:
+        if not question or not criteria:
+            raise ValueError("保存研究主题必须提供 question 与 criteria。")
+        operation = SaveResearchNode(
+            action="save",
+            node=ResearchNode(
+                id=node_id,
+                parent_id=parent_id,
+                required=required,
+                question=question,
+                status=status,
+                criteria=criteria,
+                reason=node_reason,
+                conclusion=conclusion,
+                details=details,
+                evidence_ids=evidence_ids or [],
+                related=related or [],
+            ),
+        )
     body = operation.model_dump()
     key = "research:tool-map:" + fingerprint([context.run_id, runtime.tool_call_id])
     request_hash = fingerprint([body, reason])

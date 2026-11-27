@@ -57,3 +57,29 @@ it('avoids flickering draft status text and discard button during fast saves', (
   expect(screen.getByRole('status')).toHaveTextContent('草稿已保存到本浏览器');
   vi.useRealTimers();
 });
+
+it('rejects stale discard when another tab writes a newer draft version (CAS)', async () => {
+  const ns = crypto.randomUUID();
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ namespace: ns, contract_version: 1 })));
+  const { ComposerSession } = await import('./drafts/session');
+  const tabA = new ComposerSession(undefined, 'cas-test');
+  const tabB = new ComposerSession(undefined, 'cas-test');
+  await tabA.start();
+  await tabB.start();
+  tabA.edit({ content: '标签页 A 的旧草稿' });
+  await tabA.flush();
+  const staleChange = tabA.snapshot().record!.change;
+
+  // 标签页 B 随后写入更新的草稿，推进持久化 change 版本
+  await tabB.refresh();
+  tabB.edit({ content: '标签页 B 的新草稿' });
+  await tabB.flush();
+
+  // 标签页 A 拿旧的 expectedChange 发起 discard，必须被 CAS 拒绝而不能抹掉标签页 B 的内容
+  await tabA.discard(staleChange);
+  expect(tabA.snapshot().error).toBeTruthy();
+  await tabB.refresh();
+  expect(tabB.snapshot().data.content).toBe('标签页 B 的新草稿');
+  tabA.stop();
+  tabB.stop();
+});

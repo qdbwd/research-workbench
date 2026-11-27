@@ -25,10 +25,15 @@ services:
       - ${TEI_EMBEDDING_DTYPE:-float32}
       - --pooling
       - ${TEI_EMBEDDING_POOLING:-last-token}
+      - --tokenization-workers
+      - ${TEI_TOKENIZATION_WORKERS:-2}
+      - --max-concurrent-requests
+      - ${TEI_MAX_CONCURRENT_REQUESTS:-8}
       - --max-client-batch-size
-      - "16"
+      - ${TEI_EMBEDDING_MAX_CLIENT_BATCH_SIZE:-16}
       - --max-batch-tokens
-      - "2048"
+      - ${TEI_EMBEDDING_MAX_BATCH_TOKENS:-4096}
+      - --auto-truncate
     environment:
       HF_HUB_CACHE: /data
       HF_ENDPOINT: ${HF_ENDPOINT:-https://huggingface.co}
@@ -57,8 +62,15 @@ services:
       - ${TEI_RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}
       - --dtype
       - ${TEI_RERANKER_DTYPE:-float16}
+      - --tokenization-workers
+      - ${TEI_TOKENIZATION_WORKERS:-2}
+      - --max-concurrent-requests
+      - ${TEI_MAX_CONCURRENT_REQUESTS:-8}
       - --max-client-batch-size
-      - "16"
+      - ${TEI_RERANKER_MAX_CLIENT_BATCH_SIZE:-32}
+      - --max-batch-tokens
+      - ${TEI_RERANKER_MAX_BATCH_TOKENS:-4096}
+      - --auto-truncate
     environment:
       HF_HUB_CACHE: /data
       HF_ENDPOINT: ${HF_ENDPOINT:-https://huggingface.co}

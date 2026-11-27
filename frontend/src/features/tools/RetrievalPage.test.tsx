@@ -189,9 +189,9 @@ describe('RetrievalPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: '分块预览 (1)' }));
     expect(await screen.findByText('固定正文')).toBeTruthy();
     expect(screen.getByRole('link', { name: '前往原文编辑 →' }).getAttribute('href')).toBe('/knowledge/asset-1');
-    fireEvent.click(screen.getByRole('switch', { name: '排除检索' }));
-    fireEvent.click(await screen.findByRole('switch', { name: '恢复检索' }));
-    await screen.findByRole('switch', { name: '排除检索' });
+    fireEvent.click(screen.getByRole('switch', { name: '参与检索' }));
+    fireEvent.click(await screen.findByRole('switch', { name: '已排除' }));
+    await screen.findByRole('switch', { name: '参与检索' });
     fireEvent.click(screen.getByRole('button', { name: /^关闭$/ }));
 
     fireEvent.click(screen.getByRole('tab', { name: '召回测试（Hit Testing）' }));

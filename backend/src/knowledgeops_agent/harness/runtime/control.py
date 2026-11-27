@@ -341,26 +341,11 @@ class RuntimeControlMiddleware(AgentMiddleware):
         remaining = max(0, root["budgets"]["model_requests"] - used["root_used"])
         finalize = remaining <= 2
         feedback = request.state.get("final_response_feedback", [])
+        from knowledgeops_agent.harness.models.validation import is_protocol_repair_feedback
+
+        protocol_repair = is_protocol_repair_feedback(feedback)
         task = context.jobs.get_run(context.run_id)["task"]
         limit = current_length_limit(context)
-        revision_instruction = ""
-        if feedback:
-            # 最终文本的修订是局部收束，不再给模型新的业务工具；权限和账本仍检查。
-            revision_instruction = (
-                "\n本轮只输出修订后的最终答案，不复述工作过程，不追加新的章节、建议或操作。"
-                "必须纠正以下校验问题：" + "；".join(feedback)
-            )
-            if limit is not None:
-                # 压缩是对已有答案的局部编辑。真实回放曾把原本正确的准备步骤删掉；
-                # 保留语义约束，不向模型注入案例答案，也不把原答复当成可靠事实。
-                revision_instruction += (
-                    f"为避免再次超限，请把正文连同引用标签压缩到约 {max(1, limit * 3 // 5)} "
-                    "个可见字符内；只保留直接结论、最必要理由/做法与简短引用标签。"
-                    "压缩时先删重复、过程叙述和与问题无关的扩展，保留使原结论成立或步骤可执行的"
-                    "前提、条件、对象、范围、数值及单位。不要因缩写而改变因果或否定关系；"
-                    "已有正确步骤不得省略必要的准备与作用对象。原答复仍须以已读材料为依据，"
-                    "发现原答复无依据的内容应删去或纠正，而不是为了保留原文照搬错误。"
-                )
         from knowledgeops_agent.learning.intent import current_learning
 
         learning = current_learning(context)
@@ -412,6 +397,33 @@ class RuntimeControlMiddleware(AgentMiddleware):
                     ]
                     if unit.status == "waiting":
                         finalize = True
+        revision_instruction = ""
+        if protocol_repair and finalize:
+            # 剩余预算或学习单元等待态已进入收尾阶段（tools 将被清空），不可再要求模型重发工具调用。
+            revision_instruction = (
+                "\n你刚才发出的工具调用格式无效，同批所有工具调用均未执行；当前任务额度已进入收尾阶段，"
+                "不再执行新工具。请直接基于已读取的可靠证据给出清晰结论，并如实说明尚未完成的检查项。"
+            )
+        elif protocol_repair:
+            # 工具调用协议纠偏必须保留工具定义，让模型按平铺参数重新发起标准调用。
+            revision_instruction = "\n" + "；".join(feedback)
+        elif feedback:
+            # 最终文本的修订是局部收束，不再给模型新的业务工具；权限和账本仍检查。
+            revision_instruction = (
+                "\n本轮只输出修订后的最终答案，不复述工作过程，不追加新的章节、建议或操作。"
+                "必须纠正以下校验问题：" + "；".join(feedback)
+            )
+            if limit is not None:
+                # 压缩是对已有答案的局部编辑。真实回放曾把原本正确的准备步骤删掉；
+                # 保留语义约束，不向模型注入案例答案，也不把原答复当成可靠事实。
+                revision_instruction += (
+                    f"为避免再次超限，请把正文连同引用标签压缩到约 {max(1, limit * 3 // 5)} "
+                    "个可见字符内；只保留直接结论、最必要理由/做法与简短引用标签。"
+                    "压缩时先删重复、过程叙述和与问题无关的扩展，保留使原结论成立或步骤可执行的"
+                    "前提、条件、对象、范围、数值及单位。不要因缩写而改变因果或否定关系；"
+                    "已有正确步骤不得省略必要的准备与作用对象。原答复仍须以已读材料为依据，"
+                    "发现原答复无依据的内容应删去或纠正，而不是为了保留原文照搬错误。"
+                )
         controls = {
             "knowledge_policy": context.knowledge_policy_metadata,
             "preferences": MemoryService(context.jobs.sessions).effective(
@@ -440,7 +452,7 @@ class RuntimeControlMiddleware(AgentMiddleware):
             .get("artifact_ids", []),
             "changesets": context.jobs.related_changesets(context.run_id),
             "plan": request.state.get("plan", []),
-            "final_response_feedback": feedback,
+            "final_response_feedback": [] if (protocol_repair and finalize) else feedback,
             "evidence_catalog": [] if context.gateway.capacity.input_budget_version
             else context.sources.evidence_catalog(context.root_id),
             "finalize_now": finalize,
@@ -541,7 +553,7 @@ class RuntimeControlMiddleware(AgentMiddleware):
             request.override(
                 messages=[context_data, *request.messages],
                 tools=[]
-                if finalize or feedback
+                if finalize or (feedback and not protocol_repair)
                 else (
                     filter_tools(context, request.tools)
                     if context.resources is not None

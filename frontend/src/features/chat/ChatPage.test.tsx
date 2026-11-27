@@ -74,6 +74,72 @@ it('submits on Enter while keeping Shift+Enter for newline', async () => {
   expect(posts).toHaveLength(0);
   await user.type(input, '{Enter}');
   await waitFor(() => expect(posts).toEqual(['/api/conversations', '/api/conversations/enter-chat/messages']));
+  await waitFor(() => expect(input).toHaveValue(''));
+});
+
+it('ignores background evolution_review runs in chat footer and keeps mounted collection after send', async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const runPageUrls: string[] = [];
+  configureFetch(async (url, options) => {
+    if (options?.method === 'POST') {
+      bodies.push(JSON.parse(String(options.body)));
+      return Response.json({ id: 'next-run' });
+    }
+    if (url === '/api/retrieval/collections') {
+      return Response.json([{ id: 'col-pay', name: '支付专题', asset_count: 3, chunks_embedded: 6, chunks_total: 6 }]);
+    }
+    if (url.endsWith('/runtime-settings')) {
+      return Response.json({ permission_mode: 'ask', reasoning_effort: 'default', revision: 0 });
+    }
+    if (url.includes('/runs/page')) {
+      runPageUrls.push(url);
+      if (!url.includes('status=')) {
+        return Response.json({
+          items: [
+            {
+              id: 'evo-1', kind: 'evolution_review', status: 'completed', task: '后台复盘',
+              tool_calls: 0, active_ms: 1500, outcome: { kind: 'evolution_review' }, input: {},
+            },
+            {
+              id: 'main-1', kind: 'agent', status: 'completed', task: '主问答',
+              tool_calls: 8, active_ms: 22900, outcome: { kind: 'answered' }, input: {},
+            },
+          ],
+          next_cursor: null,
+        });
+      }
+    }
+    if (url.includes('/messages/page')) {
+      return Response.json({ items: [], revision: 1, total: 0, start: 0, older_cursor: null, newer_cursor: null });
+    }
+    return Response.json(url.includes('/page') ? { items: [], next_cursor: null } : []);
+  });
+  const user = userEvent.setup();
+  render(<MemoryRouter initialEntries={['/chat/chat-1']}><Routes>
+    <Route path="/chat/:conversationId" element={<ChatPage />} />
+  </Routes></MemoryRouter>);
+  expect(await screen.findByText(/8 步工具/)).toBeVisible();
+  expect(screen.queryByText('evolution_review')).not.toBeInTheDocument();
+  expect(runPageUrls.length).toBeGreaterThanOrEqual(3);
+  expect(runPageUrls.every((url) => url.includes('exclude_kind=evolution_review'))).toBe(true);
+
+  const mount = screen.getByRole('button', { name: '挂载知识库' });
+  await waitFor(() => expect(mount).toBeEnabled());
+  await user.click(mount);
+  await user.click(screen.getByRole('button', { name: '按知识集多选' }));
+  await user.click(await screen.findByLabelText(/支付专题/));
+
+  const input = screen.getByRole('textbox', { name: '发送给研发助手的消息' });
+  await user.type(input, '第一轮提问');
+  await sendMessage(user);
+  await waitFor(() => expect(bodies).toHaveLength(1));
+  expect(bodies[0]).toMatchObject({ rag_scope: 'collections', collection_ids: ['col-pay'] });
+  await waitFor(() => expect(input).toHaveValue(''));
+
+  await user.type(input, '第二轮追问');
+  await sendMessage(user);
+  await waitFor(() => expect(bodies).toHaveLength(2));
+  expect(bodies[1]).toMatchObject({ rag_scope: 'collections', collection_ids: ['col-pay'] });
 });
 
 it('prefills a trial draft without creating a conversation until submission', async () => {
@@ -451,4 +517,39 @@ it('lets the user turn subagent delegation off without forcing it back on', asyn
   await user.click(screen.getByRole('button', { name: '更多设置与材料' }));
   await user.click(screen.getByRole('button', { name: '本次任务设置' }));
   expect(screen.getByRole('checkbox', { name: '允许子Agent分工' })).not.toBeChecked();
+});
+
+it('shows deleted mounted collection as removable stale chip so users can clear it before sending', async () => {
+  let collections = [{ id: 'col-gone', name: '临时知识集', asset_count: 1, chunks_embedded: 1, chunks_total: 1 }];
+  configureFetch(async (url) => {
+    if (url === '/api/retrieval/collections') return Response.json(collections);
+    if (url.endsWith('/runtime-settings')) {
+      return Response.json({ permission_mode: 'ask', reasoning_effort: 'default', revision: 0 });
+    }
+    return Response.json(url.includes('/page') ? { items: [], next_cursor: null } : []);
+  });
+  const user = userEvent.setup();
+  const view = (version: number) => (
+    <MemoryRouter initialEntries={['/chat/chat-stale']}>
+      <WorkspaceContext.Provider value={{ version, refresh: () => {} }}>
+        <Routes>
+          <Route path="/chat/:conversationId" element={<ChatPage />} />
+        </Routes>
+      </WorkspaceContext.Provider>
+    </MemoryRouter>
+  );
+  const { rerender } = render(view(0));
+  const mount = screen.getByRole('button', { name: '挂载知识库' });
+  await waitFor(() => expect(mount).toBeEnabled());
+  await user.click(mount);
+  await user.click(screen.getByRole('button', { name: '按知识集多选' }));
+  await user.click(await screen.findByText('临时知识集'));
+  expect(await screen.findByRole('button', { name: '移除挂载 临时知识集' })).toBeVisible();
+
+  // 模拟后台删除该知识集后刷新工作区
+  collections = [];
+  rerender(view(1));
+  expect(await screen.findByText('已失效知识集')).toBeVisible();
+  await user.click(screen.getByRole('button', { name: '移除挂载 已失效知识集' }));
+  await waitFor(() => expect(screen.queryByText('已失效知识集')).not.toBeInTheDocument());
 });

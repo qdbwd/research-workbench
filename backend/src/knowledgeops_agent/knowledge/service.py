@@ -1014,6 +1014,7 @@ class KnowledgeService:
         start: int = 0,
         length: int = 6000,
         current_only: bool = False,
+        mask_disabled: bool = False,
     ) -> dict:
         """登记固定正文读证据；新检索可要求候选仍是当前未撤回版本。"""
         from knowledgeops_agent.research.trial import run_trial_owner
@@ -1035,12 +1036,26 @@ class KnowledgeService:
             if not 0 <= start < len(version.body) or not 1 <= length <= 12000:
                 raise ValueError("invalid document range")
             end = min(len(version.body), start + length)
+            quote = version.body[start:end]
+            if mask_disabled:
+                from knowledgeops_agent.retrieval.collections import (
+                    disabled_chunk_ranges,
+                    mask_disabled_text,
+                )
+
+                disabled = disabled_chunk_ranges(session, "knowledge", version_id=version.id)
+                if disabled:
+                    quote, fully_excluded = mask_disabled_text(
+                        quote, base_offset=start, disabled_ranges=disabled,
+                    )
+                    if fully_excluded:
+                        raise PermissionError("该知识片段已在知识库中排除检索，不可读取。")
             evidence = Evidence(
                 root_id=root_id,
                 knowledge_version_id=version.id,
                 start_offset=start,
                 end_offset=end,
-                quote=version.body[start:end],
+                quote=quote,
             )
             session.add(evidence)
             session.flush()
@@ -1101,7 +1116,7 @@ class KnowledgeService:
         return export_markdown(self.sessions, include_archived=include_archived)
 
     def search(self, query: str, *, limit: int = 10, root_id: str | None = None,
-               document_ids: list[str] | None = None) -> list[dict]:
+               document_ids: list[str] | None = None, mask_disabled: bool = False) -> list[dict]:
         """先搜正文片段，再按文章去重；长文章不会因重复命中挤走其他候选。
 
         默认只查已发布的当前非归档版本。历史版本仍可按ID读取，检索片段不是
@@ -1159,6 +1174,20 @@ class KnowledgeService:
             results = []
             for version, score, start, end, chunk_index in session.execute(statement):
                 passage = excerpt(version.body, start, end, parsed, width=700)
+                snippet = passage.text
+                if mask_disabled:
+                    from knowledgeops_agent.retrieval.collections import (
+                        disabled_chunk_ranges,
+                        mask_disabled_text,
+                    )
+
+                    disabled = disabled_chunk_ranges(session, "knowledge", version_id=version.id)
+                    if disabled:
+                        snippet, fully_excluded = mask_disabled_text(
+                            snippet, base_offset=passage.start, disabled_ranges=disabled,
+                        )
+                        if fully_excluded:
+                            continue
                 results.append(
                     {
                         "document_id": version.document_id,
@@ -1166,7 +1195,7 @@ class KnowledgeService:
                         "version": version.number,
                         "title": version.title,
                         "score": float(score),
-                        "snippet": passage.text,
+                        "snippet": snippet,
                         "start": passage.start,
                         "end": passage.end,
                         "chunk_index": chunk_index,

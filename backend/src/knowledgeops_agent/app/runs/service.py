@@ -825,11 +825,12 @@ class RunService:
         conversation_id: str | None = None,
         root_id: str | None = None,
         status: str | None = None,
+        exclude_kind: str | None = None,
         roots_only: bool = False,
         cursor: str | None = None,
         limit: int = 20,
     ) -> dict:
-        """运行列表提供独立的root/状态过滤；当前活动任务不能从最近N条猜测。"""
+        """运行列表提供独立的root/状态/类型过滤；当前活动任务不能从最近N条猜测。"""
         query = visible_runs(select(Run)).where(Run.user_deleted_at.is_(None))
         if conversation_id:
             query = query.where(Run.conversation_id == conversation_id)
@@ -839,6 +840,8 @@ class RunService:
             query = query.where(Run.parent_id.is_(None))
         if status:
             query = query.where(Run.status == status)
+        if exclude_kind:
+            query = query.where(Run.kind != exclude_kind)
         with self.sessions() as session:
             rows, next_cursor = page_rows(session, query, Run, cursor=cursor, limit=limit)
             return {"items": [self._view(run) for run in rows], "next_cursor": next_cursor}

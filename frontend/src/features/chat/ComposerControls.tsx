@@ -109,7 +109,7 @@ export function ComposerControls(props: Props) {
           </Button>
         </div>
       )}
-      <div className="composer-toolbar mt-2.5 flex items-center justify-between gap-2 max-md:flex-wrap max-md:gap-[3px]">
+      <div className="composer-toolbar mt-2.5 flex flex-wrap items-center justify-between gap-2 max-md:gap-[3px]">
         <div className="composer-toolbar-left flex min-w-0 flex-wrap items-center gap-2 max-md:gap-[3px]">
           <div ref={container} className="composer-menu relative">
             <Button
@@ -280,10 +280,10 @@ export function ComposerControls(props: Props) {
           {props.researchMode && <Button type="button" className="button-quiet rounded-full bg-sidebar text-xs text-brand"
             aria-label="关闭研发模式" onClick={props.onCloseResearch}>研发模式 <X size={14} /></Button>}
         </div>
-        <div className="composer-toolbar-right flex min-w-0 items-center justify-end gap-2 max-md:ml-auto max-md:gap-[3px]">
+        <div className="composer-toolbar-right ml-auto flex min-w-0 shrink-0 items-center justify-end gap-2 max-md:gap-[3px]">
           {props.context}
           <span
-            className="composer-model min-w-0 max-w-[180px] truncate text-xs leading-[34px] text-control max-md:max-w-[100px] max-md:text-[11px] max-md:leading-8"
+            className="composer-model max-w-[180px] shrink-0 truncate text-xs leading-[34px] text-control max-md:max-w-[100px] max-md:text-[11px] max-md:leading-8"
             title={`${props.model ?? '正在读取模型'} · ${props.modelEnabled === undefined ? '正在读取状态' : props.modelEnabled ? '模型调用已开启' : '模型调用关闭'}`}
           >
             {props.model ?? '读取模型…'}
@@ -325,7 +325,7 @@ export function ComposerControls(props: Props) {
             disabled={props.disabled}
             type="submit"
             aria-label={props.researchMode ? '开始研发' : '发送'}
-            title={props.busy ? '提交中…' : '发送（Ctrl / ⌘ + Enter）'}
+            title={props.busy ? '提交中…' : '发送（Enter 发送，Shift + Enter 换行）'}
           >
             <ArrowUp size={20} />
           </Button>

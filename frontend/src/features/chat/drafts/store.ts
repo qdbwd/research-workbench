@@ -259,9 +259,19 @@ export class DraftStore {
       const row = await this.load(rows, scope);
       if (row.deleted || row.pending?.id !== id) return row;
       const sent = row.pending;
-      // 只退休实际发送的正文版本；之后输入以及其他标签的冲突副本不受影响。
+      // 只退休实际发送的正文版本；保留当前会话已挂载的知识集，方便多轮连续追问。
       if (sent.intent !== 'materials' && row.revision === sent.revision && sameDraft(row.data, sent.data)) {
-        row.data = { ...row.data, content: '', selected: [], researchMode: undefined, trialCase: undefined, browserMode: undefined, ragScope: undefined, collectionIds: undefined };
+        const keepMount = !sent.data.trialCase && !sent.data.researchMode;
+        row.data = {
+          ...row.data,
+          content: '',
+          selected: [],
+          researchMode: undefined,
+          trialCase: undefined,
+          browserMode: undefined,
+          ragScope: keepMount ? row.data.ragScope : undefined,
+          collectionIds: keepMount ? row.data.collectionIds : undefined,
+        };
         row.revision += 1;
       }
       row.lastAccepted = { id, runId, intent: sent.intent };

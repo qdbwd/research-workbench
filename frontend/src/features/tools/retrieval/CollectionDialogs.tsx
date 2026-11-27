@@ -99,10 +99,12 @@ export function MembersDialog({ group, onSave, onClose }: { group: Collection; o
     </div>
     <div aria-label="知识集成员列表" className="min-h-0 flex-1 divide-y divide-line overflow-y-auto overscroll-contain px-5 py-2">
       {assets.loading && !assets.data && <Loading />}
-      {assets.data?.items.map(({ asset_kind, asset_id, title, subtitle, version }) => {
+      {assets.data?.items.map(({ asset_kind, asset_id, title, subtitle, version, chunks_total, updated_at }) => {
         const ref = { asset_kind, asset_id };
         const key = assetKey(ref);
         const checked = selected?.has(key) ?? false;
+        const shortId = asset_id.slice(0, 6);
+        const dateLabel = updated_at ? new Date(updated_at).toLocaleDateString() : '';
         return <label key={key} className="check m-0 flex-row items-start gap-2.5 py-2.5 font-normal">
           <input type="checkbox" className="mt-0.5 accent-brand" checked={checked}
             disabled={!selected || busy || (!checked && selected.size >= 500)}
@@ -114,7 +116,9 @@ export function MembersDialog({ group, onSave, onClose }: { group: Collection; o
               setSelected(next);
             }} />
           <span className="min-w-0 break-words text-xs"><strong className="block text-ink">{title}</strong>
-            <span className="text-muted">{asset_kind === 'knowledge' ? '知识文章' : '材料库'} · V{version} · {subtitle}</span></span>
+            <span className="text-muted">
+              {asset_kind === 'knowledge' ? '知识文章' : '材料库'} · V{version} · {subtitle} · {chunks_total} 块{dateLabel ? ` · ${dateLabel}` : ''} · #{shortId}
+            </span></span>
         </label>;
       })}
       {assets.data?.total === 0 && <p className="text-xs text-muted">没有匹配的可用资产。</p>}

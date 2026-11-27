@@ -118,6 +118,87 @@ def collection_names(session, collection_ids: list[str]) -> list[str]:
     ).order_by(db.RagCollection.name)))
 
 
+EXCLUDED_CHUNK_PLACEHOLDER = "\n[已排除检索的分块内容，已按知识库配置隐藏]\n"
+
+
+def disabled_chunk_ranges(
+    session,
+    kind: AssetKind,
+    *,
+    version_id: str,
+    segment_id: str | None = None,
+) -> list[tuple[int, int]]:
+    """查询当前资产版本中被用户手动排除检索的分块区间（不改底层不可变正文与坐标）。"""
+    if kind == "knowledge":
+        rows = session.execute(
+            select(db.KnowledgeSearchChunk.start, db.KnowledgeSearchChunk.end)
+            .where(
+                db.KnowledgeSearchChunk.version_id == version_id,
+                db.KnowledgeSearchChunk.enabled.is_(False),
+            )
+            .order_by(db.KnowledgeSearchChunk.start, db.KnowledgeSearchChunk.end)
+        ).all()
+    else:
+        if not segment_id:
+            return []
+        rows = session.execute(
+            select(db.SourceSearchChunk.start, db.SourceSearchChunk.end)
+            .where(
+                db.SourceSearchChunk.segment_id == segment_id,
+                db.SourceSearchChunk.enabled.is_(False),
+            )
+            .order_by(db.SourceSearchChunk.start, db.SourceSearchChunk.end)
+        ).all()
+    merged: list[tuple[int, int]] = []
+    for start, end in rows:
+        if end <= start:
+            continue
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((int(start), int(end)))
+    return merged
+
+
+def mask_disabled_text(
+    text: str,
+    *,
+    base_offset: int,
+    disabled_ranges: list[tuple[int, int]],
+) -> tuple[str, bool]:
+    """按排除区间对返回给模型的片段做确定性遮罩；若整段均被排除则返回 ('', True)。"""
+    if not text or not disabled_ranges:
+        return text, False
+    slice_end = base_offset + len(text)
+    overlapping: list[tuple[int, int]] = []
+    for start, end in disabled_ranges:
+        lo = max(start, base_offset)
+        hi = min(end, slice_end)
+        if lo < hi:
+            overlapping.append((lo - base_offset, hi - base_offset))
+    if not overlapping:
+        return text, False
+    parts: list[str] = []
+    cursor = 0
+    has_visible = False
+    for lo, hi in overlapping:
+        if lo > cursor:
+            visible = text[cursor:lo]
+            if visible.strip():
+                has_visible = True
+            parts.append(visible)
+        parts.append(EXCLUDED_CHUNK_PLACEHOLDER)
+        cursor = hi
+    if cursor < len(text):
+        tail = text[cursor:]
+        if tail.strip():
+            has_visible = True
+        parts.append(tail)
+    if not has_visible:
+        return "", True
+    return "".join(parts), False
+
+
 def _asset_rows(profile_id):
     queries = []
     for kind, asset, version, chunk, embedding in (

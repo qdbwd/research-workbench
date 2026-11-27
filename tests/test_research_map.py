@@ -260,11 +260,13 @@ def test_research_run_pins_read_history_and_updates_its_map(client, services):
             elif len(self.requests) == 3:
                 point = observed["history_read"]["research_evidence_id"]
                 tool, arguments = "update_research_map", {
-                    "operation": {"action": "save", "node": {
-                        "question": "当前任务从哪个问题开始？", "criteria": "找到用户原话和范围",
-                        "status": "resolved", "conclusion": "当前应先调查简报确定的问题。",
-                        "reason": "用户在此会话发出明确要求", "evidence_ids": [point],
-                    }},
+                    "action": "save",
+                    "question": "当前任务从哪个问题开始？",
+                    "criteria": "找到用户原话和范围",
+                    "status": "resolved",
+                    "conclusion": "当前应先调查简报确定的问题。",
+                    "node_reason": "用户在此会话发出明确要求",
+                    "evidence_ids": [point],
                     "reason": "固定开始调查的真人原话",
                 }
             else:

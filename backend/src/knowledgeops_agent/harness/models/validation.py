@@ -81,13 +81,28 @@ PROTOCOL_REPAIR_FEEDBACK = (
     "你刚才在正文中输出了未执行的工具调用标记，程序未执行该操作。"
     "请改用标准结构化工具调用重新发起，直接按工具定义传入平铺参数，不要嵌套额外包装对象，也不要在正文中输出 DSML 标记。"
 )
+INVALID_TOOL_CALL_REPAIR_FEEDBACK = (
+    "你刚才发起的结构化工具调用参数 JSON 格式有误（例如括号不匹配或多余右括号），同批所有工具调用均未执行。"
+    "请重新发起标准结构化工具调用，务必检查 JSON 括号成对闭合、直接传入工具定义的平铺参数。"
+)
 PROTOCOL_FAILURE = (
     "模型连续未返回有效的结构化工具调用，而在正文中输出调用标记；操作未执行，前序进度与已读证据已保留，可稍后恢复继续。"
+)
+INVALID_TOOL_CALL_FAILURE = (
+    "模型连续返回参数 JSON 畸形的工具调用；操作未执行，前序进度与已读证据已保留，可稍后恢复继续。"
 )
 OUTPUT_LIMIT_FAILURE = (
     "模型达到输出上限，回复未完整生成；当前响应不作完成依据，也不继续执行其中的工具指令。"
     "已完成结果保留，可缩小输出要求后发送新任务继续。"
 )
+
+
+def is_protocol_repair_feedback(feedback: list[str]) -> bool:
+    """区分工具协议纠偏与最终正文修订：协议纠偏阶段必须保留工具定义以便模型重发调用。"""
+    return bool(feedback) and all(
+        item in {PROTOCOL_REPAIR_FEEDBACK, INVALID_TOOL_CALL_REPAIR_FEEDBACK}
+        for item in feedback
+    )
 
 
 def output_limit_reached(message) -> bool:
@@ -110,6 +125,8 @@ def model_output_error(message) -> str | None:
     """模型后处理与检查点交付共用失败判定；只返回应用定义的安全错误说明。"""
     if output_limit_reached(message):
         return OUTPUT_LIMIT_FAILURE
+    if isinstance(message, AIMessage) and message.invalid_tool_calls:
+        return INVALID_TOOL_CALL_FAILURE
     return PROTOCOL_FAILURE if leaked_tool_protocol(message) else None
 
 
@@ -136,6 +153,46 @@ class FinalAnswerValidation(AgentMiddleware):
                 },
             )
             raise InvalidModelOutput(OUTPUT_LIMIT_FAILURE)
+        if last.invalid_tool_calls:
+            # 供应商偶发输出畸形工具调用 JSON（如多余右括号），绝不放行至 ToolNode 或下轮消息转换触发 ConversionError；
+            # 账本已完整保留原始响应，此处就地净化消息并在有界预算内最多纠偏重试 1 次。
+            repairs = state.get("protocol_repair_count", 0)
+            retrying = repairs < MAX_PROTOCOL_REPAIRS
+            names = [item.get("name") for item in last.invalid_tool_calls if isinstance(item, dict)]
+            context.jobs.append_event(
+                context.run_id,
+                "model_protocol_error",
+                {
+                    "kind": "invalid_tool_call_args",
+                    "tools": names,
+                    "repair_number": repairs + 1 if retrying else repairs,
+                    "max_repairs": MAX_PROTOCOL_REPAIRS,
+                    "retrying": retrying,
+                },
+            )
+            if retrying:
+                # 同步剥离 additional_kwargs 里的 tool_calls/function_call，防止 langchain_openai
+                # 序列化回退读取旧 wire 载荷导致下轮 DeepSeek/OpenAI 请求报 HTTP 400；保留 reasoning_content。
+                cleaned_kwargs = {
+                    key: value
+                    for key, value in (last.additional_kwargs or {}).items()
+                    if key not in {"tool_calls", "function_call"}
+                }
+                cleaned = last.model_copy(
+                    update={
+                        "tool_calls": [],
+                        "invalid_tool_calls": [],
+                        "additional_kwargs": cleaned_kwargs,
+                        "content": last.text or "（上一次工具调用参数 JSON 格式错误，未执行。）",
+                    }
+                )
+                return {
+                    "messages": [cleaned],
+                    "final_response_feedback": [INVALID_TOOL_CALL_REPAIR_FEEDBACK],
+                    "protocol_repair_count": repairs + 1,
+                    "jump_to": "model",
+                }
+            raise InvalidModelOutput(INVALID_TOOL_CALL_FAILURE)
         if last.tool_calls:
             # 纠偏重试后若模型已恢复发出有效结构化工具调用，及时清空旧纠偏提示，
             # 避免后续轮次继续收到过期的协议异常反馈。

@@ -56,12 +56,21 @@ export function ComposerRecovery({ state, session }: { state: ComposerState; ses
       </section>}
       {state.ready && occupied && <div className="flex items-center justify-between gap-2 text-muted">
         <span role="status">{statusLabel}</span>
-        {!pending && <Button className="button-quiet text-xs" disabled={state.busy || !row} onClick={() => setDiscarding(row!.change)}>放弃草稿</Button>}
+        {!pending && <Button className="button-quiet text-xs" disabled={state.busy || !row} onClick={() => {
+          // 先排空本标签页正在写入的草稿，再锁定打开确认框时的 change，保留跨标签 CAS 保护。
+          void session.flush().then(() => {
+            const latest = session.snapshot().record;
+            if (latest) setDiscarding(latest.change);
+          }).catch(() => {
+            const latest = session.snapshot().record;
+            if (latest) setDiscarding(latest.change);
+          });
+        }}>放弃草稿</Button>}
       </div>}
     </>}
     {discarding !== null && <Dialog title="放弃草稿" onClose={() => setDiscarding(null)} footer={<>
       <Button className="button-secondary" onClick={() => setDiscarding(null)}>保留草稿</Button>
-      <Button onClick={() => { setDiscarding(null); void session.discard(discarding); }}>确认放弃草稿</Button>
+      <Button onClick={() => { const change = discarding; setDiscarding(null); void session.discard(change); }}>确认放弃草稿</Button>
     </>}><p>将移除这份尚未发送的输入、材料选择和冲突副本。已保存的会话材料与聊天不会删除。</p></Dialog>}
   </div>;
 }

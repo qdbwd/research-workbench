@@ -76,11 +76,11 @@ export function ChunksPreviewDialog({ asset, revision, canEmbed, onChange, onClo
     </div>
     <div aria-label="分块列表" className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-5 max-md:p-3">
       {loading && !data && <Loading />}
-      {data?.items.map((item) => <article key={`${item.segment_id ?? ''}:${item.chunk_index}`}
+      {data?.items.map((item, idx) => <article key={`${item.segment_id ?? ''}:${item.chunk_index}`}
         className={`rounded-lg border border-line p-3 ${item.enabled ? 'bg-white' : 'bg-canvas'}`}>
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-            <strong className="text-ink">块 #{item.chunk_index + 1}</strong>
+            <strong className="text-ink">块 #{offset + idx + 1}</strong>
             <span className="font-mono">[{item.start}, {item.end})</span>
             <span>{item.char_count} 字符{item.page !== null ? ` · 第 ${item.page} 页` : ''}</span>
             <span className={`rounded px-1.5 py-0.5 ${item.vector_status === 'ready' ? 'bg-[#e3f1e8] text-brand' : 'bg-canvas'}`}>
@@ -88,11 +88,12 @@ export function ChunksPreviewDialog({ asset, revision, canEmbed, onChange, onClo
             </span>
           </div>
           <button type="button" role="switch" aria-checked={item.enabled}
+            title={item.enabled ? '点击排除该分块，不参与新检索' : '点击恢复该分块参与检索'}
             className={`inline-flex items-center gap-1.5 ${secondaryClass}`} disabled={busy || loading} onClick={() => void toggle(item)}>
             <span aria-hidden="true" className={`inline-flex w-7 rounded-full p-0.5 ${item.enabled ? 'justify-end bg-brand' : 'bg-[#aeb9ae]'}`}>
               <span className="size-2.5 rounded-full bg-white" />
             </span>
-            {item.enabled ? '排除检索' : '恢复检索'}
+            {item.enabled ? '参与检索' : '已排除'}
           </button>
         </div>
         {contextual && item.contextual_header && <pre className="mb-2 whitespace-pre-wrap break-words rounded bg-canvas p-2 text-xs text-control">{item.contextual_header}</pre>}

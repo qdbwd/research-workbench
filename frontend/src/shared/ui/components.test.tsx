@@ -109,4 +109,39 @@ describe('reading and review boundaries', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('version conflict');
     expect(editor).toHaveValue('需要保留的修改');
   });
+
+  it('stops bare URL autolinks cleanly before adjacent Chinese punctuation and text', () => {
+    render(
+      <MemoryRouter>
+        <Markdown text="请打开 https://docs.python.org/3/whatsnew/3.12.html（若加载超时则换备用站）。" />
+      </MemoryRouter>,
+    );
+    const link = screen.getByRole('link', { name: 'https://docs.python.org/3/whatsnew/3.12.html' });
+    expect(link).toHaveAttribute('href', 'https://docs.python.org/3/whatsnew/3.12.html');
+    expect(screen.getByText(/（若加载超时则换备用站）。/)).toBeVisible();
+  });
+
+  it('preserves tilde fenced code blocks and strips trailing quotes or unbalanced brackets from bare URLs', () => {
+    const { container } = render(
+      <MemoryRouter>
+        <Markdown
+          text={
+            "引用 'https://example.com/quoted' 与 [https://example.com/bracketed]\n\n" +
+            '~~~\nhttps://example.com/in-tilde-fence（原文不变）\n~~~'
+          }
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('link', { name: 'https://example.com/quoted' })).toHaveAttribute(
+      'href',
+      'https://example.com/quoted',
+    );
+    expect(screen.getByRole('link', { name: 'https://example.com/bracketed' })).toHaveAttribute(
+      'href',
+      'https://example.com/bracketed',
+    );
+    const code = container.querySelector('pre code');
+    expect(code?.textContent).toContain('https://example.com/in-tilde-fence（原文不变）');
+    expect(code?.textContent).not.toContain('<https://example.com/in-tilde-fence>');
+  });
 });

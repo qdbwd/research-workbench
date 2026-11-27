@@ -22,7 +22,7 @@ export function RunPauseControl({ run, onChanged }: { run: Run; onChanged: () =>
   return (
     <div>
       <Button
-        className="quiet button-quiet small text-xs"
+        className="quiet button-quiet small shrink-0 whitespace-nowrap text-xs"
         disabled={busy || pending || run.cancel_requested}
         onClick={async () => {
           setBusy(true);

@@ -30,8 +30,10 @@ def search_references(
     include_knowledge = scope != "material" and {
         "builtin:search_knowledge", "builtin:read_knowledge",
     } <= allowed
+    auto_research = root.get("origin") == "automatic" and bool(root["input"].get("research"))
     include_material = (
-        scope != "knowledge" and not root["input"].get("knowledge_only")
+        scope != "knowledge"
+        and (not root["input"].get("knowledge_only") or auto_research)
         and "builtin:read_source" in allowed
     )
     if not include_knowledge and not include_material:
@@ -61,14 +63,16 @@ def search_references(
                 row = context.knowledge.read_document(
                     hit["asset_id"], root_id=context.root_id, version_id=hit["version_id"],
                     start=hit["start"], length=hit["end"] - hit["start"], current_only=True,
+                    mask_disabled=True,
                 )
             else:
                 row = context.sources.read_search_hit(
                     hit["segment_id"], root_id=context.root_id, version_id=hit["version_id"],
                     start=hit["start"], end=hit["end"], source_ids=source_ids,
+                    mask_disabled=True,
                 )
-        except (KeyError, ValueError):
-            # 候选可能在查询与读取之间被撤回；其余来源仍可提供证据。
+        except (KeyError, ValueError, PermissionError):
+            # 候选可能在查询与读取之间被撤回或排除检索；其余来源仍可提供证据。
             continue
         evidence.append({
             "kind": hit["kind"], "asset_id": hit["asset_id"], "version_id": hit["version_id"],

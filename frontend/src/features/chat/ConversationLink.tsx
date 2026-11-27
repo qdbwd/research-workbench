@@ -107,7 +107,7 @@ export function ConversationLink({ chat, onOpen, contained = false, projects = [
   );
   return (
     <>
-      <div className="group flex min-w-0 items-center rounded-md hover:bg-[#e2ebe2]">
+      <div className="group flex min-w-0 items-center gap-1 rounded-md hover:bg-[#e2ebe2]">
         <NavLink
           ref={link}
           to={`/chat/${chat.id}`}

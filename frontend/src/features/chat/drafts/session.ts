@@ -211,7 +211,14 @@ export class ComposerSession {
     const epoch = this.editEpoch;
     try {
       const prepared = await this.serial(async () => {
-        if (!this.store || !this.state.record || !this.state.persisted) throw new Error('请先保存草稿，再提交。');
+        if (!this.store || !this.state.record) throw new Error('请先保存草稿，再提交。');
+        if (!this.state.persisted) {
+          if (this.state.storageError) throw new Error('请先保存草稿，再提交。');
+          const saved = await this.store.save(this.state.record.scope, this.editingRevision, this.state.data, this.writer);
+          if (!saved.conflicts.length) this.editingRevision = saved.revision;
+          this.apply(saved, true);
+          this.publish({ persisted: !saved.conflicts.length, storageError: '' });
+        }
         const value = await this.store.prepare(this.state.record.scope, this.state.record.revision, intent);
         this.apply(value, true);
         this.notify();
@@ -255,11 +262,16 @@ export class ComposerSession {
     } catch (failure) { this.publish({ error: messageOf(failure) }); await this.refresh(); }
   };
   discard = async (expectedChange: number) => {
+    const epoch = this.editEpoch;
     try {
       await this.serial(async () => {
         if (!this.store || !this.state.record) return;
         const row = await this.store.abandon(this.state.record.scope, expectedChange);
-        this.apply(row); this.publish({ error: '', persisted: true }); this.notify();
+        const preserve = this.editEpoch !== epoch;
+        this.editingRevision = row.revision;
+        this.apply(row, preserve);
+        this.publish({ error: '', storageError: '', persisted: !preserve });
+        this.notify();
       });
     } catch (failure) { this.publish({ error: messageOf(failure) }); }
   };
